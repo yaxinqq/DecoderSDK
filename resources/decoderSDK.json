@@ -1,0 +1,9 @@
+{
+    "log": {
+      "enableFileLog": true,
+      "level": "debug",
+      "logDir": "logs",
+      "maxFileSizeMB": 10,
+      "maxFiles": 3
+    }
+  }
