@@ -11,4 +11,6 @@
 #define INTERNAL_NAMESPACE_END }
 #endif
 
+constexpr double kNoSyncThreshold = 10.0;
+
 #endif // DECODER_SDK_DEFINE_H

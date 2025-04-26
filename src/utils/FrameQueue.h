@@ -176,8 +176,6 @@ public:
      */
     int lastFramePts();
 
-
-
 private:
     std::vector<Frame> queue_;     // 帧队列
     int rindex_;                   // 读索引
@@ -187,7 +185,7 @@ private:
     int maxSize_;                  // 最大帧数量
     bool keepLast_;                // 是否保留最后一帧
 
-    bool serial_;                  // 当前版本，和packetQueue一致
+    int serial_;                   // 当前版本，和packetQueue一致
     bool aborted_;                 // 队列是否已中止，和packetQueue一致
     std::mutex mutex_;             // 互斥锁
     std::condition_variable cond_; // 条件变量
