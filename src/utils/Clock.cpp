@@ -74,8 +74,8 @@ void Clock::syncClockToSlave(const Clock& slave)
 {
     const double clock = getClock();
     const double slaveClock = slave.getClock();
-    if (!isnan(slaveClock) 
-        && (isnan(clock) || fabs(clock - slaveClock) > kNoSyncThreshold)) {
+    if (!std::isnan(slaveClock) 
+        && (std::isnan(clock) || fabs(clock - slaveClock) > kNoSyncThreshold)) {
         setClock(slaveClock, slave.serial());
     }
 }

@@ -13,4 +13,9 @@
 
 constexpr double kNoSyncThreshold = 10.0;
 
+// 视频帧数据
+typedef struct FrameData {
+    int64_t pktPos;
+} FrameData;
+
 #endif // DECODER_SDK_DEFINE_H
