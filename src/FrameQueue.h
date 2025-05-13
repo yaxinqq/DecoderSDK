@@ -1,5 +1,4 @@
-#ifndef DECODER_SDK_FRAMEQUEUE_H
-#define DECODER_SDK_FRANEQUEUE_H
+#pragma once
 #include <queue>
 #include <mutex>
 #include <condition_variable>
@@ -11,12 +10,6 @@ extern "C"
 {
 #include <libavutil/frame.h>
 }
-
-#include "base/define.h"
-#include "utils/PacketQueue.h"
-
-DECODER_SDK_NAMESPACE_BEGIN
-INTERNAL_NAMESPACE_BEGIN
 
 #pragma region Frame
 class Frame
@@ -191,8 +184,3 @@ private:
     std::condition_variable cond_; // 条件变量
 };
 #pragma endregion
-
-INTERNAL_NAMESPACE_END
-DECODER_SDK_NAMESPACE_END
-
-#endif // DECODER_SDK_FRAMEQUEUE_H

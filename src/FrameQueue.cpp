@@ -1,7 +1,4 @@
-#include "FrameQueue.h"
-
-DECODER_SDK_NAMESPACE_BEGIN
-INTERNAL_NAMESPACE_BEGIN
+﻿#include "FrameQueue.h"
 
 #pragma region Frame
 Frame::Frame()
@@ -181,7 +178,7 @@ FrameQueue::FrameQueue(int maxSize, bool keepLast)
 
 FrameQueue::~FrameQueue()
 {
-    while(queue_.empty()) {
+    while(!queue_.empty()) {
         queue_.pop_back();
     }
 }
@@ -209,7 +206,7 @@ Frame *FrameQueue::peekWritable()
     {
         std::unique_lock<std::mutex> lock(mutex_);
         cond_.wait(lock, [this](){
-            return size_ >= maxSize_ && !aborted_;
+            return size_ < maxSize_ && !aborted_;
         });
     }
 
@@ -224,7 +221,7 @@ Frame *FrameQueue::peekReadable()
     {
         std::unique_lock<std::mutex> lock(mutex_);
         cond_.wait(lock, [this](){
-            return size_ - rindexShown_ <= 0 && !aborted_;
+            return size_ - rindexShown_ > 0 && !aborted_;
         });
     }
 
@@ -258,6 +255,7 @@ int FrameQueue::push()
 
     size_++;
     cond_.notify_one();
+    return 0;
 }
 
 int FrameQueue::pop()
@@ -291,7 +289,7 @@ void FrameQueue::next()
     cond_.notify_one();
 }
 
-bool FrameQueue::popFrame(Frame &frame, int timeout = -1)
+bool FrameQueue::popFrame(Frame &frame, int timeout)
 {
     std::unique_lock<std::mutex> lock(mutex_);
 
@@ -333,6 +331,3 @@ int FrameQueue::lastFramePts()
 }
 
 #pragma endregion
-
-INTERNAL_NAMESPACE_END
-DECODER_SDK_NAMESPACE_END

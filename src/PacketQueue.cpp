@@ -1,8 +1,5 @@
 #include "PacketQueue.h"
 
-DECODER_SDK_NAMESPACE_BEGIN
-INTERNAL_NAMESPACE_BEGIN
-
 #pragma region Packet
 Packet::Packet()
     : packet_(av_packet_alloc()), serial_(0) 
@@ -254,7 +251,3 @@ bool PacketQueue::isEmpty() const
 }
 
 #pragma endregion
-
-
-INTERNAL_NAMESPACE_END
-DECODER_SDK_NAMESPACE_END

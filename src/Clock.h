@@ -1,11 +1,5 @@
-#ifndef DECODER_SDK_CLOCK_H
-#define DECODER_SDK_CLOCK_H
+#pragma once
 #include <cstdint>
-
-#include "base/define.h"
-
-DECODER_SDK_NAMESPACE_BEGIN
-INTERNAL_NAMESPACE_BEGIN
 
 class Clock
 {
@@ -143,8 +137,3 @@ private:
     bool paused_;                   // 是否暂停，1 为暂停
     int queueSerial_;               // 指向当前 packet queue 的序号指针，用于检查 clock 是否过期
 };
-
-INTERNAL_NAMESPACE_END
-DECODER_SDK_NAMESPACE_END
-
-#endif  // DECODER_SDK_CLOCK_H

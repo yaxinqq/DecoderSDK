@@ -7,8 +7,9 @@ extern "C"
 #include <libavutil/time.h>
 }
 
-DECODER_SDK_NAMESPACE_BEGIN
-INTERNAL_NAMESPACE_BEGIN
+namespace {
+    constexpr double kNoSyncThreshold = 10.0;
+}
 
 Clock::Clock()
     : pts_{0.0}
@@ -29,11 +30,6 @@ void Clock::init(int queueSerial)
     paused_ = false;
     queueSerial_ = queueSerial;
     setClock(NAN, -1);
-}
-
-int Clock::serial() const
-{
-    return serial_;
 }
 
 double Clock::getClock() const
@@ -79,6 +75,3 @@ void Clock::syncClockToSlave(const Clock& slave)
         setClock(slaveClock, slave.serial());
     }
 }
-
-INTERNAL_NAMESPACE_END
-DECODER_SDK_NAMESPACE_END

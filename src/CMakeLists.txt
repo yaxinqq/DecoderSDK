@@ -5,21 +5,34 @@ set(PROJECT_NAME DecoderSDK)
 
 # 定义源文件列表
 set(SRC_FILES
-    sdk_global.h
-
-    base/define.h
-
-    logger/Logger.h
-    logger/Logger.cpp
-
-    utils/FrameQueue.h
-    utils/FrameQueue.cpp
-    utils/PacketQueue.h
-    utils/PacketQueue.cpp
+    AudioDecoder.h
+    AudioDecoder.cpp
+    Clock.h
+    Clock.cpp
+    DecoderBase.h
+    DecoderBase.cpp
+    DecoderManager.h
+    DecoderManager.cpp
+    Demuxer.h
+    Demuxer.cpp
+    FrameQueue.h
+    FrameQueue.cpp
+    HardwareAccel.h
+    HardwareAccel.cpp
+    main.cpp
+    PacketQueue.h
+    PacketQueue.cpp
+    SyncController.h
+    SyncController.cpp
+    VideoDecoder.h
+    VideoDecoder.cpp
 )
 
 # 定义库
-add_library(${PROJECT_NAME} SHARED
+# add_library(${PROJECT_NAME} SHARED
+#     ${SRC_FILES}
+# )
+add_executable(${PROJECT_NAME}
     ${SRC_FILES}
 )
 

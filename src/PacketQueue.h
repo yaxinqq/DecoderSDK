@@ -1,5 +1,4 @@
-#ifndef DECODER_SDK_PACKETQUEUE_H
-#define DECODER_SDK_PACKETQUEUE_H
+#pragma once
 #include <queue>
 #include <mutex>
 #include <condition_variable>
@@ -10,11 +9,6 @@
 extern "C" {
 #include <libavcodec/avcodec.h>
 }
-
-#include "base/define.h"
-
-DECODER_SDK_NAMESPACE_BEGIN
-INTERNAL_NAMESPACE_BEGIN
 
 #pragma region Packet
 class Packet
@@ -163,8 +157,3 @@ private:
     std::condition_variable cond_;
 };
 #pragma endregion
-
-INTERNAL_NAMESPACE_END
-DECODER_SDK_NAMESPACE_END
-
-#endif  // DECODER_SDK_PACKETQUEUE_H
