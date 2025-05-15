@@ -1,5 +1,9 @@
 #include "AudioDecoder.h"
 
+extern "C" {
+#include "libavutil/opt.h"
+}
+
 AudioDecoder::AudioDecoder(std::shared_ptr<Demuxer> demuxer)
     : DecoderBase(demuxer)
 {
@@ -73,6 +77,23 @@ void AudioDecoder::decodeLoop()
                 continue;
             break;
         }
+
+        // 当播放速度改变时，重新初始化重采样上下文
+        static float lastSpeed = 1.0f;
+        if (std::abs(lastSpeed - speed_.load()) > 0.01f) {
+            initResampleContext();
+            lastSpeed = speed_.load();
+        }
+
+        // 如果需要，重采样音频数据
+        if (needResample_ && swrCtx_) {
+            AVFrame* resampledFrame = resampleFrame(frame);
+            if (resampledFrame != frame) {
+                // 如果重采样成功，使用重采样后的帧
+                av_frame_free(&frame);
+                frame = resampledFrame;
+            }
+        }
         
         // 设置帧属性
         AVRational tb = stream_->time_base;
@@ -85,6 +106,7 @@ void AudioDecoder::decodeLoop()
         
         // 更新音频时钟
         if (!std::isnan(pts)) {
+            clock_.setClockSpeed(speed_.load());
             clock_.setClock(pts + duration, serial);
         }
         
@@ -99,6 +121,114 @@ void AudioDecoder::decodeLoop()
     }
     
     av_frame_free(&frame);
+}
+
+int AudioDecoder::calculateMaxPacketCount() const
+{
+    // 基础队列长度：约0.5秒的音频数据
+    const int baseAudioCount = 25; 
+    
+    // 根据播放速度调整，但设置上限
+    int maxCount = std::min(
+        static_cast<int>(baseAudioCount * speed_),
+        baseAudioCount * 3
+    );
+    
+    // 确保队列长度在合理范围内
+    return std::clamp(maxCount, baseAudioCount, 100);
+}
+
+bool AudioDecoder::initResampleContext()
+{
+    // 释放旧的重采样上下文
+    if (swrCtx_) {
+        swr_free(&swrCtx_);
+        swrCtx_ = nullptr;
+    }
+    
+    // 如果播放速度接近1.0，不需要重采样
+    if (std::abs(speed_.load() - 1.0f) < 0.01f) {
+        needResample_ = false;
+        return true;
+    }
+    
+    needResample_ = true;
+    
+    // 创建重采样上下文
+    swrCtx_ = swr_alloc();
+    if (!swrCtx_) {
+        return false;
+    }
+    
+    // 设置输入参数
+    av_opt_set_chlayout(swrCtx_, "in_chlayout", &codecCtx_->ch_layout, 0);
+    av_opt_set_int(swrCtx_, "in_sample_rate", codecCtx_->sample_rate, 0);
+    av_opt_set_sample_fmt(swrCtx_, "in_sample_fmt", codecCtx_->sample_fmt, 0);
+    
+    // 设置输出参数
+    av_opt_set_chlayout(swrCtx_, "out_chlayout", &codecCtx_->ch_layout, 0);
+    // 根据播放速度调整采样率
+    int outSampleRate = static_cast<int>(codecCtx_->sample_rate * speed_.load());
+    av_opt_set_int(swrCtx_, "out_sample_rate", outSampleRate, 0);
+    av_opt_set_sample_fmt(swrCtx_, "out_sample_fmt", codecCtx_->sample_fmt, 0);
+    
+    // 初始化重采样上下文
+    int ret = swr_init(swrCtx_);
+    if (ret < 0) {
+        swr_free(&swrCtx_);
+        swrCtx_ = nullptr;
+        needResample_ = false;
+        return false;
+    }
+    
+    return true;
+}
+
+AVFrame *AudioDecoder::resampleFrame(AVFrame *frame)
+{
+    if (!needResample_ || !swrCtx_ || !frame) {
+        return frame;
+    }
+
+    // 创建输出帧
+    AVFrame *outFrame = av_frame_alloc();
+    if (!outFrame) {
+        return frame;
+    }
+
+    // 设置输出帧参数
+    outFrame->format = frame->format;
+    outFrame->ch_layout = frame->ch_layout;
+    // 调整采样率
+    outFrame->sample_rate = static_cast<int>(frame->sample_rate * speed_.load());
+    // 调整采样数
+    int outSamples = av_rescale_rnd(swr_get_delay(swrCtx_, frame->sample_rate) + frame->nb_samples, outFrame->sample_rate, frame->sample_rate, AV_ROUND_UP);
+    
+    // 分配输出缓冲区
+    int ret = av_frame_get_buffer(outFrame, 0);
+    if (ret < 0) {
+        av_frame_free(&outFrame);
+        return frame;
+    }
+
+    // 执行重采样
+    ret = swr_convert(swrCtx_, outFrame->data, outSamples, (const uint8_t **)frame->data, frame->nb_samples);
+    if (ret < 0) {
+        av_frame_free(&outFrame);
+        return frame;
+    }
+
+    // 设置输出帧参数
+    outFrame->nb_samples = ret;
+
+    // 复制时间戳
+    outFrame->pts = frame->pts;
+    outFrame->pkt_dts = frame->pkt_dts;
+
+    // 释放输入帧
+    av_frame_free(&frame);
+
+    return outFrame;
 }
 
 AVMediaType AudioDecoder::type() const

@@ -2,12 +2,13 @@
 #include "Clock.h"
 #include "DecoderBase.h"
 #include "HardwareAccel.h"
+#include "SyncController.h"
 #include <memory>
 
 class VideoDecoder : public DecoderBase 
 {
 public:
-    VideoDecoder(std::shared_ptr<Demuxer> demuxer);
+    VideoDecoder(std::shared_ptr<Demuxer> demuxer, std::shared_ptr<SyncController> syncController);
     virtual ~VideoDecoder();
 
     bool open() override;
@@ -28,6 +29,11 @@ public:
 
 protected:
     virtual void decodeLoop() override;
+
+    // 根据情况，是否设置解码器的硬件解码
+    bool setHardwareDecode() override;
+    // 计算包队列的最大包数量
+    int calculateMaxPacketCount() const override; 
     
 private:
     // 更新视频帧率
@@ -37,10 +43,10 @@ private:
     double calculateFrameDisplayTime(double pts, double duration);
 
 private:
-    Clock clock_;                   // 视频时钟
     double frameRate_;              // 检测到的帧率
     bool frameRateControlEnabled_;  // 是否启用帧率控制
     double lastFrameTime_;          // 上一帧的显示时间
 
     std::shared_ptr<HardwareAccel> hwAccel_;  // 硬件加速器
+    std::shared_ptr<SyncController> syncController_;  // 同步控制器
 };

@@ -19,6 +19,8 @@ set(SRC_FILES
     FrameQueue.cpp
     HardwareAccel.h
     HardwareAccel.cpp
+    Logger.h
+    Logger.cpp
     main.cpp
     PacketQueue.h
     PacketQueue.cpp

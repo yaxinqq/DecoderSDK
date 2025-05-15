@@ -42,7 +42,8 @@ double Clock::getClock() const
         return pts_;
     } else {
         double time = av_gettime_relative() / 1000000.0;
-        return ptsDrift_ + time - (time - lastUpdated_) * (1.0 - speed_);
+        // 基准时间 + 经过时间 * 速度
+        return ptsDrift_ + lastUpdated_ + (time - lastUpdated_) * speed_;
     }
 }
 
@@ -62,8 +63,15 @@ void Clock::setClock(double pts, int serial)
 
 void Clock::setClockSpeed(double speed)
 {
+    // 确保速度为正值
+    if (speed <= 0.0f) {
+        return;
+    }
+
     setClock(getClock(), serial_);
     speed_ = speed;
+
+    // Todo: 事件通知
 }
 
 void Clock::syncClockToSlave(const Clock& slave)

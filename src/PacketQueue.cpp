@@ -250,4 +250,14 @@ bool PacketQueue::isEmpty() const
     return queue_.empty();
 }
 
+void PacketQueue::setMaxPacketCount(int maxPacketCount)
+{
+    if (maxPacketCount_ <= 0)
+        return;
+
+    std::unique_lock<std::mutex> lock(mutex_);
+    maxPacketCount_ = maxPacketCount;
+    cond_.notify_one();
+}
+
 #pragma endregion

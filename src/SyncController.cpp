@@ -76,7 +76,8 @@ void SyncController::syncAudioToMaster()
     }
 }
 
-double SyncController::computeVideoDelay(double pts, double duration)
+#include <iostream>
+double SyncController::computeVideoDelay(double pts, double duration, double speed)
 {
     double delay = 0.0;
     
@@ -97,8 +98,8 @@ double SyncController::computeVideoDelay(double pts, double duration)
     // 更新上一帧的PTS
     lastFramePts_ = pts;
     
-    // 更新帧计时器
-    double syncThreshold = std::max(kAVSyncThreshold, duration);
+    // 更新帧计时器，考虑播放速度
+    double syncThreshold = std::max(kAVSyncThreshold, duration / speed);
     double currentTime = av_gettime_relative() / 1000000.0;
     
     // 如果有主时钟，则与主时钟同步
@@ -112,18 +113,18 @@ double SyncController::computeVideoDelay(double pts, double duration)
                 delay = 0;
             } else if (clockDiff >= syncThreshold) {
                 // 视频超前于主时钟，增加延迟
-                delay = 2 * duration;
+                delay = 2 * duration / speed; // 考虑播放速度
             } else {
                 // 在同步阈值内，正常延迟
-                delay = duration;
+                delay = duration / speed; // 考虑播放速度
             }
         } else {
             // 差异太大或无法计算，使用正常延迟
-            delay = duration;
+            delay = duration / speed; // 考虑播放速度
         }
     } else {
         // 没有主时钟，使用正常延迟
-        delay = duration;
+        delay = duration / speed; // 考虑播放速度
     }
     
     // 计算实际需要等待的时间

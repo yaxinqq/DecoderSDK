@@ -187,6 +187,7 @@ void FrameQueue::setAbortStatus(bool abort)
 {
     std::lock_guard<std::mutex> lock(mutex_);
     aborted_ = abort;
+    cond_.notify_all();
 }
 
 void FrameQueue::setSerial(int serial)
@@ -198,7 +199,7 @@ void FrameQueue::setSerial(int serial)
 void FrameQueue::awakeCond()
 {
     std::lock_guard<std::mutex> lock(mutex_);
-    cond_.notify_one();
+    cond_.notify_all();
 }
 
 Frame *FrameQueue::peekWritable()
@@ -206,7 +207,7 @@ Frame *FrameQueue::peekWritable()
     {
         std::unique_lock<std::mutex> lock(mutex_);
         cond_.wait(lock, [this](){
-            return size_ < maxSize_ && !aborted_;
+            return size_ < maxSize_ || aborted_;
         });
     }
 
@@ -221,7 +222,7 @@ Frame *FrameQueue::peekReadable()
     {
         std::unique_lock<std::mutex> lock(mutex_);
         cond_.wait(lock, [this](){
-            return size_ - rindexShown_ > 0 && !aborted_;
+            return size_ - rindexShown_ > 0 || aborted_;
         });
     }
 

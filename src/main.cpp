@@ -38,7 +38,13 @@ public:
     }
 };
 
-int main(int argc, char* argv[]) {
+int main(int argc, char* argv[])
+{
+#ifdef _WIN32
+    // 设置控制台输出代码页为 GBK
+    SetConsoleOutputCP(CP_UTF8);  // 936 是简体中文 GBK 的代码页
+#endif
+
     avdevice_register_all();
     avformat_network_init();
 
@@ -49,13 +55,18 @@ int main(int argc, char* argv[]) {
     if (argc > 1) {
         videoPath = argv[1];
     }
-    
-    std::cout << "测试文件: " << videoPath << std::endl;
 
     // 创建解码管理器
     DecoderManager manager;
     auto startTime = std::chrono::steady_clock::now();
     
+    // 添加日志输出
+    LOG_INFO("开始解码测试...");
+    LOG_INFO("测试文件: " + videoPath);
+    std::cout << "测试文件: " << videoPath << std::endl;
+
+    manager.setSpeed(4.0f);
+
     if (!manager.open(videoPath)) {
         std::cerr << "打开文件失败: " << videoPath << std::endl;
         return -1;
@@ -65,15 +76,12 @@ int main(int argc, char* argv[]) {
         std::chrono::steady_clock::now() - startTime).count();
     std::cout << "文件打开成功，耗时: " << openDuration << "ms" << std::endl;
     
-    // 设置音频作为主时钟（默认）
-    manager.setMasterClock(SyncController::MasterClock::Audio);
-    
     // 启用帧率控制（按照实际帧率推送视频帧）
     manager.setFrameRateControl(true);
     
     // 开始解码
     std::cout << "开始解码..." << std::endl;
-    manager.start();
+    manager.startDecode();
     
     // 获取视频帧率
     double videoFrameRate = manager.getVideoFrameRate();
@@ -93,7 +101,7 @@ int main(int argc, char* argv[]) {
     
     // 设置最大帧数限制或测试时长
     const int MAX_FRAMES = 10000;  // 可以根据需要调整
-    const int TEST_DURATION_SEC = 30;  // 测试30秒
+    const int TEST_DURATION_SEC = 10;  // 测试30秒
     
     auto testStartTime = std::chrono::steady_clock::now();
     bool testRunning = true;
@@ -114,11 +122,22 @@ int main(int argc, char* argv[]) {
         
         // 获取视频帧
         Frame videoFrame;
-        if (manager.videoQueue().popFrame(videoFrame, 5)) {
+        if (manager.videoQueue().popFrame(videoFrame, 1)) {
             videoFPS.update();
             
             // 检查视频帧的连续性
             AVFrame* frame = videoFrame.get();
+            
+            // 添加日志输出视频帧PTS和时钟信息
+            if (videoFrameCount % 100 == 0) {
+                std::cout << "视频帧 #" << videoFrameCount << ": " 
+                          << frame->width << "x" << frame->height
+                          << " 格式=" << frame->format 
+                          << " PTS=" << frame->pts 
+                          << " 类型=" << av_get_picture_type_char(frame->pict_type) 
+                          << " 硬件解码=" << (videoFrame.isInHardware() ? "是" : "否")
+                          << std::endl;
+            }
             if (lastVideoPts != AV_NOPTS_VALUE && frame->pts <= lastVideoPts) {
                 std::cout << "视频帧时间戳异常: 当前=" << frame->pts 
                          << " 上一帧=" << lastVideoPts << std::endl;
@@ -142,7 +161,7 @@ int main(int argc, char* argv[]) {
 
         // 获取音频帧
         Frame audioFrame;
-        if (manager.audioQueue().popFrame(audioFrame, 5)) {
+        if (manager.audioQueue().popFrame(audioFrame, 1)) {
             audioFPS.update();
             
             // 检查音频帧的连续性
@@ -196,7 +215,8 @@ int main(int argc, char* argv[]) {
     std::cout << "时间戳不连续: " << discontinuityCount << " 次" << std::endl;
     
     // 停止解码
-    manager.stop();
+    manager.stopDecode();
+    manager.close();
     avformat_network_deinit();
     
     return 0;

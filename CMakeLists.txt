@@ -3,6 +3,8 @@ project(DecoderSDK)
 
 # Only generate Debug and Release configuration types.
 set(CMAKE_CONFIGURATION_TYPES Debug Release RelWithDebInfo)
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 if (NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE "Release")
@@ -16,6 +18,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 if (CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
     add_compile_options(/Zc:__cplusplus)
     add_compile_options(/MP)
+    add_compile_options(/utf-8)
     add_definitions(-DUNICODE -D_UNICODE)
 
     set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /Zi")                         # 为Release模式添加调试信息

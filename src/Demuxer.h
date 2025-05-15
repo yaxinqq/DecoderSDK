@@ -22,6 +22,11 @@ public:
     void start();
     void stop();
 
+    bool pause();
+    bool resume();
+
+    bool seek(double position);
+    
     AVFormatContext* formatContext() const;
     int streamIndex(AVMediaType mediaType) const;
     std::shared_ptr<PacketQueue> packetQueue(AVMediaType mediaType) const;
@@ -31,6 +36,9 @@ public:
     
     // 检查是否有音频流
     bool hasAudio() const;
+
+    // 是否暂停
+    bool isPaused() const;
 
 protected:
     void demuxLoop();
@@ -47,4 +55,5 @@ private:
 
     std::thread thread_;
     std::atomic<bool> isRunning_ = false;
+    std::atomic<bool> isPaused_ = false;
 };

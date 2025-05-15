@@ -46,7 +46,7 @@ public:
     /**
      * @brief 构造函数
      */
-    PacketQueue(int maxPacketCount = 3);
+    PacketQueue(int maxPacketCount = 16);
 
     /**
      * @brief 析构函数
@@ -134,6 +134,12 @@ public:
      * @return 是否为空
      */
     bool isEmpty() const;
+
+    /** 
+     * @brief 设置队列最大包数量
+     * @param maxPacketCount 最大包数量
+     */
+    void setMaxPacketCount(int maxPacketCount);
 
 private:
     // 数据包队列

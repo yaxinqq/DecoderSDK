@@ -38,7 +38,7 @@ public:
     void syncAudioToMaster();
     
     // 计算视频帧显示延迟时间
-    double computeVideoDelay(double pts, double duration);
+    double computeVideoDelay(double pts, double duration, double speed);
     
     // 重置所有时钟
     void resetClocks();

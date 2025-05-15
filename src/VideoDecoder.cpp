@@ -6,8 +6,9 @@ extern "C" {
 #include <libavutil/time.h>
 }
 
-VideoDecoder::VideoDecoder(std::shared_ptr<Demuxer> demuxer)
+VideoDecoder::VideoDecoder(std::shared_ptr<Demuxer> demuxer, std::shared_ptr<SyncController> syncController)
     : DecoderBase(demuxer)
+    , syncController_(syncController)
     , frameRate_(0.0)
     , frameRateControlEnabled_(true)
     , lastFrameTime_(0.0)
@@ -21,36 +22,22 @@ VideoDecoder::~VideoDecoder()
     close();
 }
 
-#include <iostream>
 bool VideoDecoder::open()
 {
     bool ret = DecoderBase::open();
     if (!ret)
         return false;
 
-    // 创建硬件加速器（默认尝试自动选择最佳硬件加速方式）
-    hwAccel_ = HardwareAccelFactory::getInstance().createHardwareAccel(HWAccelType::AUTO);
+    // 预测帧率
+    AVRational tb = stream_->time_base;
+    AVRational frame_rate = av_guess_frame_rate(demuxer_->formatContext(), stream_, NULL);
     
-    if (hwAccel_) {
-        if (hwAccel_->getType() == HWAccelType::NONE) {
-            // Todo: log
-            // std::cout << "没有找到可用的硬件加速器，将使用软解码" << std::endl;
-        } else {
-            // Todo: log
-            // std::cout << "使用硬件加速器: " << hwAccel_->getDeviceName() 
-            //           << " (" << hwAccel_->getDeviceDescription() << ")" << std::endl;
-            
-            // 设置解码器上下文使用硬件加速
-            if (!hwAccel_->setupDecoder(codecCtx_)) {
-                // Todo: log
-                // std::cerr << "设置硬件加速失败，将回退到软解码" << std::endl;
-                hwAccel_ = nullptr;
-            }
-        }
-    }
+    // 更新视频帧率
+    updateFrameRate(frame_rate);
     return true;
 } 
 
+#include <iostream>
 void VideoDecoder::decodeLoop() {
     AVFrame* frame = av_frame_alloc();
     if (!frame)
@@ -66,7 +53,7 @@ void VideoDecoder::decodeLoop() {
     int serial = packetQueue->serial();
     clock_.init(serial);
     
-    while (isRunning_)
+    while (isRunning_.load())
     {
         // 检查序列号是否变化
         if (serial != packetQueue->serial())
@@ -84,7 +71,7 @@ void VideoDecoder::decodeLoop() {
         
         // 从包队列中获取一个包
         Packet packet;
-        bool gotPacket = packetQueue->pop(packet, 100);
+        bool gotPacket = packetQueue->pop(packet, 1);
         
         if (!gotPacket)
         {
@@ -112,14 +99,9 @@ void VideoDecoder::decodeLoop() {
             break;
         }
         
-        // 设置帧属性
+        // 计算帧持续时间
         AVRational tb = stream_->time_base;
         AVRational frame_rate = av_guess_frame_rate(demuxer_->formatContext(), stream_, NULL);
-        
-        // 更新视频帧率
-        updateFrameRate(frame_rate);
-        
-        // 计算帧持续时间
         double duration = (frame_rate.num && frame_rate.den) 
             ? av_q2d(av_inv_q(frame_rate)) 
             : 0;
@@ -144,10 +126,15 @@ void VideoDecoder::decodeLoop() {
         // 如果启用了帧率控制，则根据帧率控制推送速度
         if (frameRateControlEnabled_ && frameRate_ > 0.0) {
             double displayTime = calculateFrameDisplayTime(pts, duration);
+
             if (displayTime > 0.0) {
-                // 等待适当的时间再推送帧
-                std::this_thread::sleep_for(std::chrono::microseconds(
-                    static_cast<int64_t>(displayTime * 1000000)));
+                // 用条件变量替换 sleep，进行线程休眠
+                std::unique_lock<std::mutex> lock(sleepMutex_);
+                if (sleepCond_.wait_for(lock, std::chrono::microseconds(static_cast<int64_t>(displayTime * 1000000)),
+                                [this]{ return !isRunning_; })) {
+                    // 被 stop 唤醒，直接退出
+                    break;
+                }
             }
         }
         
@@ -156,6 +143,50 @@ void VideoDecoder::decodeLoop() {
     }
     
     av_frame_free(&frame);
+}
+
+bool VideoDecoder::setHardwareDecode()
+{
+    // 创建硬件加速器（默认尝试自动选择最佳硬件加速方式）
+    hwAccel_ = HardwareAccelFactory::getInstance().createHardwareAccel(HWAccelType::AUTO);
+        
+    if (hwAccel_) {
+        if (hwAccel_->getType() == HWAccelType::NONE) {
+            // Todo: log
+            // std::cout << "没有找到可用的硬件加速器，将使用软解码" << std::endl;
+            hwAccel_.reset();
+            return false;
+        } else {
+            // Todo: log
+            // std::cout << "使用硬件加速器: " << hwAccel_->getDeviceName() 
+            //           << " (" << hwAccel_->getDeviceDescription() << ")" << std::endl;
+            
+            // 设置解码器上下文使用硬件加速
+            if (!hwAccel_->setupDecoder(codecCtx_)) {
+                // Todo: log
+                // std::cerr << "设置硬件加速失败，将回退到软解码" << std::endl;
+                hwAccel_.reset();
+                return false;
+            }
+        }
+    }
+
+    return true;
+}
+
+int VideoDecoder::calculateMaxPacketCount() const
+{
+    // 基础队列长度
+    const int baseVideoCount = 25;
+    
+    // 根据速度和帧率计算，但设置上限
+    int maxCount = std::min(
+        static_cast<int>(frameRate_ * speed_), 
+        baseVideoCount * 3
+    );
+    
+    // 确保队列长度在合理范围内
+    return std::clamp(maxCount, baseVideoCount, 120);
 }
 
 AVMediaType VideoDecoder::type() const
@@ -171,6 +202,9 @@ void VideoDecoder::updateFrameRate(AVRational frameRate)
         // 如果帧率发生变化，更新帧率
         if (frameRate_ == 0.0 || std::fabs(frameRate_ - newFrameRate) > 0.1) {
             frameRate_ = newFrameRate;
+
+            // 更新包队列最大数量
+            //demuxer_->packetQueue(type())->setMaxPacketCount(calculateMaxPacketCount());
         }
     }
 }
@@ -189,17 +223,39 @@ double VideoDecoder::calculateFrameDisplayTime(double pts, double duration)
         return 0.0;
     }
     
-    // 计算下一帧应该显示的时间
-    double nextFrameTime = lastFrameTime_ + duration;
-    double delay = nextFrameTime - currentTime;
+    // 获取当前播放速度
+    float currentSpeed = speed_.load();
+    std::cout << "currentSpeed: " << currentSpeed << std::endl; // Add this line to print out the current speed
+    if (currentSpeed <= 0.0f) {
+        currentSpeed = 1.0f; // 防止除零错误
+    }
     
-    // 如果延迟为负，说明已经落后了，立即显示
-    if (delay < 0.0) {
-        delay = 0.0;
+    // 基于帧率计算理论帧间隔，并考虑播放速度
+    double frameInterval = (frameRate_ > 0.0) ? (1.0 / frameRate_) : duration;
+    frameInterval /= currentSpeed; // 速度越快，帧间隔越短
+    
+    // 计算下一帧应该解码的时间点
+    double nextFrameTime = lastFrameTime_ + frameInterval;
+    
+    // 计算基本延迟时间
+    double baseDelay = nextFrameTime - currentTime;
+    
+    // 如果有同步控制器，直接使用同步控制器计算的延迟
+    double finalDelay = baseDelay;
+    if (syncController_) {
+        // 传入播放速度到同步控制器
+        finalDelay = syncController_->computeVideoDelay(pts, duration, currentSpeed);
+    }
+    
+    // 确保延迟不为负
+    if (finalDelay < 0.0) {
+        finalDelay = 0.0;
     }
     
     // 更新上一帧时间
-    lastFrameTime_ = currentTime + delay;
+    lastFrameTime_ = currentTime + finalDelay;
+
+    std::cout << "pts: " << pts << ", duration: " << duration << ", delay: " << finalDelay << std::endl; // Add this line to print ou
     
-    return delay;
+    return finalDelay;
 }

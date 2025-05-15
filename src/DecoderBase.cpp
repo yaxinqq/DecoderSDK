@@ -1,7 +1,10 @@
 #include "DecoderBase.h"
 
 DecoderBase::DecoderBase(std::shared_ptr<Demuxer> demuxer)
-    : demuxer_(demuxer), frameQueue_(5, true), isRunning_(false)
+    : demuxer_(demuxer)
+    , frameQueue_(3, true)
+    , isRunning_(false)
+    , speed_(1.0f)
 {
 }
 
@@ -47,8 +50,10 @@ bool DecoderBase::open()
         // Todo: log
         return false;
     }
+    // 尝试设置硬解
+    setHardwareDecode();
 
-    if (avcodec_open2(codecCtx_, codec, NULL) < 0)
+    if (avcodec_open2(codecCtx_, codec, nullptr) < 0)
     {
         // Todo: log
         return false;
@@ -84,6 +89,8 @@ void DecoderBase::stop()
     isRunning_ = false;
     frameQueue_.setAbortStatus(true);
     frameQueue_.awakeCond();
+
+    sleepCond_.notify_all();
     
     if (thread_.joinable())
         thread_.join();
@@ -99,4 +106,28 @@ void DecoderBase::close()
 FrameQueue &DecoderBase::frameQueue()
 {
     return frameQueue_;
+}
+
+bool DecoderBase::setSpeed(double speed)
+{
+    if (speed <= 0.0f || std::abs(speed - speed_.load()) < std::numeric_limits<double>::epsilon()) {
+        return false;
+    }
+
+    speed_.store(speed);
+    clock_.setClockSpeed(speed_.load());
+
+    // 修改包队列最大包数量
+    if (demuxer_) {
+        auto packetQueue = demuxer_->packetQueue(type());
+        //packetQueue->setMaxPacketCount(calculateMaxPacketCount());
+    }
+
+    return true;
+}
+
+int DecoderBase::calculateMaxPacketCount() const
+{
+    // 默认最大包队列长度是30
+    return 30;
 }

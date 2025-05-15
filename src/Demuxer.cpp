@@ -2,8 +2,8 @@
 
 Demuxer::Demuxer()
 {
-    videoPacketQueue_ = std::make_shared<PacketQueue>();
-    audioPacketQueue_ = std::make_shared<PacketQueue>();   
+    videoPacketQueue_ = std::make_shared<PacketQueue>(INT_MAX);
+    audioPacketQueue_ = std::make_shared<PacketQueue>(INT_MAX);   
 }
 
 Demuxer::~Demuxer()
@@ -14,9 +14,21 @@ Demuxer::~Demuxer()
 
 bool Demuxer::open(const std::string& url)
 {
-    if (avformat_open_input(&formatContext_, url.c_str(), nullptr, nullptr) != 0) {
+    AVDictionary *options = nullptr;
+    av_dict_set(&options, "timeout", "3000000", 0);
+    av_dict_set(&options, "rtsp_transport", "tcp", 0);
+    av_dict_set(&options, "max_delay", "0.0", 0);
+    av_dict_set(&options, "buffer_size", "1048576", 0); // 1MB
+
+    if (/*isLiveStream*/ false)
+        av_dict_set(&options, "fflags", "nobuffer", 0);
+
+    if (avformat_open_input(&formatContext_, url.c_str(), nullptr, &options) != 0) {
+        av_dict_free(&options);
         return false;
     }
+    av_dict_free(&options);
+
     if (avformat_find_stream_info(formatContext_, nullptr) < 0) {
         return false;
     }
@@ -66,7 +78,13 @@ bool Demuxer::hasVideo() const
     
 bool Demuxer::hasAudio() const
 {
+    return false;
     return audioStreamIndex_ >= 0 && formatContext_ != nullptr;
+}
+
+bool Demuxer::isPaused() const
+{
+    return isPaused_.load();
 }
 
 void Demuxer::close() 
@@ -120,14 +138,64 @@ void Demuxer::stop()
     }
 }
 
+bool Demuxer::pause()
+{
+    if (!isRunning_.load()) {
+        return false;
+    }
+
+    isPaused_.store(true);
+    return true;
+}
+
+bool Demuxer::resume()
+{
+    if (!isRunning_.load()) {
+        return false;
+    }
+
+    isPaused_.store(false);
+    return true;
+}
+
+bool Demuxer::seek(double position)
+{
+    if (!formatContext_) {
+        return false;
+    }
+
+    std::lock_guard<std::mutex> lock(mutex_);
+    int64_t seekPos = position * AV_TIME_BASE;
+    int ret = avformat_seek_file(formatContext_, -1, INT64_MIN, seekPos, INT64_MAX, 0);
+    if (ret < 0) {
+        return false;
+    }
+
+    // 清空队列
+    if (videoPacketQueue_) {
+        videoPacketQueue_->flush();
+    }
+    if (audioPacketQueue_) {
+        audioPacketQueue_->flush();
+    }
+
+    return true;
+}
+
 void Demuxer::demuxLoop() 
 {
     AVPacket* pkt = av_packet_alloc();
     if (!pkt)
         return;
     
-    while (isRunning_)
+    while (isRunning_.load())
     {
+        // 检查是否暂停
+        if (isPaused_.load()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            continue;
+        }
+
         // 检查队列是否已满，如果已满则等待
         if ((videoStreamIndex_ >= 0 && videoPacketQueue_->isFull()) ||
             (audioStreamIndex_ >= 0 && audioPacketQueue_->isFull()))
