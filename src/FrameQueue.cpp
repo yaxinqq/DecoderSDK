@@ -2,64 +2,108 @@
 
 #pragma region Frame
 Frame::Frame()
-    : frame_(av_frame_alloc())
-    , serial_{0}
-    , duration_{0}
-    , isInHardware_{false}
-    , isFlipV_{false}
+    : frame_(nullptr)
+    , serial_(0)
+    , duration_(0)
+    , isInHardware_(false)
+    , isFlipV_(false)
+    , pts_(0.0)
 {
+    // 不在构造函数中分配内存，只在需要时分配
 }
 
 Frame::Frame(AVFrame *srcFrame)
-    : frame_(av_frame_alloc())
+    : frame_(nullptr)
+    , serial_(0)
+    , duration_(0)
+    , isInHardware_(false)
+    , isFlipV_(false)
+    , pts_(0.0)
 {
+    if (srcFrame) {
+        ensureAllocated();
 #ifdef USE_VAAPI
-    if (!copyFrmae(srcFrame)) {
+        if (!copyFrmae(srcFrame)) {
 #else
-    if (!srcFrame || av_frame_ref(frame_, srcFrame) != 0) {
+        if (av_frame_ref(frame_, srcFrame) != 0) {
 #endif
-        release();
+            release();
+        }
     }
 }
 
 Frame::Frame(const Frame &other)
-    : frame_(av_frame_alloc())
+    : frame_(nullptr)
+    , serial_(other.serial_)
+    , duration_(other.duration_)
+    , isInHardware_(other.isInHardware_)
+    , isFlipV_(other.isFlipV_)
+    , pts_(other.pts_)
 {
+    if (other.frame_) {
+        ensureAllocated();
 #ifdef USE_VAAPI
-    if (!copyFrmae(other.frame_)) {
+        if (!copyFrmae(other.frame_)) {
 #else
-    if (!other.frame_ || av_frame_ref(frame_, other.frame_) != 0) {
+        if (av_frame_ref(frame_, other.frame_) != 0) {
 #endif
-        release();
-    } else {
-        serial_ = other.serial_;
-        duration_ = other.duration_;
-        isInHardware_ = other.isInHardware_;
-        isFlipV_ = other.isFlipV_;
+            release();
+        }
     }
-
-
 }
 
 Frame &Frame::operator=(const Frame &other)
 {
     if (this != &other) {
         release();
-        frame_ = av_frame_alloc();
+        serial_ = other.serial_;
+        duration_ = other.duration_;
+        isInHardware_ = other.isInHardware_;
+        isFlipV_ = other.isFlipV_;
+        pts_ = other.pts_;
+        
         if (other.frame_) {
-        #ifdef USE_VAAPI
+            ensureAllocated();
+#ifdef USE_VAAPI
             if (!copyFrmae(other.frame_)) {
-        #else
+#else
             if (av_frame_ref(frame_, other.frame_) != 0) {
-        #endif
+#endif
                 release();
-            } else {
-                serial_ = other.serial_;
-                duration_ = other.duration_;
-                isInHardware_ = other.isInHardware_;
-                isFlipV_ = other.isFlipV_;
             }
         }
+    }
+    return *this;
+}
+
+// 移动构造函数
+Frame::Frame(Frame&& other) noexcept
+    : frame_(other.frame_)
+    , serial_(other.serial_)
+    , duration_(other.duration_)
+    , isInHardware_(other.isInHardware_)
+    , isFlipV_(other.isFlipV_)
+    , pts_(other.pts_)
+{
+    // 转移所有权，避免深拷贝
+    other.frame_ = nullptr;
+}
+
+// 移动赋值运算符
+Frame& Frame::operator=(Frame&& other) noexcept
+{
+    if (this != &other) {
+        release();
+        
+        // 转移所有权
+        frame_ = other.frame_;
+        serial_ = other.serial_;
+        duration_ = other.duration_;
+        isInHardware_ = other.isInHardware_;
+        isFlipV_ = other.isFlipV_;
+        pts_ = other.pts_;
+        
+        other.frame_ = nullptr;
     }
     return *this;
 }
@@ -74,6 +118,17 @@ AVFrame *Frame::get() const
     return frame_;
 }
 
+bool Frame::isValid() const
+{
+    return frame_ != nullptr;
+}
+
+void Frame::ensureAllocated()
+{
+    if (!frame_) {
+        frame_ = av_frame_alloc();
+    }
+}
 
 int Frame::serial() const
 {
@@ -115,22 +170,38 @@ void Frame::setIsFlipV(bool isFlipV)
     isFlipV_ = isFlipV;
 }
 
+void Frame::setPts(double pts)
+{
+    pts_ = pts;
+}
+
+double Frame::pts() const
+{
+    return pts_;
+}
+
 void Frame::unref()
 {
-    av_frame_unref(frame_);
+    if (frame_) {
+        av_frame_unref(frame_);
+
+#ifdef USE_VAAPI
+        if (frame_->data[0])
+        {
+            free(frame_->data[0]);
+        }
+        if (frame_->data[1])
+        {
+            free(frame_->data[1]);
+        }
+#endif
+    }
 }
 
 void Frame::release()
 {
     if (frame_) {
-#ifdef USE_VAAPI
-        if (frame_->data[0]) {
-            free(frame_->data[0]);
-        }
-        if (frame_->data[1]) {
-            free(frame_->data[1]);
-        }
-#endif
+        unref();
         av_frame_free(&frame_);
         frame_ = nullptr;
     }
@@ -172,7 +243,9 @@ FrameQueue::FrameQueue(int maxSize, bool keepLast)
     , keepLast_{keepLast}
 {
     for (int i = 0; i < maxSize_; ++i) {
-        queue_.push_back({});
+        Frame frame;
+        frame.ensureAllocated();
+        queue_.push_back(std::move(frame));
     }
 }
 
@@ -268,6 +341,7 @@ int FrameQueue::pop()
 
     // 如果队列中有帧，则弹出并更新 rindex
     if (size_ > 0) {
+        queue_[rindex_].unref();
         rindex_ = (rindex_ + 1) % maxSize_;
         --size_;
         cond_.notify_one();  // 唤醒等待线程
@@ -293,6 +367,18 @@ void FrameQueue::next()
 bool FrameQueue::popFrame(Frame &frame, int timeout)
 {
     std::unique_lock<std::mutex> lock(mutex_);
+    if (timeout == 0) {
+        if (size_ <= 0)
+            return false;
+        else {
+            frame = queue_[rindex_];
+            queue_[rindex_].unref();
+            rindex_ = (rindex_ + 1) % maxSize_;
+            --size_;
+            cond_.notify_one();  // 唤醒其他线程
+            return true;  // 成功
+        }
+    }
 
     if (timeout < 0) {
         // 等待直到队列中有帧

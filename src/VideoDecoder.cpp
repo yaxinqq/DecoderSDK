@@ -1,3 +1,4 @@
+#include "Utils.h"
 #include "VideoDecoder.h"
 #include <thread>
 #include <chrono>
@@ -103,7 +104,7 @@ void VideoDecoder::decodeLoop() {
         AVRational tb = stream_->time_base;
         AVRational frame_rate = av_guess_frame_rate(demuxer_->formatContext(), stream_, NULL);
         double duration = (frame_rate.num && frame_rate.den) 
-            ? av_q2d(av_inv_q(frame_rate)) 
+            ? av_q2d(av_inv_q(frame_rate)) * 1000.0 
             : 0;
         
         // 计算PTS
@@ -118,7 +119,7 @@ void VideoDecoder::decodeLoop() {
         *outFrame = Frame(frame);
         outFrame->setSerial(serial);
         outFrame->setDuration(duration);
-        // outFrame->setPts(pts);
+        outFrame->setPts(pts);
         
         // 检查是否是硬件加速解码
         outFrame->setIsInHardware(frame->hw_frames_ctx != NULL);
@@ -126,15 +127,10 @@ void VideoDecoder::decodeLoop() {
         // 如果启用了帧率控制，则根据帧率控制推送速度
         if (frameRateControlEnabled_ && frameRate_ > 0.0) {
             double displayTime = calculateFrameDisplayTime(pts, duration);
-
-            if (displayTime > 0.0) {
-                // 用条件变量替换 sleep，进行线程休眠
-                std::unique_lock<std::mutex> lock(sleepMutex_);
-                if (sleepCond_.wait_for(lock, std::chrono::microseconds(static_cast<int64_t>(displayTime * 1000000)),
-                                [this]{ return !isRunning_; })) {
-                    // 被 stop 唤醒，直接退出
-                    break;
-                }
+            if (!utils::greater(displayTime, 0.0)) {
+            //    continue;
+            } else {
+                utils::highPrecisionSleep(displayTime);
             }
         }
         
@@ -215,23 +211,22 @@ double VideoDecoder::calculateFrameDisplayTime(double pts, double duration)
         return 0.0;
     }
     
-    double currentTime = av_gettime_relative() / 1000000.0;
+    double currentTime = av_gettime_relative() / 1000.0;
     
     // 首次调用，初始化
-    if (lastFrameTime_ == 0.0) {
+    if (utils::equal(lastFrameTime_, 0.0)) {
         lastFrameTime_ = currentTime;
         return 0.0;
     }
     
     // 获取当前播放速度
     float currentSpeed = speed_.load();
-    std::cout << "currentSpeed: " << currentSpeed << std::endl; // Add this line to print out the current speed
     if (currentSpeed <= 0.0f) {
         currentSpeed = 1.0f; // 防止除零错误
     }
     
     // 基于帧率计算理论帧间隔，并考虑播放速度
-    double frameInterval = (frameRate_ > 0.0) ? (1.0 / frameRate_) : duration;
+    double frameInterval = duration;
     frameInterval /= currentSpeed; // 速度越快，帧间隔越短
     
     // 计算下一帧应该解码的时间点
@@ -242,20 +237,18 @@ double VideoDecoder::calculateFrameDisplayTime(double pts, double duration)
     
     // 如果有同步控制器，直接使用同步控制器计算的延迟
     double finalDelay = baseDelay;
-    if (syncController_) {
-        // 传入播放速度到同步控制器
-        finalDelay = syncController_->computeVideoDelay(pts, duration, currentSpeed);
-    }
-    
-    // 确保延迟不为负
-    if (finalDelay < 0.0) {
-        finalDelay = 0.0;
-    }
+    // if (syncController_) {
+    //     // 传入播放速度到同步控制器
+    //     finalDelay = syncController_->computeVideoDelay(pts, duration, currentSpeed) * 0.001;
+    // }
+    // if (!utils::greaterAndEqual(finalDelay, 0.0)) {
+    //     finalDelay = 0.0;
+    // }
     
     // 更新上一帧时间
     lastFrameTime_ = currentTime + finalDelay;
 
-    std::cout << "pts: " << pts << ", duration: " << duration << ", delay: " << finalDelay << std::endl; // Add this line to print ou
+    // std::cout << "pts: " << pts << ", duration: " << duration << ", delay: " << finalDelay << std::endl; // Add this line to print ou
     
     return finalDelay;
 }

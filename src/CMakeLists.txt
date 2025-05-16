@@ -26,6 +26,8 @@ set(SRC_FILES
     PacketQueue.cpp
     SyncController.h
     SyncController.cpp
+    Utils.h
+    Utils.cpp
     VideoDecoder.h
     VideoDecoder.cpp
 )

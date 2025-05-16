@@ -25,7 +25,8 @@ SyncController::~SyncController() = default;
 
 void SyncController::setMasterClockType(MasterClock type)
 {
-    masterClockType_ = type;
+    // masterClockType_ = type;
+    masterClockType_ = MasterClock::Video;
 }
 
 SyncController::MasterClock SyncController::getMasterClockType() const

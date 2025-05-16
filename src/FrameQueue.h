@@ -21,8 +21,15 @@ public:
     Frame &operator=(const Frame &other);
     ~Frame();
 
+    // 移动构造和移动赋值
+    Frame(Frame&& other) noexcept;
+    Frame& operator=(Frame&& other) noexcept;
+
     // 获得帧指针
     AVFrame *get() const;
+    
+    // 判断帧是否有效
+    bool isValid() const;
     
     // 获得序列号
     int serial() const;
@@ -44,6 +51,12 @@ public:
     // 设置是否需要翻转
     void setIsFlipV(bool isFlipV);
 
+    void setPts(double pts);
+    double pts() const;
+
+    // 确保帧已分配
+    void ensureAllocated();
+
 private:
     void release();
     void unref();
@@ -58,13 +71,16 @@ private:
     // 帧
     AVFrame *frame_ = nullptr;
     // 序列号
-    int serial_;
+    int serial_ = 0;
     // 帧的时长
-    double duration_;
+    double duration_ = 0.0;
     // 是否是硬解码
-    bool isInHardware_;
+    bool isInHardware_ = false;
     // 是否需要翻转
-    bool isFlipV_;
+    bool isFlipV_ = false;
+
+    // pts 单位s
+    double pts_ = 0.0;
 };
 #pragma endregion
 
