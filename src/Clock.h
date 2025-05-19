@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include <mutex>
 
 class Clock
 {
@@ -13,12 +14,6 @@ public:
 public:
     Clock();
     ~Clock();
-
-    /*
-     * @brief 获得当前时钟
-     * @param serial 包队列数据包序号
-     */
-    void setPackQueueSerial(int serial);
 
     /*
      * @brief 初始化时钟
@@ -36,13 +31,6 @@ public:
      * @brief 设置当前时钟
      * @param pts 显示时间戳
      * @param serial 数据版本号
-     * @param time 当前时间
-     */
-    void setClockAt(double pts, int serial, double time);
-    /*
-     * @brief 设置当前时钟
-     * @param pts 显示时间戳
-     * @param serial 数据版本号
      */
     void setClock(double pts, int serial);
     /*
@@ -55,43 +43,25 @@ public:
      * @brief 和其他时钟进行同步
      * @param slave 从时钟
      */
-    void syncClockToSlave(const Clock& slave);
+    // void syncClockToSlave(const Clock& slave);
 
     /*
      * @brief 获取当前显示时间戳（PTS）
      * @return 当前显示时间戳
      */
     double pts() const { return pts_; }
-
-    /*
-     * @brief 设置当前显示时间戳（PTS）
-     * @param pts 显示时间戳值
-     */
-    void setPts(double pts) { pts_ = pts; }
-
-    /*
+	
+	/*
      * @brief 获取PTS相对于系统时间的漂移值
      * @return PTS漂移值
      */
     double ptsDrift() const { return ptsDrift_; }
-
-    /*
-     * @brief 设置PTS相对于系统时间的漂移值
-     * @param drift PTS漂移值
-     */
-    void setPtsDrift(double drift) { ptsDrift_ = drift; }
-
+	
     /*
      * @brief 获取上次更新的系统时间
      * @return 上次更新时间
      */
     double lastUpdated() const { return lastUpdated_; }
-
-    /*
-     * @brief 设置上次更新的系统时间
-     * @param time 更新时间
-     */
-    void setLastUpdated(double time) { lastUpdated_ = time; }
 
     /*
      * @brief 获取时钟播放速度
@@ -106,12 +76,6 @@ public:
     int serial() const { return serial_; }
 
     /*
-     * @brief 设置时钟对应的数据包序号
-     * @param serial 数据包序号
-     */
-    void setSerial(int serial) { serial_ = serial; }
-
-    /*
      * @brief 获取时钟是否处于暂停状态
      * @return true表示暂停，false表示正在播放
      */
@@ -121,20 +85,15 @@ public:
      * @brief 设置时钟的暂停状态
      * @param paused true表示暂停，false表示播放
      */
-    void setPaused(bool paused) { paused_ = paused; }
-
-    /*
-     * @brief 获取当前packet queue的序号
-     * @return packet queue序号
-     */
-    int queueSerial() const { return queueSerial_; }
+    void setPaused(bool paused);
 
 private:
+    mutable std::mutex mutex_;               // 互斥锁，用于保护共享资源的访问
+
     double pts_;                    // 当前时钟的显示时间（Presentation Time Stamp）
     double ptsDrift_;               // pts - 当前系统时间，表示相对于系统时间的漂移 
     double lastUpdated_;            // 上次更新时间（系统时间），用于计算经过的时间
     double speed_;                  // 时钟的播放速度，比如倍速播放时为 2.0
     int serial_;                    // 该时钟对应数据包的序号（比如解码序列），用于判断是否为最新数据
     bool paused_;                   // 是否暂停，1 为暂停
-    int queueSerial_;               // 指向当前 packet queue 的序号指针，用于检查 clock 是否过期
 };

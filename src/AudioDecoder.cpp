@@ -9,8 +9,6 @@ extern "C" {
 AudioDecoder::AudioDecoder(std::shared_ptr<Demuxer> demuxer, std::shared_ptr<SyncController> syncController)
     : DecoderBase(demuxer, syncController)
 {
-    // 初始化音频时钟
-    clock_.init(-1);
 }
 
 AudioDecoder::~AudioDecoder()
@@ -32,7 +30,7 @@ void AudioDecoder::decodeLoop()
     }
     
     int serial = packetQueue->serial();
-    clock_.init(serial);
+    syncController_->updateAudioClock(0.0, serial);
     
     while (isRunning_)
     {
@@ -42,7 +40,7 @@ void AudioDecoder::decodeLoop()
             avcodec_flush_buffers(codecCtx_);
             serial = packetQueue->serial();
             frameQueue_.setSerial(serial);
-            clock_.init(serial);
+            syncController_->updateAudioClock(0.0, serial);
         }
         
         // 获取一个可写入的帧
@@ -96,21 +94,17 @@ void AudioDecoder::decodeLoop()
                 frame = resampledFrame;
             }
         }
+
         
-        // 设置帧属性
-        AVRational tb = stream_->time_base;
-        
-        // 计算帧持续时间
-        double duration = frame->nb_samples / (double)codecCtx_->sample_rate;
-        
-        // 计算PTS
-        double pts = frame->pts != AV_NOPTS_VALUE ? frame->pts * av_q2d(tb) : NAN;
+        // 计算帧持续时间(单位 s)
+        const double duration = frame->nb_samples / (double)codecCtx_->sample_rate;
+        // 计算PTS（单位s）
+        const double pts = calculatePts(frame);
         
         // 更新音频时钟
-        // if (!std::isnan(pts)) {
-        //     clock_.setClockSpeed(speed_.load());
-        //     clock_.setClock(pts + duration, serial);
-        // }
+        if (!std::isnan(pts)) {
+            syncController_->updateAudioClock(pts, serial);
+        }
         
         // 将解码后的帧复制到输出帧
         *outFrame = Frame(frame);
@@ -122,9 +116,7 @@ void AudioDecoder::decodeLoop()
         // 如果启用了帧率控制，则根据帧率控制推送速度
         if (frameRateControlEnabled_) {
             double displayTime = calculateFrameDisplayTime(pts, duration * 1000.0);
-            if (!utils::greater(displayTime, 0.0)) {
-            //    continue;
-            } else {
+            if (utils::greater(displayTime, 0.0)) {
                 utils::highPrecisionSleep(displayTime);
             }
         }
@@ -134,21 +126,6 @@ void AudioDecoder::decodeLoop()
     }
     
     av_frame_free(&frame);
-}
-
-int AudioDecoder::calculateMaxPacketCount() const
-{
-    // 基础队列长度：约0.5秒的音频数据
-    const int baseAudioCount = 25; 
-    
-    // 根据播放速度调整，但设置上限
-    int maxCount = std::min(
-        static_cast<int>(baseAudioCount * speed_),
-        baseAudioCount * 3
-    );
-    
-    // 确保队列长度在合理范围内
-    return std::clamp(maxCount, baseAudioCount, 100);
 }
 
 bool AudioDecoder::initResampleContext()
@@ -281,13 +258,9 @@ double AudioDecoder::calculateFrameDisplayTime(double pts, double duration)
     
     // 如果有同步控制器，直接使用同步控制器计算的延迟
     double finalDelay = baseDelay;
-    // if (syncController_) {
-    //     // 传入播放速度到同步控制器
-    //     finalDelay = syncController_->computeVideoDelay(pts, duration, currentSpeed) * 0.001;
-    // }
-    // if (!utils::greaterAndEqual(finalDelay, 0.0)) {
-    //     finalDelay = 0.0;
-    // }
+    if (syncController_->master() != SyncController::MasterClock::Audio) {
+        finalDelay = syncController_->computeAudioDelay(pts, baseDelay, speed_.load());
+    }
     
     // 更新上一帧时间
     lastFrameTime_ = currentTime + finalDelay;

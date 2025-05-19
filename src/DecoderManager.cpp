@@ -75,9 +75,6 @@ bool DecoderManager::startDecode()
         if (!videoDecoder_->open()) {
             return false;
         }
-        
-        // 设置视频时钟
-        // syncController_->setVideoClock(videoDecoder_->getClock());
     }
     
     // 创建音频解码器
@@ -87,9 +84,6 @@ bool DecoderManager::startDecode()
         if (!audioDecoder_->open()) {
             return false;
         }
-        
-        // 设置音频时钟
-        // syncController_->setAudioClock(audioDecoder_->getClock());
     }
     
     // 默认使用音频作为主时钟

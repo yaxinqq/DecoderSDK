@@ -19,6 +19,9 @@ public:
                    double jitterAlpha = 0.1);      // 抖动平滑系数
 
     void setMaster(MasterClock m) { master_ = m; }
+    MasterClock master() const { return master_; }
+
+    void setAVSyncThreshold(double threshold) { syncThreshold_ = threshold; }
     double getMasterClock() const;
     void setSpeed(double speed);
 

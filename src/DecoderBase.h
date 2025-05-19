@@ -33,8 +33,9 @@ protected:
 
     // 根据情况，是否设置解码器的硬件解码
     virtual bool setHardwareDecode() { return false; };
-    // 计算包队列的最大包数量
-    virtual int calculateMaxPacketCount() const; 
+
+    // 计算AVFrame对应的pts(单位 s)
+    double calculatePts(AVFrame *frame) const;
 
 protected:
     AVCodecContext *codecCtx_ = nullptr;
@@ -52,8 +53,6 @@ protected:
 
     std::condition_variable sleepCond_;
     std::mutex sleepMutex_;
-
-    Clock clock_; // 用于同步
 
     std::shared_ptr<SyncController> syncController_;  // 同步控制器
     bool frameRateControlEnabled_;  // 是否启用帧率控制

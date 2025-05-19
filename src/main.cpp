@@ -59,7 +59,7 @@ int main(int argc, char *argv[])
     std::string videoPath = (argc > 1) ? argv[1]
                                        : "C:/Users/win10/Desktop/test_video/test.mp4";
 
-    float playbackSpeed = 1.0f;
+    float playbackSpeed = 16.0f;
     DecoderManager manager;
     manager.setSpeed(playbackSpeed);
     if (!manager.open(videoPath))
@@ -72,7 +72,7 @@ int main(int argc, char *argv[])
     manager.startDecode();
 
     // 测试时长和计时
-    const int TEST_DURATION_SEC = 5;
+    const int TEST_DURATION_SEC = 3;
     auto testStart = std::chrono::steady_clock::now();
     std::atomic<bool> running{true};
 
@@ -101,17 +101,17 @@ int main(int argc, char *argv[])
     double frameDurMs = 1000.0 / manager.getVideoFrameRate();
 
     std::thread videoThread([&]() {
-        // while (running) {
-        //     Frame vfr;
-        //     if (manager.videoQueue().popFrame(vfr, 0)) {
-        //         double videoPts = vfr.pts();
-        //         std::cout << "视频帧PTS: " << videoPts << std::endl;
-        //         videoFPS.update();
-        //         videoCount++;
-        //     } else {
-        //         std::this_thread::sleep_for(std::chrono::milliseconds(1));
-        //     }
-        // }
+        while (running) {
+            Frame vfr;
+            if (manager.videoQueue().popFrame(vfr, 0)) {
+                double videoPts = vfr.pts();
+                std::cout << "视频帧PTS: " << videoPts << std::endl;
+                videoFPS.update();
+                videoCount++;
+            } else {
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+        }
     });
 
     // 主线程监测时长

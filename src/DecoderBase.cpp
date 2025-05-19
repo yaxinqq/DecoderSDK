@@ -117,19 +117,17 @@ bool DecoderBase::setSpeed(double speed)
     }
 
     speed_.store(speed);
-    clock_.setClockSpeed(speed_.load());
-
-    // 修改包队列最大包数量
-    if (demuxer_) {
-        auto packetQueue = demuxer_->packetQueue(type());
-        //packetQueue->setMaxPacketCount(calculateMaxPacketCount());
-    }
+    syncController_->setSpeed(speed);
 
     return true;
 }
 
-int DecoderBase::calculateMaxPacketCount() const
+double DecoderBase::calculatePts(AVFrame *frame) const
 {
-    // 默认最大包队列长度是30
-    return 30;
+    const int64_t pts = (frame->pts != AV_NOPTS_VALUE) ?
+                frame->pts :
+                frame->best_effort_timestamp;  // av_frame_get_best_effort_timestamp(frame);
+    const double time = pts * av_q2d(stream_->time_base);
+
+    return time;
 }

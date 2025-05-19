@@ -77,12 +77,8 @@ double SyncController::computeVideoDelay(double framePts,
                                          double baseDelay,
                                          double speed)
 {
-    // 1. 更新视频时钟并按 speed 推进
-    updateVideoClock(framePts, videoClock_.serial());
-    videoClock_.setClockSpeed(speed);
-    double master = getMasterClock();
-
     // 2. 计算帧相对于主时钟的偏差（秒）
+    double master = getMasterClock();
     double diff = framePts - master;
 
     // 3. EMA 抖动平滑
@@ -104,7 +100,7 @@ double SyncController::computeVideoDelay(double framePts,
         delay += drift * 1000.0;  // 转为毫秒
     }
 
-    std::cout << "framePts: " << framePts << ", master: " << master << ", diff: " << diff << ", drift: " << drift << ", baseDelay: " << baseDelay << ", delay: " << delay << std::endl;
+    // std::cout << "framePts: " << framePts << ", master: " << master << ", diff: " << diff << ", drift: " << drift << ", baseDelay: " << baseDelay << ", delay: " << delay << std::endl;
 
     return !utils::greaterAndEqual(delay, 0.0) ? 0.0 : delay;
 }
@@ -113,8 +109,10 @@ double SyncController::computeAudioDelay(double audioPts,
                                          double bufferDelay,
                                          double speed)
 {
+
+
     // 1) 更新音频时钟，并推进到当前 pts
-    const_cast<Clock&>(audioClock_).setClock(audioPts, audioClock_.queueSerial());
+    const_cast<Clock&>(audioClock_).setClock(audioPts, audioClock_.serial());
     const_cast<Clock&>(audioClock_).setClockSpeed(speed);
 
     // 2) 拿到主时钟（秒）
@@ -129,16 +127,16 @@ double SyncController::computeAudioDelay(double audioPts,
     // 默认延迟就是“还有多少 ms 在缓冲”
     double delay = bufferDelay;
 
-    // if (diff > thresh) {
-    //     // 4a) 音频快了，补偿 diff
-    //     delay += diff * 1000.0;
-    // } else if (bufferDelay > thresh * 1000.0) {
-    //     // 4b) 缓冲过多，缩短延迟（负值会让 sleep 更短）
-    //     double extra = std::min(bufferDelay, maxDrift_ * 1000.0);
-    //     delay -= extra;
-    // }
+    if (diff > thresh) {
+        // 4a) 音频快了，补偿 diff
+        delay += diff * 1000.0;
+    } else if (bufferDelay > thresh * 1000.0) {
+        // 4b) 缓冲过多，缩短延迟（负值会让 sleep 更短）
+        double extra = std::min(bufferDelay, maxDrift_ * 1000.0);
+        delay -= extra;
+    }
 
-    std::cout << "audioPts: " << audioPts << ", bufferDelay: " << bufferDelay << ", master: " << master << ", diff: " << diff << ", delay: " << delay  << ", speed: " << speed << std::endl;
+    // std::cout << "audioPts: " << audioPts << ", bufferDelay: " << bufferDelay << ", master: " << master << ", diff: " << diff << ", delay: " << delay  << ", speed: " << speed << std::endl;
 
     // 5) 不允许负延迟
     return delay > 0.0 ? delay : 0.0;

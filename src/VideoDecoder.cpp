@@ -12,8 +12,6 @@ VideoDecoder::VideoDecoder(std::shared_ptr<Demuxer> demuxer, std::shared_ptr<Syn
     , frameRate_(0.0)
     , lastFrameTime_(0.0)
 {
-    // 初始化视频时钟
-    clock_.init(-1);
 }
 
 VideoDecoder::~VideoDecoder() 
@@ -50,7 +48,7 @@ void VideoDecoder::decodeLoop() {
     }
     
     int serial = packetQueue->serial();
-    clock_.init(serial);
+    syncController_->updateVideoClock(0.0, serial);
     
     while (isRunning_.load())
     {
@@ -60,7 +58,7 @@ void VideoDecoder::decodeLoop() {
             avcodec_flush_buffers(codecCtx_);
             serial = packetQueue->serial();
             frameQueue_.setSerial(serial);
-            clock_.init(serial);
+            syncController_->updateVideoClock(0.0, serial);
         }
         
         // 获取一个可写入的帧
@@ -98,19 +96,14 @@ void VideoDecoder::decodeLoop() {
             break;
         }
         
-        // 计算帧持续时间
-        AVRational tb = stream_->time_base;
-        AVRational frame_rate = av_guess_frame_rate(demuxer_->formatContext(), stream_, NULL);
-        double duration = (frame_rate.num && frame_rate.den) 
-            ? av_q2d(av_inv_q(frame_rate)) 
-            : 0;
-        
-        // 计算PTS
-        double pts = frame->pts != AV_NOPTS_VALUE ? frame->pts * av_q2d(tb) : NAN;
+        // 计算帧持续时间(单位 s)
+        const double duration = 1 / av_q2d(stream_->avg_frame_rate);
+        // 计算PTS（单位s）
+        const double pts = calculatePts(frame);
         
         // 更新视频时钟
         if (!std::isnan(pts)) {
-            clock_.setClock(pts, serial);
+            syncController_->updateVideoClock(pts, serial);
         }
         
         // 将解码后的帧复制到输出帧
@@ -123,11 +116,9 @@ void VideoDecoder::decodeLoop() {
         outFrame->setIsInHardware(frame->hw_frames_ctx != NULL);
         
         // 如果启用了帧率控制，则根据帧率控制推送速度
-        if (frameRateControlEnabled_ && frameRate_ > 0.0) {
+        if (frameRateControlEnabled_) {
             double displayTime = calculateFrameDisplayTime(pts, duration * 1000.0);
-            if (!utils::greater(displayTime, 0.0)) {
-            //    continue;
-            } else {
+            if (utils::greater(displayTime, 0.0)) {
                 utils::highPrecisionSleep(displayTime);
             }
         }
@@ -168,21 +159,6 @@ bool VideoDecoder::setHardwareDecode()
     return true;
 }
 
-int VideoDecoder::calculateMaxPacketCount() const
-{
-    // 基础队列长度
-    const int baseVideoCount = 25;
-    
-    // 根据速度和帧率计算，但设置上限
-    int maxCount = std::min(
-        static_cast<int>(frameRate_ * speed_), 
-        baseVideoCount * 3
-    );
-    
-    // 确保队列长度在合理范围内
-    return std::clamp(maxCount, baseVideoCount, 120);
-}
-
 AVMediaType VideoDecoder::type() const
 {
     return AVMEDIA_TYPE_VIDEO;
@@ -196,9 +172,6 @@ void VideoDecoder::updateFrameRate(AVRational frameRate)
         // 如果帧率发生变化，更新帧率
         if (frameRate_ == 0.0 || std::fabs(frameRate_ - newFrameRate) > 0.1) {
             frameRate_ = newFrameRate;
-
-            // 更新包队列最大数量
-            //demuxer_->packetQueue(type())->setMaxPacketCount(calculateMaxPacketCount());
         }
     }
 }
@@ -235,13 +208,9 @@ double VideoDecoder::calculateFrameDisplayTime(double pts, double duration)
     
     // 如果有同步控制器，直接使用同步控制器计算的延迟
     double finalDelay = baseDelay;
-    // if (syncController_) {
-    //     // 传入播放速度到同步控制器
-    //     finalDelay = syncController_->computeVideoDelay(pts, duration, currentSpeed) * 0.001;
-    // }
-    // if (!utils::greaterAndEqual(finalDelay, 0.0)) {
-    //     finalDelay = 0.0;
-    // }
+    if (syncController_->master() != SyncController::MasterClock::Video) {
+        finalDelay = syncController_->computeVideoDelay(pts, duration, baseDelay, currentSpeed);
+    }
     
     // 更新上一帧时间
     lastFrameTime_ = currentTime + finalDelay;

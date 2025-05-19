@@ -13,14 +13,9 @@ public:
     virtual ~AudioDecoder();
 
     AVMediaType type() const override;
-    
-    // 获取音频时钟
-    Clock* getClock() { return &clock_; }
 
 protected:
     virtual void decodeLoop() override;
-    // 计算包队列的最大包数量
-    int calculateMaxPacketCount() const override; 
     
 private:
     // 初始化重采样上下文

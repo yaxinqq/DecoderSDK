@@ -15,9 +15,6 @@ public:
 
     AVMediaType type() const override;
     
-    // 获取视频时钟
-    Clock* getClock() { return &clock_; }
-    
     // 获取检测到的帧率
     double getFrameRate() const { return frameRate_; }
     
@@ -32,8 +29,6 @@ protected:
 
     // 根据情况，是否设置解码器的硬件解码
     bool setHardwareDecode() override;
-    // 计算包队列的最大包数量
-    int calculateMaxPacketCount() const override; 
     
 private:
     // 更新视频帧率
