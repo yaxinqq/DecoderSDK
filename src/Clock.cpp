@@ -29,15 +29,16 @@ void Clock::init(int queueSerial)
     speed_ = 1.0;
     paused_ = false;
     queueSerial_ = queueSerial;
-    setClock(NAN, -1);
+    setClock(0.0, queueSerial_);
+}
+
+void Clock::reset()
+{
+    init(0);
 }
 
 double Clock::getClock() const
 {
-    if (queueSerial_ != serial_) {  
-        return NAN;
-    }
-
     if (paused_) {
         return pts_;
     } else {

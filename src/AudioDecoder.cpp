@@ -1,11 +1,13 @@
 #include "AudioDecoder.h"
+#include "Utils.h"
 
 extern "C" {
 #include "libavutil/opt.h"
+#include <libavutil/time.h>
 }
 
-AudioDecoder::AudioDecoder(std::shared_ptr<Demuxer> demuxer)
-    : DecoderBase(demuxer)
+AudioDecoder::AudioDecoder(std::shared_ptr<Demuxer> demuxer, std::shared_ptr<SyncController> syncController)
+    : DecoderBase(demuxer, syncController)
 {
     // 初始化音频时钟
     clock_.init(-1);
@@ -105,16 +107,27 @@ void AudioDecoder::decodeLoop()
         double pts = frame->pts != AV_NOPTS_VALUE ? frame->pts * av_q2d(tb) : NAN;
         
         // 更新音频时钟
-        if (!std::isnan(pts)) {
-            clock_.setClockSpeed(speed_.load());
-            clock_.setClock(pts + duration, serial);
-        }
+        // if (!std::isnan(pts)) {
+        //     clock_.setClockSpeed(speed_.load());
+        //     clock_.setClock(pts + duration, serial);
+        // }
         
         // 将解码后的帧复制到输出帧
         *outFrame = Frame(frame);
         outFrame->setSerial(serial);
         outFrame->setDuration(duration);
-        // outFrame->setPts(pts);
+        outFrame->setPts(pts);
+
+        // 计算延时
+        // 如果启用了帧率控制，则根据帧率控制推送速度
+        if (frameRateControlEnabled_) {
+            double displayTime = calculateFrameDisplayTime(pts, duration * 1000.0);
+            if (!utils::greater(displayTime, 0.0)) {
+            //    continue;
+            } else {
+                utils::highPrecisionSleep(displayTime);
+            }
+        }
         
         // 推入帧队列
         frameQueue_.push();
@@ -234,4 +247,52 @@ AVFrame *AudioDecoder::resampleFrame(AVFrame *frame)
 AVMediaType AudioDecoder::type() const
 {
     return AVMEDIA_TYPE_AUDIO;
+}
+
+double AudioDecoder::calculateFrameDisplayTime(double pts, double duration)
+{
+    if (std::isnan(pts)) {
+        return 0.0;
+    }
+    
+    double currentTime = av_gettime_relative() / 1000.0;
+    
+    // 首次调用，初始化
+    if (utils::equal(lastFrameTime_, 0.0)) {
+        lastFrameTime_ = currentTime;
+        return 0.0;
+    }
+    
+    // 获取当前播放速度
+    float currentSpeed = speed_.load();
+    if (currentSpeed <= 0.0f) {
+        currentSpeed = 1.0f; // 防止除零错误
+    }
+    
+    // 基于帧率计算理论帧间隔，并考虑播放速度
+    double frameInterval = duration;
+    frameInterval /= currentSpeed; // 速度越快，帧间隔越短
+    
+    // 计算下一帧应该解码的时间点
+    double nextFrameTime = lastFrameTime_ + frameInterval;
+    
+    // 计算基本延迟时间
+    double baseDelay = nextFrameTime - currentTime;
+    
+    // 如果有同步控制器，直接使用同步控制器计算的延迟
+    double finalDelay = baseDelay;
+    // if (syncController_) {
+    //     // 传入播放速度到同步控制器
+    //     finalDelay = syncController_->computeVideoDelay(pts, duration, currentSpeed) * 0.001;
+    // }
+    // if (!utils::greaterAndEqual(finalDelay, 0.0)) {
+    //     finalDelay = 0.0;
+    // }
+    
+    // 更新上一帧时间
+    lastFrameTime_ = currentTime + finalDelay;
+
+    // std::cout << "pts: " << pts << ", duration: " << duration << ", delay: " << finalDelay << std::endl; // Add this line to print ou
+    
+    return finalDelay;
 }

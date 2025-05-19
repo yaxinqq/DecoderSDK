@@ -5,6 +5,7 @@
 #include "Clock.h"
 #include "Demuxer.h"
 #include "FrameQueue.h"
+#include "SyncController.h"
 
 extern "C" {
 #include <libavformat/avformat.h>
@@ -13,7 +14,7 @@ extern "C" {
 
 class DecoderBase {
 public:
-    DecoderBase(std::shared_ptr<Demuxer> demuxer);
+    DecoderBase(std::shared_ptr<Demuxer> demuxer, std::shared_ptr<SyncController> syncController);
     virtual ~DecoderBase();
 
     virtual bool open();
@@ -53,4 +54,7 @@ protected:
     std::mutex sleepMutex_;
 
     Clock clock_; // 用于同步
+
+    std::shared_ptr<SyncController> syncController_;  // 同步控制器
+    bool frameRateControlEnabled_;  // 是否启用帧率控制
 };

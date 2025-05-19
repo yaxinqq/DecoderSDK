@@ -1,161 +1,145 @@
 #include "SyncController.h"
+#include "Utils.h"
+#include <algorithm>
 #include <cmath>
 
-extern "C" {
+extern "C"
+{
 #include <libavutil/time.h>
 }
 
-namespace {
-    constexpr double kAVSyncThreshold = 0.01;   // 10ms同步阈值
-    constexpr double kAVNoSyncThreshold = 10.0; // 10秒无同步阈值
-    constexpr double kMaxFrameDuration = 10.0;  // 最大帧持续时间，防止异常值
+namespace
+{
+    constexpr double kAVSyncThreshold = 0.01;
+    constexpr double kAVNoSyncThreshold = 10.0;
+    constexpr double kMaxFrameDuration = 10.0;
 }
 
-SyncController::SyncController()
-    : masterClockType_(MasterClock::Audio)
-    , audioClock_(nullptr)
-    , videoClock_(nullptr)
-    , externalClock_(nullptr)
-    , lastFramePts_(0.0)
-    , frameTimer_(0.0)
+SyncController::SyncController(MasterClock master, double syncThreshold, double maxDrift, double jitterAlpha)
+    : master_(master)
+    , syncThreshold_(syncThreshold)
+    , maxDrift_(maxDrift)
+    , alpha_(jitterAlpha)
 {
+    videoClock_.init(0);
+    audioClock_.init(0);
+    externalClock_.init(0);
 }
 
-SyncController::~SyncController() = default;
-
-void SyncController::setMasterClockType(MasterClock type)
-{
-    // masterClockType_ = type;
-    masterClockType_ = MasterClock::Video;
+void SyncController::setSpeed(double speed) {
+    audioClock_.setClockSpeed(speed);
+    videoClock_.setClockSpeed(speed);
+    externalClock_.setClockSpeed(speed);
 }
 
-SyncController::MasterClock SyncController::getMasterClockType() const
+void SyncController::updateAudioClock(double pts, int serial)
 {
-    return masterClockType_;
+    audioClock_.setClock(pts, serial);
 }
 
-Clock* SyncController::getMasterClock()
+void SyncController::updateVideoClock(double pts, int serial)
 {
-    switch (masterClockType_) {
-        case MasterClock::Audio:
-            return audioClock_;
-        case MasterClock::Video:
-            return videoClock_;
-        case MasterClock::External:
-            return externalClock_;
-        default:
-            return audioClock_; // 默认使用音频时钟
-    }
+    videoClock_.setClock(pts, serial);
 }
 
-void SyncController::setAudioClock(Clock* clock)
+void SyncController::updateExternalClock(double pts, int serial)
 {
-    audioClock_ = clock;
-}
-
-void SyncController::setVideoClock(Clock* clock)
-{
-    videoClock_ = clock;
-}
-
-void SyncController::setExternalClock(Clock* clock)
-{
-    externalClock_ = clock;
-}
-
-void SyncController::syncVideoToMaster()
-{
-    if (videoClock_ && getMasterClock() && videoClock_ != getMasterClock()) {
-        videoClock_->syncClockToSlave(*getMasterClock());
-    }
-}
-
-void SyncController::syncAudioToMaster()
-{
-    if (audioClock_ && getMasterClock() && audioClock_ != getMasterClock()) {
-        audioClock_->syncClockToSlave(*getMasterClock());
-    }
-}
-
-#include <iostream>
-double SyncController::computeVideoDelay(double pts, double duration, double speed)
-{
-    double delay = 0.0;
-    
-    // 初始化帧计时器
-    if (lastFramePts_ == 0.0) {
-        lastFramePts_ = pts;
-        frameTimer_ = av_gettime_relative() / 1000000.0;
-        return 0.0;
-    }
-    
-    // 计算当前帧与上一帧的时间差
-    double diff = pts - lastFramePts_;
-    if (diff <= 0 || diff >= kMaxFrameDuration) {
-        // 时间戳异常，使用上一帧的持续时间
-        diff = duration;
-    }
-    
-    // 更新上一帧的PTS
-    lastFramePts_ = pts;
-    
-    // 更新帧计时器，考虑播放速度
-    double syncThreshold = std::max(kAVSyncThreshold, duration / speed);
-    double currentTime = av_gettime_relative() / 1000000.0;
-    
-    // 如果有主时钟，则与主时钟同步
-    if (getMasterClock()) {
-        double clockDiff = pts - getMasterClock()->getClock();
-        
-        // 视频时钟与主时钟的差异超过阈值，需要调整
-        if (!std::isnan(clockDiff) && std::fabs(clockDiff) < kAVNoSyncThreshold) {
-            if (clockDiff <= -syncThreshold) {
-                // 视频落后于主时钟，减少延迟
-                delay = 0;
-            } else if (clockDiff >= syncThreshold) {
-                // 视频超前于主时钟，增加延迟
-                delay = 2 * duration / speed; // 考虑播放速度
-            } else {
-                // 在同步阈值内，正常延迟
-                delay = duration / speed; // 考虑播放速度
-            }
-        } else {
-            // 差异太大或无法计算，使用正常延迟
-            delay = duration / speed; // 考虑播放速度
-        }
-    } else {
-        // 没有主时钟，使用正常延迟
-        delay = duration / speed; // 考虑播放速度
-    }
-    
-    // 计算实际需要等待的时间
-    frameTimer_ += delay;
-    double actualDelay = frameTimer_ - currentTime;
-    
-    if (actualDelay < 0.0) {
-        // 已经落后了，立即显示
-        actualDelay = 0.0;
-        // 重置帧计时器
-        frameTimer_ = currentTime;
-    }
-    
-    return actualDelay;
+    externalClock_.setClock(pts, serial);
 }
 
 void SyncController::resetClocks()
 {
-    frameTimer_ = 0.0;
-    lastFramePts_ = 0.0;
-    
-    if (audioClock_) {
-        audioClock_->setClock(NAN, -1);
+    audioClock_.reset();
+    videoClock_.reset();
+    externalClock_.reset();
+}
+
+double SyncController::getMasterClock() const {
+    switch (master_) {
+        case MasterClock::Audio:    
+            return audioClock_.getClock();
+        case MasterClock::Video:    
+            return videoClock_.getClock();
+        case MasterClock::External: 
+            return externalClock_.getClock();
     }
-    
-    if (videoClock_) {
-        videoClock_->setClock(NAN, -1);
+    return audioClock_.getClock();
+}
+
+// EMA 平滑函数
+double smooth(double alpha, double prev, double current) {
+    return alpha * current + (1.0 - alpha) * prev;
+}
+
+#include <iostream>
+double SyncController::computeVideoDelay(double framePts,
+                                         double frameDuration,
+                                         double baseDelay,
+                                         double speed)
+{
+    // 1. 更新视频时钟并按 speed 推进
+    updateVideoClock(framePts, videoClock_.serial());
+    videoClock_.setClockSpeed(speed);
+    double master = getMasterClock();
+
+    // 2. 计算帧相对于主时钟的偏差（秒）
+    double diff = framePts - master;
+
+    // 3. EMA 抖动平滑
+    smoothedVideoDrift_ = smooth(alpha_, smoothedVideoDrift_, diff);
+
+    // 4. 计算阈值（秒）和裁剪漂移
+    double thresh = syncThreshold_ / speed;
+    double drift = std::clamp(smoothedVideoDrift_, -maxDrift_, maxDrift_);
+
+    // 5. 丢帧判断：如果帧太晚，落后超过阈值，就返回一个负值，表示需要丢弃
+    if (!utils::greaterAndEqual(drift, -thresh)) {
+        std::cout << "drop frame!!!!!!!" << std::endl;
+        return -1.0;  
     }
-    
-    if (externalClock_) {
-        externalClock_->setClock(NAN, -1);
+
+    // 6. 否则按需调整延迟
+    double delay = baseDelay;
+    if (std::fabs(drift) > thresh) {
+        delay += drift * 1000.0;  // 转为毫秒
     }
+
+    std::cout << "framePts: " << framePts << ", master: " << master << ", diff: " << diff << ", drift: " << drift << ", baseDelay: " << baseDelay << ", delay: " << delay << std::endl;
+
+    return !utils::greaterAndEqual(delay, 0.0) ? 0.0 : delay;
+}
+
+double SyncController::computeAudioDelay(double audioPts,
+                                         double bufferDelay,
+                                         double speed)
+{
+    // 1) 更新音频时钟，并推进到当前 pts
+    const_cast<Clock&>(audioClock_).setClock(audioPts, audioClock_.queueSerial());
+    const_cast<Clock&>(audioClock_).setClockSpeed(speed);
+
+    // 2) 拿到主时钟（秒）
+    double master = getMasterClock();
+
+    // 3) 计算漂移（秒）
+    double diff = audioPts - master;
+
+    // 4) 抖动阈值（秒）
+    double thresh = syncThreshold_ / speed;
+
+    // 默认延迟就是“还有多少 ms 在缓冲”
+    double delay = bufferDelay;
+
+    // if (diff > thresh) {
+    //     // 4a) 音频快了，补偿 diff
+    //     delay += diff * 1000.0;
+    // } else if (bufferDelay > thresh * 1000.0) {
+    //     // 4b) 缓冲过多，缩短延迟（负值会让 sleep 更短）
+    //     double extra = std::min(bufferDelay, maxDrift_ * 1000.0);
+    //     delay -= extra;
+    // }
+
+    std::cout << "audioPts: " << audioPts << ", bufferDelay: " << bufferDelay << ", master: " << master << ", diff: " << diff << ", delay: " << delay  << ", speed: " << speed << std::endl;
+
+    // 5) 不允许负延迟
+    return delay > 0.0 ? delay : 0.0;
 }

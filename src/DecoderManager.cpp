@@ -77,26 +77,26 @@ bool DecoderManager::startDecode()
         }
         
         // 设置视频时钟
-        syncController_->setVideoClock(videoDecoder_->getClock());
+        // syncController_->setVideoClock(videoDecoder_->getClock());
     }
     
     // 创建音频解码器
     if (demuxer_->hasAudio()) {
-        audioDecoder_ = std::make_shared<AudioDecoder>(demuxer_);
+        audioDecoder_ = std::make_shared<AudioDecoder>(demuxer_, syncController_);
         audioDecoder_->setSpeed(speed_);
         if (!audioDecoder_->open()) {
             return false;
         }
         
         // 设置音频时钟
-        syncController_->setAudioClock(audioDecoder_->getClock());
+        // syncController_->setAudioClock(audioDecoder_->getClock());
     }
     
     // 默认使用音频作为主时钟
     if (demuxer_->hasAudio()) {
-        syncController_->setMasterClockType(SyncController::MasterClock::Audio);
+        syncController_->setMaster(SyncController::MasterClock::Audio);
     } else if (demuxer_->hasVideo()) {
-        syncController_->setMasterClockType(SyncController::MasterClock::Video);
+        syncController_->setMaster(SyncController::MasterClock::Video);
     }
 
     // 启动解码器
@@ -154,10 +154,7 @@ bool DecoderManager::setSpeed(double speed)
     
     // 设置时钟速度
     if (syncController_) {
-        Clock* masterClock = syncController_->getMasterClock();
-        if (masterClock) {
-            masterClock->setClockSpeed(speed);
-        }
+        syncController_->setSpeed(speed);
     }
 
     return true;
@@ -177,7 +174,7 @@ FrameQueue& DecoderManager::audioQueue()
 
 void DecoderManager::setMasterClock(SyncController::MasterClock type)
 {
-    syncController_->setMasterClockType(type);
+    syncController_->setMaster(type);
 }
 
 double DecoderManager::getVideoFrameRate() const

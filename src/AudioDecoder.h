@@ -9,7 +9,7 @@ extern "C" {
 class AudioDecoder : public DecoderBase
 {
 public:
-    AudioDecoder(std::shared_ptr<Demuxer> demuxer);
+    AudioDecoder(std::shared_ptr<Demuxer> demuxer, std::shared_ptr<SyncController> syncController);
     virtual ~AudioDecoder();
 
     AVMediaType type() const override;
@@ -29,7 +29,11 @@ private:
     // 重采样音频数据
     AVFrame *resampleFrame(AVFrame *frame);
 
+    double calculateFrameDisplayTime(double pts, double duration);
+
 private:
     SwrContext *swrCtx_ = nullptr;  // 用于音频重采样
     bool needResample_ = false;     // 是否需要重采样
+
+    double lastFrameTime_ = 0.0;    // 上一帧的显示时间
 };

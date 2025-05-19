@@ -1,7 +1,9 @@
 #include "DecoderBase.h"
 
-DecoderBase::DecoderBase(std::shared_ptr<Demuxer> demuxer)
+DecoderBase::DecoderBase(std::shared_ptr<Demuxer> demuxer, std::shared_ptr<SyncController> syncController)
     : demuxer_(demuxer)
+    , syncController_(syncController)
+    , frameRateControlEnabled_{true}
     , frameQueue_(3, true)
     , isRunning_(false)
     , speed_(1.0f)

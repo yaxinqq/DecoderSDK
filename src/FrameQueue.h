@@ -185,6 +185,49 @@ public:
      */
     int lastFramePts();
 
+    /**
+     * @brief 获取音频队列中未播放的音频时长（毫秒）
+     * @param sampleRate 采样率
+     * @param channels 通道数
+     * @param bytesPerSample 每个采样的字节数
+     * @return 未播放的音频时长（毫秒）
+     */
+    double getQueuedAudioDuration() const
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        
+        double totalSamples = 0;
+        int index = rindex_;
+        
+        // 遍历所有未播放的帧
+        for (int i = 0; i < remainingCount(); i++) {
+            const Frame& frame = queue_[index];
+            if (frame.isValid() && frame.get()) {
+                const AVFrame* avframe = frame.get();
+                totalSamples += avframe->nb_samples;
+            }
+            index = (index + 1) % maxSize_;
+        }
+        
+        // 获取第一帧用于获取音频参数
+        const Frame& firstFrame = queue_[rindex_];
+        if (!firstFrame.isValid() || !firstFrame.get()) {
+            return 0.0;
+        }
+        
+        const AVFrame* avframe = firstFrame.get();
+        int sampleRate = avframe->sample_rate;
+        int channels = avframe->ch_layout.nb_channels;
+        int bytesPerSample = av_get_bytes_per_sample((AVSampleFormat)avframe->format);
+        
+        // 计算总字节数
+        double totalBytes = totalSamples * channels * bytesPerSample;
+        // 计算每毫秒的字节数
+        double bytesPerMs = sampleRate * channels * bytesPerSample / 1000.0;
+        // 计算缓冲延迟
+        return totalBytes / bytesPerMs;
+    }
+
 private:
     std::vector<Frame> queue_;     // 帧队列
     int rindex_;                   // 读索引
@@ -196,7 +239,7 @@ private:
 
     int serial_;                   // 当前版本，和packetQueue一致
     bool aborted_;                 // 队列是否已中止，和packetQueue一致
-    std::mutex mutex_;             // 互斥锁
+    mutable std::mutex mutex_;             // 互斥锁
     std::condition_variable cond_; // 条件变量
 };
 #pragma endregion

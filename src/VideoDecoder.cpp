@@ -8,10 +8,8 @@ extern "C" {
 }
 
 VideoDecoder::VideoDecoder(std::shared_ptr<Demuxer> demuxer, std::shared_ptr<SyncController> syncController)
-    : DecoderBase(demuxer)
-    , syncController_(syncController)
+    : DecoderBase(demuxer, syncController)
     , frameRate_(0.0)
-    , frameRateControlEnabled_(true)
     , lastFrameTime_(0.0)
 {
     // 初始化视频时钟
@@ -104,7 +102,7 @@ void VideoDecoder::decodeLoop() {
         AVRational tb = stream_->time_base;
         AVRational frame_rate = av_guess_frame_rate(demuxer_->formatContext(), stream_, NULL);
         double duration = (frame_rate.num && frame_rate.den) 
-            ? av_q2d(av_inv_q(frame_rate)) * 1000.0 
+            ? av_q2d(av_inv_q(frame_rate)) 
             : 0;
         
         // 计算PTS
@@ -126,7 +124,7 @@ void VideoDecoder::decodeLoop() {
         
         // 如果启用了帧率控制，则根据帧率控制推送速度
         if (frameRateControlEnabled_ && frameRate_ > 0.0) {
-            double displayTime = calculateFrameDisplayTime(pts, duration);
+            double displayTime = calculateFrameDisplayTime(pts, duration * 1000.0);
             if (!utils::greater(displayTime, 0.0)) {
             //    continue;
             } else {

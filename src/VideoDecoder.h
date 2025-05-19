@@ -44,9 +44,7 @@ private:
 
 private:
     double frameRate_;              // 检测到的帧率
-    bool frameRateControlEnabled_;  // 是否启用帧率控制
     double lastFrameTime_;          // 上一帧的显示时间
 
     std::shared_ptr<HardwareAccel> hwAccel_;  // 硬件加速器
-    std::shared_ptr<SyncController> syncController_;  // 同步控制器
 };

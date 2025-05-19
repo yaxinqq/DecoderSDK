@@ -73,12 +73,12 @@ std::shared_ptr<PacketQueue> Demuxer::packetQueue(AVMediaType mediaType) const
 
 bool Demuxer::hasVideo() const
 {
+    return false;
     return videoStreamIndex_ >= 0 && formatContext_ != nullptr;
 }
     
 bool Demuxer::hasAudio() const
 {
-    return false;
     return audioStreamIndex_ >= 0 && formatContext_ != nullptr;
 }
 

@@ -25,6 +25,7 @@ public:
      * @param queueSerial 包队列数据包序号
      */
     void init(int queueSerial);
+    void reset();
 
     /*
      * @brief 获得当前时钟

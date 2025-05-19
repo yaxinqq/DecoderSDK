@@ -71,9 +71,6 @@ int main(int argc, char *argv[])
     manager.setFrameRateControl(true); // 关闭内部帧率控制
     manager.startDecode();
 
-    // 同步控制器，以音频为主
-    // SyncController sync(SyncController::MasterClock::Audio, 0.010, 0.100, 0.1);
-
     // 测试时长和计时
     const int TEST_DURATION_SEC = 5;
     auto testStart = std::chrono::steady_clock::now();
@@ -86,30 +83,17 @@ int main(int argc, char *argv[])
     // 启动音频线程
     std::thread audioThread([&]()
                             {
-        // while (running) {
-        //     Frame afr;
-        //     if (manager.audioQueue().popFrame(afr, 1)) {
-        //         double audioPts   = afr.pts();          // 秒
-        //         double frameDurMs = afr.duration() * 1000;  // ms
-        //         std::cout << "音频帧PTS: " << audioPts << std::endl;
-
-        //         // 更新音频时钟
-        //         sync.updateAudioClock(audioPts);
-
-        //         // 估算队列时长
-        //         double bufferDelay = manager.audioQueue().remainingCount() * frameDurMs;
-
-        //         // 计算并 sleep
-        //         double delayMs = sync.computeAudioDelay(audioPts, bufferDelay, playbackSpeed);
-        //         if (delayMs > 0)
-        //             std::this_thread::sleep_for(std::chrono::duration<double, std::milli>(delayMs / playbackSpeed));
-
-        //         audioFPS.update();
-        //         audioCount++;
-        //     } else {
-        //         std::this_thread::sleep_for(std::chrono::milliseconds(1));
-        //     }
-        // } 
+       while (running) {
+           Frame vfr;
+           if (manager.audioQueue().popFrame(vfr, 0)) {
+               double videoPts = vfr.pts();
+               std::cout << "音频帧PTS: " << videoPts << std::endl;
+               audioFPS.update();
+               audioCount++;
+           } else {
+               std::this_thread::sleep_for(std::chrono::milliseconds(1));
+           }
+       }
     });
 
     // 启动视频线程
@@ -117,17 +101,17 @@ int main(int argc, char *argv[])
     double frameDurMs = 1000.0 / manager.getVideoFrameRate();
 
     std::thread videoThread([&]() {
-        while (running) {
-            Frame vfr;
-            if (manager.videoQueue().popFrame(vfr, 0)) {
-                double videoPts = vfr.pts();
-                std::cout << "视频帧PTS: " << videoPts << std::endl;
-                videoFPS.update();
-                videoCount++;
-            } else {
-                std::this_thread::sleep_for(std::chrono::milliseconds(1));
-            }
-        }
+        // while (running) {
+        //     Frame vfr;
+        //     if (manager.videoQueue().popFrame(vfr, 0)) {
+        //         double videoPts = vfr.pts();
+        //         std::cout << "视频帧PTS: " << videoPts << std::endl;
+        //         videoFPS.update();
+        //         videoCount++;
+        //     } else {
+        //         std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        //     }
+        // }
     });
 
     // 主线程监测时长
