@@ -52,6 +52,10 @@ void SyncController::resetClocks()
     audioClock_.reset();
     videoClock_.reset();
     externalClock_.reset();
+
+    // 重置平滑值
+    smoothedVideoDrift_ = 0.0;
+    smoothedAudioDrift_ = 0.0;
 }
 
 double SyncController::getMasterClock() const {

@@ -417,4 +417,24 @@ int FrameQueue::lastFramePts()
         return -1;
 }
 
+void FrameQueue::flush()
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    
+    // 清空所有帧
+    for (int i = 0; i < size_; i++) {
+        int idx = (rindex_ + i) % maxSize_;
+        queue_[idx].unref();
+    }
+    
+    // 重置索引和计数器
+    rindex_ = 0;
+    windex_ = 0;
+    rindexShown_ = 0;
+    size_ = 0;
+    
+    // 通知所有等待的线程
+    cond_.notify_all();
+}
+
 #pragma endregion

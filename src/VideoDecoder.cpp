@@ -53,12 +53,15 @@ void VideoDecoder::decodeLoop() {
     while (isRunning_.load())
     {
         // 检查序列号是否变化
-        if (serial != packetQueue->serial())
-        {
+        if (serial != packetQueue->serial()) {
             avcodec_flush_buffers(codecCtx_);
             serial = packetQueue->serial();
             frameQueue_.setSerial(serial);
+
+            // 重置视频时钟
             syncController_->updateVideoClock(0.0, serial);
+            // 重置最后帧时间
+            lastFrameTime_ = 0.0;
         }
         
         // 获取一个可写入的帧
@@ -100,6 +103,12 @@ void VideoDecoder::decodeLoop() {
         const double duration = 1 / av_q2d(stream_->avg_frame_rate);
         // 计算PTS（单位s）
         const double pts = calculatePts(frame);
+
+        // 如果当前小于seekPos，丢弃帧
+        if (!utils::greaterAndEqual(pts, seekPos_.load())) {
+            av_frame_unref(frame);
+            continue;
+        }
         
         // 更新视频时钟
         if (!std::isnan(pts)) {

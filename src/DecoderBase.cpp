@@ -7,6 +7,7 @@ DecoderBase::DecoderBase(std::shared_ptr<Demuxer> demuxer, std::shared_ptr<SyncC
     , frameQueue_(3, true)
     , isRunning_(false)
     , speed_(1.0f)
+    , seekPos_{0.0}
 {
 }
 
@@ -79,6 +80,9 @@ void DecoderBase::start()
     // 设置帧队列的中止状态与包队列一致
     frameQueue_.setAbortStatus(packetQueue->isAbort());
 
+    // 清空seek节点
+    seekPos_.store(0.0);
+
     isRunning_ = true;
     thread_ = std::thread(&DecoderBase::decodeLoop, this);
 }
@@ -103,6 +107,11 @@ void DecoderBase::close()
     if (codecCtx_) {
         avcodec_free_context(&codecCtx_);
     }
+}
+
+void DecoderBase::setSeekPos(double pos)
+{
+    seekPos_.store(pos);
 }
 
 FrameQueue &DecoderBase::frameQueue()

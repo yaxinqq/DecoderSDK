@@ -127,7 +127,40 @@ bool DecoderManager::seek(double position)
         return false;
     }
 
-    return demuxer_->seek(position);
+    // 暂停解码器
+    bool wasPaused = false;
+    if (videoDecoder_ || audioDecoder_) {
+        wasPaused = demuxer_->isPaused();
+        if (!wasPaused) {
+            demuxer_->pause();
+        }
+    }
+
+    // 考虑倍速因素调整seek位置
+    // 注意：这里不需要调整position，因为position是目标时间点，与倍速无关
+    
+    // 执行seek操作
+    bool result = demuxer_->seek(position);
+    
+    if (result) {
+        // 清空队列，并设置seek节点
+        if (videoDecoder_) {
+            videoDecoder_->setSeekPos(position);
+        }
+        if (audioDecoder_) {
+            audioDecoder_->setSeekPos(position);
+        }
+
+        // 重置同步控制器的时钟
+        syncController_->resetClocks();
+    }
+
+    // 如果之前没有暂停，则恢复播放
+    if (!wasPaused) {
+        demuxer_->resume();
+    }
+
+    return result;
 }
 
 bool DecoderManager::setSpeed(double speed)

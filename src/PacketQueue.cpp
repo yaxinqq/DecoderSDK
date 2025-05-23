@@ -175,8 +175,11 @@ bool PacketQueue::pop(Packet &pkt, int delayTimeMs)
 
 void PacketQueue::flush()
 {
-    std::unique_lock<std::mutex> lock(mutex_);
-    clear();
+	std::lock_guard<std::mutex> lock(mutex_);
+	while (!queue_.empty()) {
+		queue_.pop();
+	}
+
     size_ = 0;
     duration_ = 0;
     serial_++;
@@ -184,14 +187,14 @@ void PacketQueue::flush()
 
 void PacketQueue::start()
 {
-    std::unique_lock<std::mutex> lock(mutex_);
+    std::lock_guard<std::mutex> lock(mutex_);
     requestAborted_.store(false);
     serial_++;
 }
 
 void PacketQueue::abort()
 {
-    std::unique_lock<std::mutex> lock(mutex_);
+    std::lock_guard<std::mutex> lock(mutex_);
     requestAborted_.store(true);
     cond_.notify_all();
 }
@@ -255,7 +258,7 @@ void PacketQueue::setMaxPacketCount(int maxPacketCount)
     if (maxPacketCount_ <= 0)
         return;
 
-    std::unique_lock<std::mutex> lock(mutex_);
+    std::lock_guard<std::mutex> lock(mutex_);
     maxPacketCount_ = maxPacketCount;
     cond_.notify_one();
 }

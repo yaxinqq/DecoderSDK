@@ -21,6 +21,7 @@ public:
     virtual void start();
     virtual void stop();
     virtual void close();
+    virtual void setSeekPos(double pos);
 
     FrameQueue& frameQueue();
 
@@ -50,6 +51,7 @@ protected:
     std::atomic_bool isRunning_;
 
     std::atomic<double> speed_;
+    std::atomic<double> seekPos_;
 
     std::condition_variable sleepCond_;
     std::mutex sleepMutex_;

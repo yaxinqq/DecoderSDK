@@ -59,7 +59,7 @@ int main(int argc, char *argv[])
     std::string videoPath = (argc > 1) ? argv[1]
                                        : "C:/Users/win10/Desktop/test_video/test.mp4";
 
-    float playbackSpeed = 16.0f;
+    float playbackSpeed = 8.0f;
     DecoderManager manager;
     manager.setSpeed(playbackSpeed);
     if (!manager.open(videoPath))
@@ -87,7 +87,7 @@ int main(int argc, char *argv[])
            Frame vfr;
            if (manager.audioQueue().popFrame(vfr, 0)) {
                double videoPts = vfr.pts();
-               std::cout << "音频帧PTS: " << videoPts << std::endl;
+            //    std::cout << "音频帧PTS: " << videoPts << std::endl;
                audioFPS.update();
                audioCount++;
            } else {
@@ -97,9 +97,6 @@ int main(int argc, char *argv[])
     });
 
     // 启动视频线程
-    double lastFrameTime = 0.0;
-    double frameDurMs = 1000.0 / manager.getVideoFrameRate();
-
     std::thread videoThread([&]() {
         while (running) {
             Frame vfr;
@@ -108,6 +105,13 @@ int main(int argc, char *argv[])
                 std::cout << "视频帧PTS: " << videoPts << std::endl;
                 videoFPS.update();
                 videoCount++;
+
+                // 当视频到达100帧后，调用seek
+                // if (videoCount.load() % 100 == 0) {
+                //     double seekPos = videoPts + 3.0; // 5秒后
+                //     manager.seek(seekPos);
+                //     std::cout << "Seek to " << seekPos << " seconds" << std::endl;
+                // }
             } else {
                 std::this_thread::sleep_for(std::chrono::milliseconds(1));
             }

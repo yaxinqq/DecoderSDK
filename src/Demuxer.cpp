@@ -157,6 +157,7 @@ bool Demuxer::resume()
     return true;
 }
 
+#include <iostream>
 bool Demuxer::seek(double position)
 {
     if (!formatContext_) {
@@ -164,8 +165,19 @@ bool Demuxer::seek(double position)
     }
 
     std::lock_guard<std::mutex> lock(mutex_);
-    int64_t seekPos = position * AV_TIME_BASE;
-    int ret = avformat_seek_file(formatContext_, -1, INT64_MIN, seekPos, INT64_MAX, 0);
+    int streamIndex = videoStreamIndex_ >= 0? videoStreamIndex_ : audioStreamIndex_;
+    if (streamIndex < 0) {
+        return false;
+    }
+
+    AVStream *stream = formatContext_->streams[streamIndex];
+    if (!stream) {
+        return false;
+    }
+
+    int64_t seekPos = av_rescale_q((int64_t)(position * AV_TIME_BASE), AVRational{1, AV_TIME_BASE}, stream->time_base);
+    std::cout << "Seek to " << seekPos << " seconds" << std::endl;
+    int ret = avformat_seek_file(formatContext_, streamIndex, INT64_MIN, seekPos, INT64_MAX, 0);
     if (ret < 0) {
         return false;
     }

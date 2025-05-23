@@ -40,6 +40,8 @@ void AudioDecoder::decodeLoop()
             avcodec_flush_buffers(codecCtx_);
             serial = packetQueue->serial();
             frameQueue_.setSerial(serial);
+            
+            // 重置音频时钟
             syncController_->updateAudioClock(0.0, serial);
         }
         
@@ -100,6 +102,12 @@ void AudioDecoder::decodeLoop()
         const double duration = frame->nb_samples / (double)codecCtx_->sample_rate;
         // 计算PTS（单位s）
         const double pts = calculatePts(frame);
+
+        // 如果当前小于seekPos，丢弃帧
+        if (!utils::greaterAndEqual(pts, seekPos_.load())) {
+            av_frame_unref(frame);
+            continue;
+        }
         
         // 更新音频时钟
         if (!std::isnan(pts)) {
