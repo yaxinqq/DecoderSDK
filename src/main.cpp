@@ -1,6 +1,7 @@
 ﻿#include <iostream>
 #include <chrono>
 #include <iomanip>
+#include <thread>
 #include "DecoderManager.h"
 #include "Utils.h"
 
@@ -59,7 +60,7 @@ int main(int argc, char *argv[])
     std::string videoPath = (argc > 1) ? argv[1]
                                        : "C:/Users/win10/Desktop/test_video/test.mp4";
 
-    float playbackSpeed = 8.0f;
+    float playbackSpeed = 3.0f;
     DecoderManager manager;
     manager.setSpeed(playbackSpeed);
     if (!manager.open(videoPath))
@@ -72,7 +73,7 @@ int main(int argc, char *argv[])
     manager.startDecode();
 
     // 测试时长和计时
-    const int TEST_DURATION_SEC = 3;
+    const int TEST_DURATION_SEC = 20;
     auto testStart = std::chrono::steady_clock::now();
     std::atomic<bool> running{true};
 
@@ -81,42 +82,45 @@ int main(int argc, char *argv[])
     std::atomic<int> audioCount{0}, videoCount{0};
 
     // 启动音频线程
+    double lastAudioPts;
     std::thread audioThread([&]()
                             {
        while (running) {
-           Frame vfr;
-           if (manager.audioQueue().popFrame(vfr, 0)) {
-               double videoPts = vfr.pts();
-            //    std::cout << "音频帧PTS: " << videoPts << std::endl;
-               audioFPS.update();
-               audioCount++;
+           Frame afr;
+           if (manager.audioQueue().popFrame(afr, 1)) {
+                double audioPts = afr.pts();
+                // std::cout << "音频帧PTS: " << videoPts << std::endl;
+                lastAudioPts = audioPts;
+                audioFPS.update();
+                audioCount++;
            } else {
-               std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                // utils::highPrecisionSleep(1); // 1ms
            }
-       }
-    });
+       } });
 
     // 启动视频线程
-    std::thread videoThread([&]() {
+    double lastVideoPts;
+    std::thread videoThread([&]()
+                            {
         while (running) {
             Frame vfr;
-            if (manager.videoQueue().popFrame(vfr, 0)) {
+            if (manager.videoQueue().popFrame(vfr, 1)) {
                 double videoPts = vfr.pts();
-                std::cout << "视频帧PTS: " << videoPts << std::endl;
+                // std::cout << "视频帧PTS: " << videoPts << std::endl;
+                lastVideoPts = videoPts;
                 videoFPS.update();
                 videoCount++;
 
                 // 当视频到达100帧后，调用seek
-                // if (videoCount.load() % 100 == 0) {
-                //     double seekPos = videoPts + 3.0; // 5秒后
-                //     manager.seek(seekPos);
-                //     std::cout << "Seek to " << seekPos << " seconds" << std::endl;
-                // }
+                //if (videoCount.load() % 100 == 0) {
+                //    double seekPos = videoPts + 3.0; // 5秒后
+                //    manager.seek(seekPos);
+                //    std::cout << "Seek to " << seekPos << " seconds" << std::endl;
+                //}
             } else {
-                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                // utils::highPrecisionSleep(1); // 1ms
             }
-        }
-    });
+        } });
 
     // 主线程监测时长
     while (true)
@@ -138,6 +142,9 @@ int main(int argc, char *argv[])
     std::cout << "\n测试完成" << std::endl;
     std::cout << "音频帧数: " << audioCount.load() << " (" << audioFPS.getFPS() << " fps)" << std::endl;
     std::cout << "视频帧数: " << videoCount.load() << " (" << videoFPS.getFPS() << " fps)" << std::endl;
+
+    std::cout << "音频帧PTS: " << lastAudioPts << std::endl;
+    std::cout << "视频帧PTS: " << lastVideoPts << std::endl;
 
     manager.stopDecode();
     manager.close();

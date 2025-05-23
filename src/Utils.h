@@ -1,4 +1,5 @@
 #pragma once
+#include <chrono>
 
 #define EPSILON 1e-6
 #define DOUBLEEPSILON 1e-12
@@ -17,5 +18,5 @@ namespace utils {
     bool greaterAndEqual(float a, float b, double epsilon = EPSILON);
 
     // 高精度休眠函数
-    void highPrecisionSleep(double ms);
+    void highPrecisionSleep(double ms, std::chrono::steady_clock::time_point startTime = std::chrono::steady_clock::now());
 }

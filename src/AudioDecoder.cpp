@@ -8,6 +8,7 @@ extern "C" {
 
 AudioDecoder::AudioDecoder(std::shared_ptr<Demuxer> demuxer, std::shared_ptr<SyncController> syncController)
     : DecoderBase(demuxer, syncController)
+    , lastFrameTime_(std::nullopt)
 {
 }
 
@@ -31,7 +32,7 @@ void AudioDecoder::decodeLoop()
     
     int serial = packetQueue->serial();
     syncController_->updateAudioClock(0.0, serial);
-    
+
     while (isRunning_)
     {
         // 检查序列号是否变化
@@ -43,6 +44,8 @@ void AudioDecoder::decodeLoop()
             
             // 重置音频时钟
             syncController_->updateAudioClock(0.0, serial);
+            // 重置最后帧时间
+            lastFrameTime_ = std::nullopt;
         }
         
         // 获取一个可写入的帧
@@ -102,17 +105,17 @@ void AudioDecoder::decodeLoop()
         const double duration = frame->nb_samples / (double)codecCtx_->sample_rate;
         // 计算PTS（单位s）
         const double pts = calculatePts(frame);
-
-        // 如果当前小于seekPos，丢弃帧
-        if (!utils::greaterAndEqual(pts, seekPos_.load())) {
-            av_frame_unref(frame);
-            continue;
-        }
         
         // 更新音频时钟
         if (!std::isnan(pts)) {
             syncController_->updateAudioClock(pts, serial);
         }
+
+		// 如果当前小于seekPos，丢弃帧
+		if (!utils::greaterAndEqual(pts, seekPos_.load())) {
+			av_frame_unref(frame);
+			continue;
+		}
         
         // 将解码后的帧复制到输出帧
         *outFrame = Frame(frame);
@@ -125,7 +128,7 @@ void AudioDecoder::decodeLoop()
         if (frameRateControlEnabled_) {
             double displayTime = calculateFrameDisplayTime(pts, duration * 1000.0);
             if (utils::greater(displayTime, 0.0)) {
-                utils::highPrecisionSleep(displayTime);
+                std::this_thread::sleep_until(lastFrameTime_.value());
             }
         }
         
@@ -240,18 +243,17 @@ double AudioDecoder::calculateFrameDisplayTime(double pts, double duration)
         return 0.0;
     }
     
-    double currentTime = av_gettime_relative() / 1000.0;
-    
-    // 首次调用，初始化
-    if (utils::equal(lastFrameTime_, 0.0)) {
-        lastFrameTime_ = currentTime;
-        return 0.0;
-    }
-    
     // 获取当前播放速度
     float currentSpeed = speed_.load();
     if (currentSpeed <= 0.0f) {
         currentSpeed = 1.0f; // 防止除零错误
+    }
+    
+    // 首次调用，初始化
+    auto currentTime = std::chrono::steady_clock::now();
+    if (!lastFrameTime_.has_value()) {
+        lastFrameTime_ = currentTime;
+        return 0.0;
     }
     
     // 基于帧率计算理论帧间隔，并考虑播放速度
@@ -259,10 +261,10 @@ double AudioDecoder::calculateFrameDisplayTime(double pts, double duration)
     frameInterval /= currentSpeed; // 速度越快，帧间隔越短
     
     // 计算下一帧应该解码的时间点
-    double nextFrameTime = lastFrameTime_ + frameInterval;
+    const auto nextFrameTime = *lastFrameTime_ + std::chrono::microseconds(static_cast<int64_t>(frameInterval * 1000.0));
     
     // 计算基本延迟时间
-    double baseDelay = nextFrameTime - currentTime;
+    double baseDelay = std::chrono::duration_cast<std::chrono::microseconds>(nextFrameTime - currentTime).count() / 1000.0;
     
     // 如果有同步控制器，直接使用同步控制器计算的延迟
     double finalDelay = baseDelay;
@@ -271,9 +273,9 @@ double AudioDecoder::calculateFrameDisplayTime(double pts, double duration)
     }
     
     // 更新上一帧时间
-    lastFrameTime_ = currentTime + finalDelay;
+    lastFrameTime_ = currentTime + std::chrono::microseconds(static_cast<int64_t>(finalDelay * 1000.0));
 
-    // std::cout << "pts: " << pts << ", duration: " << duration << ", delay: " << finalDelay << std::endl; // Add this line to print ou
+    // std::cout << "pts: " << pts << ", duration: " << duration << ", delay: " << finalDelay << ", nextFrameTime: " << nextFrameTime << ", lastFrameTime: " << lastFrameTime_ << std::endl; // Add this line to print ou
     
     return finalDelay;
 }

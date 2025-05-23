@@ -4,6 +4,7 @@
 #include "HardwareAccel.h"
 #include "SyncController.h"
 #include <memory>
+#include <optional>
 
 class VideoDecoder : public DecoderBase 
 {
@@ -39,7 +40,7 @@ private:
 
 private:
     double frameRate_;              // 检测到的帧率
-    double lastFrameTime_;          // 上一帧的显示时间
+    std::optional<std::chrono::steady_clock::time_point> lastFrameTime_;          // 上一帧的时间点
 
     std::shared_ptr<HardwareAccel> hwAccel_;  // 硬件加速器
 };

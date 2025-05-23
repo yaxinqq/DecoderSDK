@@ -94,7 +94,7 @@ double SyncController::computeVideoDelay(double framePts,
 
     // 5. 丢帧判断：如果帧太晚，落后超过阈值，就返回一个负值，表示需要丢弃
     if (!utils::greaterAndEqual(drift, -thresh)) {
-        std::cout << "drop frame!!!!!!!" << std::endl;
+        // std::cout << "drop frame!!!!!!!" << std::endl;
         return -1.0;  
     }
 
@@ -113,12 +113,6 @@ double SyncController::computeAudioDelay(double audioPts,
                                          double bufferDelay,
                                          double speed)
 {
-
-
-    // 1) 更新音频时钟，并推进到当前 pts
-    const_cast<Clock&>(audioClock_).setClock(audioPts, audioClock_.serial());
-    const_cast<Clock&>(audioClock_).setClockSpeed(speed);
-
     // 2) 拿到主时钟（秒）
     double master = getMasterClock();
 

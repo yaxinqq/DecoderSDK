@@ -2,6 +2,8 @@
 #include "Clock.h"
 #include "DecoderBase.h"
 
+#include <optional>
+
 extern "C" {
 #include "libswresample/swresample.h"
 }
@@ -30,5 +32,5 @@ private:
     SwrContext *swrCtx_ = nullptr;  // 用于音频重采样
     bool needResample_ = false;     // 是否需要重采样
 
-    double lastFrameTime_ = 0.0;    // 上一帧的显示时间
+    std::optional<std::chrono::steady_clock::time_point> lastFrameTime_;          // 上一帧的时间点
 };

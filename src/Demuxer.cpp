@@ -176,7 +176,6 @@ bool Demuxer::seek(double position)
     }
 
     int64_t seekPos = av_rescale_q((int64_t)(position * AV_TIME_BASE), AVRational{1, AV_TIME_BASE}, stream->time_base);
-    std::cout << "Seek to " << seekPos << " seconds" << std::endl;
     int ret = avformat_seek_file(formatContext_, streamIndex, INT64_MIN, seekPos, INT64_MAX, 0);
     if (ret < 0) {
         return false;
