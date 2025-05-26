@@ -73,7 +73,7 @@ int main(int argc, char *argv[])
     manager.startDecode();
 
     // 测试时长和计时
-    const int TEST_DURATION_SEC = 20;
+    const int TEST_DURATION_SEC = 8;
     auto testStart = std::chrono::steady_clock::now();
     std::atomic<bool> running{true};
 
@@ -89,7 +89,7 @@ int main(int argc, char *argv[])
            Frame afr;
            if (manager.audioQueue().popFrame(afr, 1)) {
                 double audioPts = afr.pts();
-                // std::cout << "音频帧PTS: " << videoPts << std::endl;
+                std::cout << "音频帧PTS: " << audioPts << std::endl;
                 lastAudioPts = audioPts;
                 audioFPS.update();
                 audioCount++;
@@ -106,17 +106,17 @@ int main(int argc, char *argv[])
             Frame vfr;
             if (manager.videoQueue().popFrame(vfr, 1)) {
                 double videoPts = vfr.pts();
-                // std::cout << "视频帧PTS: " << videoPts << std::endl;
+                std::cout << "视频帧PTS: " << videoPts << std::endl;
                 lastVideoPts = videoPts;
                 videoFPS.update();
                 videoCount++;
 
                 // 当视频到达100帧后，调用seek
-                //if (videoCount.load() % 100 == 0) {
-                //    double seekPos = videoPts + 3.0; // 5秒后
-                //    manager.seek(seekPos);
-                //    std::cout << "Seek to " << seekPos << " seconds" << std::endl;
-                //}
+                if (videoCount.load() % 100 == 0) {
+                   double seekPos = videoPts + 3.0; // 5秒后
+                   manager.seek(seekPos);
+                   std::cout << "Seek to " << seekPos << " seconds" << std::endl;
+                }
             } else {
                 // utils::highPrecisionSleep(1); // 1ms
             }
