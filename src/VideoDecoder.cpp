@@ -5,6 +5,7 @@
 
 extern "C" {
 #include <libavutil/time.h>
+#include <libswscale/swscale.h>
 }
 
 VideoDecoder::VideoDecoder(std::shared_ptr<Demuxer> demuxer, std::shared_ptr<SyncController> syncController)
@@ -12,11 +13,20 @@ VideoDecoder::VideoDecoder(std::shared_ptr<Demuxer> demuxer, std::shared_ptr<Syn
     , frameRate_(0.0)
     , lastFrameTime_(std::nullopt)
 {
+    // 先初始化默认硬件类型
+    init();
 }
 
 VideoDecoder::~VideoDecoder() 
 {
     close();
+}
+
+void VideoDecoder::init(HWAccelType type, int deviceIndex, AVPixelFormat softPixelFormat)
+{
+    hwAccelType_ = type;
+    deviceIndex_ = deviceIndex;
+    softPixelFormat_ = softPixelFormat;
 }
 
 bool VideoDecoder::open()
@@ -37,6 +47,9 @@ bool VideoDecoder::open()
 #include <iostream>
 void VideoDecoder::decodeLoop() {
     AVFrame* frame = av_frame_alloc();
+    AVFrame* swsFrame = nullptr;  // 用于格式转换的帧
+    struct SwsContext* swsCtx = nullptr;  // 格式转换上下文
+    
     if (!frame)
         return;
     
@@ -115,14 +128,76 @@ void VideoDecoder::decodeLoop() {
 			continue;
 		}
         
+        // 软解时进行图像格式转换
+        AVFrame* outputFrame = frame;
+        if (!frame->hw_frames_ctx && frame->format != softPixelFormat_) {
+            // 如果是软解且格式不匹配，进行格式转换
+            if (!swsFrame) {
+                swsFrame = av_frame_alloc();
+                if (!swsFrame) {
+                    av_frame_unref(frame);
+                    continue;
+                }
+            }
+            
+            // 初始化转换上下文
+            swsCtx = sws_getCachedContext(swsCtx,
+                frame->width, frame->height, (AVPixelFormat)frame->format,
+                frame->width, frame->height, softPixelFormat_,
+                SWS_BILINEAR, NULL, NULL, NULL);
+                
+            if (!swsCtx) {
+                av_frame_unref(frame);
+                continue;
+            }
+            
+            // 设置目标帧参数
+            swsFrame->format = softPixelFormat_;
+            swsFrame->width = frame->width;
+            swsFrame->height = frame->height;
+            swsFrame->pts = frame->pts;
+            
+            // 分配缓冲区
+            ret = av_frame_get_buffer(swsFrame, 0);
+            if (ret < 0) {
+                av_frame_unref(frame);
+                continue;
+            }
+            
+            // 确保帧可写
+            ret = av_frame_make_writable(swsFrame);
+            if (ret < 0) {
+                av_frame_unref(frame);
+                continue;
+            }
+            
+            // 执行格式转换
+            ret = sws_scale(swsCtx, 
+                (const uint8_t* const*)frame->data, frame->linesize, 0, frame->height,
+                swsFrame->data, swsFrame->linesize);
+                
+            if (ret <= 0) {
+                av_frame_unref(frame);
+                continue;
+            }
+            
+            // 使用转换后的帧
+            outputFrame = swsFrame;
+        }
+        
         // 将解码后的帧复制到输出帧
-        *outFrame = Frame(frame);
+        *outFrame = Frame(outputFrame);
         outFrame->setSerial(serial);
         outFrame->setDuration(duration);
         outFrame->setPts(pts);
         
         // 检查是否是硬件加速解码
         outFrame->setIsInHardware(frame->hw_frames_ctx != NULL);
+        
+        // 如果使用了转换帧，需要释放原始帧
+        if (outputFrame == swsFrame) {
+            av_frame_unref(frame);
+        }
         
         // 如果启用了帧率控制，则根据帧率控制推送速度
         if (frameRateControlEnabled_) {
@@ -137,13 +212,20 @@ void VideoDecoder::decodeLoop() {
         frameQueue_.push();
     }
     
+    // 清理资源
+    if (swsCtx) {
+        sws_freeContext(swsCtx);
+    }
+    if (swsFrame) {
+        av_frame_free(&swsFrame);
+    }
     av_frame_free(&frame);
 }
 
 bool VideoDecoder::setHardwareDecode()
 {
     // 创建硬件加速器（默认尝试自动选择最佳硬件加速方式）
-    hwAccel_ = HardwareAccelFactory::getInstance().createHardwareAccel(HWAccelType::AUTO);
+    hwAccel_ = HardwareAccelFactory::getInstance().createHardwareAccel(hwAccelType_, deviceIndex_);
         
     if (hwAccel_) {
         if (hwAccel_->getType() == HWAccelType::NONE) {

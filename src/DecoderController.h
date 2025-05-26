@@ -5,15 +5,24 @@
 #include "VideoDecoder.h"
 #include <memory>
 
-class DecoderManager {
+class DecoderController {
 public:
     struct Config {
+        // 是否开启帧率控制
         bool enableFrameRateControl = true;
+        // 播放速度
+        double speed = 1.0;
+        // 硬件解码器类型
+        HWAccelType hwAccelType = HWAccelType::AUTO;
+        // 硬件解码器设备索引
+        int hwDeviceIndex = 0;
+        // 软解时的视频输出格式
+        AVPixelFormat videoOutFormat = AV_PIX_FMT_YUV420P;
     };
 
 public:
-    DecoderManager();
-    ~DecoderManager();
+    DecoderController();
+    ~DecoderController();
     
     // 打开媒体文件
     bool open(const std::string& filePath, const Config &config = Config());
@@ -54,12 +63,11 @@ private:
     std::shared_ptr<AudioDecoder> audioDecoder_;
     std::shared_ptr<SyncController> syncController_;
 
-    // 当前播放速度
-    double speed_ = 1.0;
-
     // 当前是否已开始解码
     bool isStartDecoding_ = false;
 
     // 解码器配置项
     Config config_;
+    // 是否是实时流
+    bool isLiveStream_ = false;
 };

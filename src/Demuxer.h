@@ -16,7 +16,7 @@ public:
 	Demuxer();
 	virtual ~Demuxer();
 
-    bool open(const std::string& url);
+    bool open(const std::string& url, bool isRealTime);
     void close();
 
     void start();

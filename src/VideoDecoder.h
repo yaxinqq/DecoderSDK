@@ -12,6 +12,8 @@ public:
     VideoDecoder(std::shared_ptr<Demuxer> demuxer, std::shared_ptr<SyncController> syncController);
     virtual ~VideoDecoder();
 
+    void init(HWAccelType type = HWAccelType::AUTO, int deviceIndex = 0, AVPixelFormat softPixelFormat = AV_PIX_FMT_YUV420P);
+
     bool open() override;
 
     AVMediaType type() const override;
@@ -43,4 +45,11 @@ private:
     std::optional<std::chrono::steady_clock::time_point> lastFrameTime_;          // 上一帧的时间点
 
     std::shared_ptr<HardwareAccel> hwAccel_;  // 硬件加速器
+    // 当前指定的硬件加速类型
+    HWAccelType hwAccelType_ = HWAccelType::AUTO;
+    // 当前指定的加速硬件
+    int deviceIndex_ = 0;
+
+    // 软解时的图像格式
+    AVPixelFormat softPixelFormat_ = AV_PIX_FMT_YUV420P;
 };

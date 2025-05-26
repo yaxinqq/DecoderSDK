@@ -11,8 +11,8 @@ set(SRC_FILES
     Clock.cpp
     DecoderBase.h
     DecoderBase.cpp
-    DecoderManager.h
-    DecoderManager.cpp
+    DecoderController.h
+    DecoderController.cpp
     Demuxer.h
     Demuxer.cpp
     FrameQueue.h

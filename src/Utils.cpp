@@ -1,6 +1,6 @@
 #include "Utils.h"
 
-#include <chrono>
+#include <algorithm>
 #include <cmath>
 #include <thread>
 
@@ -65,5 +65,30 @@ namespace utils {
         // // spin lock
         // auto start = high_resolution_clock::now();
         // while ((high_resolution_clock::now() - start).count() / 1e9 < seconds);
+    }
+
+    bool isRealtime(const std::string &url)
+    {
+        std::string u = url;
+        std::transform(u.begin(), u.end(), u.begin(), ::tolower);
+
+        static const char* realtimePrefixes[] = {
+            "rtsp://", "rtmp://", "udp://", "tcp://", "srt://", "mms://"
+        };
+
+        for (const char* prefix : realtimePrefixes) {
+            if (u.find(prefix) == 0)
+                return true;
+        }
+
+        if ((u.find("http://") == 0 || u.find("https://") == 0) &&
+            (u.find(".m3u8") != std::string::npos ||
+            u.find("/live/") != std::string::npos ||
+            u.find("stream") != std::string::npos))
+        {
+            return true;
+        }
+
+        return false;
     }
 }

@@ -1,25 +1,27 @@
-#include "DecoderManager.h"
+#include "DecoderController.h"
 #include "Logger.h"
+#include "Utils.h"
 
-DecoderManager::DecoderManager()
+DecoderController::DecoderController()
     : demuxer_(std::make_shared<Demuxer>())
     , syncController_(std::make_shared<SyncController>())
 {
     Logger::initFromConfig("./etc/decoderSDK.json");
 }
 
-DecoderManager::~DecoderManager()
+DecoderController::~DecoderController()
 {
     stopDecode();
     close();
 }
 
-bool DecoderManager::open(const std::string& filePath, const Config &config)
+bool DecoderController::open(const std::string& filePath, const Config &config)
 {
     config_ = config;
+    isLiveStream_ = utils::isRealtime(filePath);
 
     // 打开媒体文件
-    if (!demuxer_->open(filePath)) {
+    if (!demuxer_->open(filePath, isLiveStream_)) {
         return false;
     }
 
@@ -28,7 +30,7 @@ bool DecoderManager::open(const std::string& filePath, const Config &config)
     return true;
 }
 
-bool DecoderManager::close()
+bool DecoderController::close()
 {
     // 停止解复用器
     if (demuxer_) {
@@ -39,7 +41,7 @@ bool DecoderManager::close()
     return true;
 }
 
-bool DecoderManager::pause()
+bool DecoderController::pause()
 {
     if (!demuxer_) {
         return false;
@@ -48,7 +50,7 @@ bool DecoderManager::pause()
     return demuxer_->pause();
 }
 
-bool DecoderManager::resume()
+bool DecoderController::resume()
 {
     if (!demuxer_) {
         return false;
@@ -57,7 +59,7 @@ bool DecoderManager::resume()
     return demuxer_->resume();
 }
 
-bool DecoderManager::startDecode()
+bool DecoderController::startDecode()
 {
     // 如果当前已开始解码，则先停止
     if (isStartDecoding_) {
@@ -70,8 +72,9 @@ bool DecoderManager::startDecode()
     // 创建视频解码器
     if (demuxer_->hasVideo()) {
         videoDecoder_ = std::make_shared<VideoDecoder>(demuxer_, syncController_);
+        videoDecoder_->init(config_.hwAccelType, config_.hwDeviceIndex, config_.videoOutFormat);
         videoDecoder_->setFrameRateControl(config_.enableFrameRateControl);
-        videoDecoder_->setSpeed(speed_);
+        videoDecoder_->setSpeed(config_.speed);
         if (!videoDecoder_->open()) {
             return false;
         }
@@ -80,7 +83,7 @@ bool DecoderManager::startDecode()
     // 创建音频解码器
     if (demuxer_->hasAudio()) {
         audioDecoder_ = std::make_shared<AudioDecoder>(demuxer_, syncController_);
-        audioDecoder_->setSpeed(speed_);
+        audioDecoder_->setSpeed(config_.speed);
         if (!audioDecoder_->open()) {
             return false;
         }
@@ -102,10 +105,11 @@ bool DecoderManager::startDecode()
         audioDecoder_->start();
     }
 
+    isStartDecoding_ = true;
     return true;
 }
 
-bool DecoderManager::stopDecode()
+bool DecoderController::stopDecode()
 {
     // 停止解码器，并销毁
     if (videoDecoder_) {
@@ -118,12 +122,18 @@ bool DecoderManager::stopDecode()
         audioDecoder_.reset();
     }
 
+    isStartDecoding_ = false;
     return true;
 }
 
-bool DecoderManager::seek(double position)
+bool DecoderController::seek(double position)
 {
     if (!demuxer_) {
+        return false;
+    }
+
+    // 如果是实时流，则不支持seek
+    if (isLiveStream_) {
         return false;
     }
 
@@ -163,13 +173,18 @@ bool DecoderManager::seek(double position)
     return result;
 }
 
-bool DecoderManager::setSpeed(double speed)
+bool DecoderController::setSpeed(double speed)
 {
     if (speed <= 0.0f) {
         return false;
     }
 
-    speed_ = speed;
+    // 如果是实时流，则不支持设置速度
+    if (isLiveStream_) {
+        return false;
+    }
+
+    config_.speed = speed;
 
     // 设置解码器速度
     if (videoDecoder_) {
@@ -187,29 +202,29 @@ bool DecoderManager::setSpeed(double speed)
     return true;
 }
 
-FrameQueue& DecoderManager::videoQueue()
+FrameQueue& DecoderController::videoQueue()
 {
     static FrameQueue emptyQueue;
     return videoDecoder_ ? videoDecoder_->frameQueue() : emptyQueue;
 }
 
-FrameQueue& DecoderManager::audioQueue()
+FrameQueue& DecoderController::audioQueue()
 {
     static FrameQueue emptyQueue;
     return audioDecoder_ ? audioDecoder_->frameQueue() : emptyQueue;
 }
 
-void DecoderManager::setMasterClock(SyncController::MasterClock type)
+void DecoderController::setMasterClock(SyncController::MasterClock type)
 {
     syncController_->setMaster(type);
 }
 
-double DecoderManager::getVideoFrameRate() const
+double DecoderController::getVideoFrameRate() const
 {
     return videoDecoder_ ? videoDecoder_->getFrameRate() : 0.0;
 }
 
-void DecoderManager::setFrameRateControl(bool enable)
+void DecoderController::setFrameRateControl(bool enable)
 {
     if (videoDecoder_) {
         videoDecoder_->setFrameRateControl(enable);
@@ -217,12 +232,12 @@ void DecoderManager::setFrameRateControl(bool enable)
     config_.enableFrameRateControl = enable;
 }
 
-bool DecoderManager::isFrameRateControlEnabled() const
+bool DecoderController::isFrameRateControlEnabled() const
 {
     return videoDecoder_ ? videoDecoder_->isFrameRateControlEnabled() : false;
 }
 
-double DecoderManager::curSpeed() const
+double DecoderController::curSpeed() const
 {
-    return speed_;
+    return config_.speed;
 }
