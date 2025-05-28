@@ -3,10 +3,9 @@
 #include "Utils.h"
 
 DecoderController::DecoderController()
-    : demuxer_(std::make_shared<Demuxer>())
-    , syncController_(std::make_shared<SyncController>())
+    : demuxer_(std::make_shared<Demuxer>()),
+      syncController_(std::make_shared<SyncController>())
 {
-    Logger::initFromConfig("./etc/decoderSDK.json");
 }
 
 DecoderController::~DecoderController()
@@ -15,7 +14,7 @@ DecoderController::~DecoderController()
     close();
 }
 
-bool DecoderController::open(const std::string& filePath, const Config &config)
+bool DecoderController::open(const std::string& filePath, const Config& config)
 {
     config_ = config;
     isLiveStream_ = utils::isRealtime(filePath);
@@ -71,24 +70,27 @@ bool DecoderController::startDecode()
 
     // 创建视频解码器
     if (demuxer_->hasVideo()) {
-        videoDecoder_ = std::make_shared<VideoDecoder>(demuxer_, syncController_);
-        videoDecoder_->init(config_.hwAccelType, config_.hwDeviceIndex, config_.videoOutFormat);
+        videoDecoder_ =
+            std::make_shared<VideoDecoder>(demuxer_, syncController_);
+        videoDecoder_->init(config_.hwAccelType, config_.hwDeviceIndex,
+                            config_.videoOutFormat);
         videoDecoder_->setFrameRateControl(config_.enableFrameRateControl);
         videoDecoder_->setSpeed(config_.speed);
         if (!videoDecoder_->open()) {
             return false;
         }
     }
-    
+
     // 创建音频解码器
     if (demuxer_->hasAudio()) {
-        audioDecoder_ = std::make_shared<AudioDecoder>(demuxer_, syncController_);
+        audioDecoder_ =
+            std::make_shared<AudioDecoder>(demuxer_, syncController_);
         audioDecoder_->setSpeed(config_.speed);
         if (!audioDecoder_->open()) {
             return false;
         }
     }
-    
+
     // 默认使用音频作为主时钟
     if (demuxer_->hasAudio()) {
         syncController_->setMaster(SyncController::MasterClock::Audio);
@@ -100,7 +102,7 @@ bool DecoderController::startDecode()
     if (videoDecoder_) {
         videoDecoder_->start();
     }
-    
+
     if (audioDecoder_) {
         audioDecoder_->start();
     }
@@ -116,7 +118,7 @@ bool DecoderController::stopDecode()
         videoDecoder_->stop();
         videoDecoder_.reset();
     }
-    
+
     if (audioDecoder_) {
         audioDecoder_->stop();
         audioDecoder_.reset();
@@ -148,10 +150,10 @@ bool DecoderController::seek(double position)
 
     // 考虑倍速因素调整seek位置
     // 注意：这里不需要调整position，因为position是目标时间点，与倍速无关
-    
+
     // 执行seek操作
     bool result = demuxer_->seek(position);
-    
+
     if (result) {
         // 清空队列，并设置seek节点
         if (videoDecoder_) {
@@ -193,7 +195,7 @@ bool DecoderController::setSpeed(double speed)
     if (audioDecoder_) {
         audioDecoder_->setSpeed(speed);
     }
-    
+
     // 设置时钟速度
     if (syncController_) {
         syncController_->setSpeed(speed);

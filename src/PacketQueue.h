@@ -1,21 +1,20 @@
 #pragma once
-#include <queue>
-#include <mutex>
-#include <condition_variable>
 #include <atomic>
-#include <memory>
+#include <condition_variable>
 #include <functional>
+#include <memory>
+#include <mutex>
+#include <queue>
 
 extern "C" {
 #include <libavcodec/avcodec.h>
 }
 
 #pragma region Packet
-class Packet
-{
-public:
+class Packet {
+   public:
     Packet();
-    explicit Packet(AVPacket *pkt);
+    explicit Packet(AVPacket* pkt);
     ~Packet();
 
     Packet(const Packet& other);
@@ -29,20 +28,20 @@ public:
 
     void setSerial(int serial);
     int serial() const;
-private:
+
+   private:
     AVPacket* packet_ = nullptr;
     int serial_;
 };
 #pragma endregion
 
-
 #pragma region PacketQueue
 /**
  * @brief 数据包队列类，用于缓存音视频数据包
- * 
+ *
  */
 class PacketQueue {
-public:    
+   public:
     /**
      * @brief 构造函数
      */
@@ -52,13 +51,13 @@ public:
      * @brief 析构函数
      */
     ~PacketQueue();
-    
+
     /*
      * @brief 添加数据包
      * @param pkt 数据包
      * @param delayTimeMs 阻塞时长 <0 无限阻塞，0 立即返回，>0 阻塞时长
      * @return 成功返回0，失败返回负值
-    */
+     */
     bool push(const Packet& pkt, int delayTimeMs = 0);
 
     /*
@@ -66,7 +65,7 @@ public:
      * @param pkt 数据包
      * @param delayTimeMs 阻塞时长 <0 无限阻塞，0 立即返回，>0 阻塞时长
      * @return 成功返回0，失败返回负值
-    */
+     */
     bool pop(Packet& pkt, int delayTimeMs = 0);
 
     /**
@@ -74,8 +73,8 @@ public:
      * @param type 刷新类型
      */
     void flush();
-    
-     /**
+
+    /**
      * @brief 开启队列
      */
     void start();
@@ -83,12 +82,12 @@ public:
     /**
      * @brief 中止队列
      */
-    void abort();    
+    void abort();
     /**
      * @brief 是否已中止队列
      */
     bool isAbort() const;
-    
+
     /**
      * @brief 获取队列包数量
      * @return 包数量
@@ -117,7 +116,7 @@ public:
 
     /*
      * @brief 销毁队列
-    */
+     */
     void destory();
     /**
      * @brief 清空队列
@@ -135,13 +134,13 @@ public:
      */
     bool isEmpty() const;
 
-    /** 
+    /**
      * @brief 设置队列最大包数量
      * @param maxPacketCount 最大包数量
      */
     void setMaxPacketCount(int maxPacketCount);
 
-private:
+   private:
     // 数据包队列
     std::queue<Packet> queue_;
     // 队列版本

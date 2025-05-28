@@ -3,25 +3,28 @@
 #include <chrono>
 #include <memory>
 
-class SyncController
-{
-public:
-    enum class MasterClock
-    {
-        Audio,
-        Video,
-        External
-    };
+class SyncController {
+   public:
+    enum class MasterClock { Audio, Video, External };
 
     SyncController(MasterClock type = MasterClock::Video,
-                   double avSyncThreshold = 0.010, // 10 ms
-                   double avSyncMaxDrift = 0.100,  // 100 ms
-                   double jitterAlpha = 0.1);      // 抖动平滑系数
+                   double avSyncThreshold = 0.010,  // 10 ms
+                   double avSyncMaxDrift = 0.100,   // 100 ms
+                   double jitterAlpha = 0.1);       // 抖动平滑系数
 
-    void setMaster(MasterClock m) { master_ = m; }
-    MasterClock master() const { return master_; }
+    void setMaster(MasterClock m)
+    {
+        master_ = m;
+    }
+    MasterClock master() const
+    {
+        return master_;
+    }
 
-    void setAVSyncThreshold(double threshold) { syncThreshold_ = threshold; }
+    void setAVSyncThreshold(double threshold)
+    {
+        syncThreshold_ = threshold;
+    }
     double getMasterClock() const;
     void setSpeed(double speed);
 
@@ -31,17 +34,13 @@ public:
     void resetClocks();
 
     // 计算视频延迟（ms）
-    double computeVideoDelay(double framePts,
-                             double frameDuration,
-                             double baseDelay,
-                             double speed);
+    double computeVideoDelay(double framePts, double frameDuration,
+                             double baseDelay, double speed);
 
     // 计算音频延迟（ms）
-    double computeAudioDelay(double audioPts,
-                             double bufferDelay,
-                             double speed);
+    double computeAudioDelay(double audioPts, double bufferDelay, double speed);
 
-private:
+   private:
     MasterClock master_;
     Clock audioClock_, videoClock_, externalClock_;
     double syncThreshold_, maxDrift_, alpha_;

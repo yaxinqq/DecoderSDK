@@ -1,24 +1,22 @@
 #pragma once
-#include <queue>
-#include <mutex>
-#include <condition_variable>
 #include <atomic>
-#include <memory>
+#include <condition_variable>
 #include <functional>
+#include <memory>
+#include <mutex>
+#include <queue>
 
-extern "C"
-{
+extern "C" {
 #include <libavutil/frame.h>
 }
 
 #pragma region Frame
-class Frame
-{
-public:
+class Frame {
+   public:
     Frame();
-    explicit Frame(AVFrame *srcFrame);
-    Frame(const Frame &other);
-    Frame &operator=(const Frame &other);
+    explicit Frame(AVFrame* srcFrame);
+    Frame(const Frame& other);
+    Frame& operator=(const Frame& other);
     ~Frame();
 
     // 移动构造和移动赋值
@@ -26,11 +24,11 @@ public:
     Frame& operator=(Frame&& other) noexcept;
 
     // 获得帧指针
-    AVFrame *get() const;
-    
+    AVFrame* get() const;
+
     // 判断帧是否有效
     bool isValid() const;
-    
+
     // 获得序列号
     int serial() const;
     // 设置序列号
@@ -57,19 +55,19 @@ public:
     // 确保帧已分配
     void ensureAllocated();
 
-private:
+   private:
     void release();
     void unref();
 
 #ifdef USE_VAAPI
-    bool copyFrmae(AVFrame *srcFrame);
+    bool copyFrmae(AVFrame* srcFrame);
 #endif
 
-private:
+   private:
     friend class FrameQueue;
 
     // 帧
-    AVFrame *frame_ = nullptr;
+    AVFrame* frame_ = nullptr;
     // 序列号
     int serial_ = 0;
     // 帧的时长
@@ -89,9 +87,8 @@ private:
  * @brief 数据包队列类，用于缓存音视频数据包
  *
  */
-class FrameQueue
-{
-public:
+class FrameQueue {
+   public:
     /**
      * @brief 构造函数
      * @param maxSize 最大帧数量
@@ -117,37 +114,37 @@ public:
 
     /*
      * @brief 唤醒条件变量
-    */
+     */
     void awakeCond();
 
     /**
      * @brief 获取可写入的帧
      * @return 可写入的帧指针，失败返回nullptr
      */
-    Frame *peekWritable();
+    Frame* peekWritable();
     /**
      * @brief 获取可读取的帧
      * @return 可读取的帧指针，失败返回nullptr
      */
-    Frame *peekReadable();
+    Frame* peekReadable();
 
     /**
      * @brief 获取可读取的帧
      * @return 可读取的帧指针，失败返回nullptr
      */
-    Frame *peek();
+    Frame* peek();
 
     /**
      * @brief 获取下一帧
      * @return 下一帧指针，失败返回nullptr
      */
-    Frame *peekNext();
+    Frame* peekNext();
 
     /**
      * @brief 获取最后一帧
      * @return 最后一帧指针，失败返回nullptr
      */
-    Frame *peekLast();
+    Frame* peekLast();
 
     /**
      * @brief 推入一帧
@@ -162,16 +159,18 @@ public:
     int pop();
 
     /*
-     * @brief 移动到下一帧，更新 FrameQueue 的读取位置（rindex），并释放当前帧资源。
-    */
-   void next();
+     * @brief 移动到下一帧，更新 FrameQueue
+     * 的读取位置（rindex），并释放当前帧资源。
+     */
+    void next();
 
     /**
      * @brief 获取并弹出一帧
-     * @param timeout 超时时间(毫秒)，<0表示无限等待; 0立即返回; >0表示等待指定时间
+     * @param timeout 超时时间(毫秒)，<0表示无限等待; 0立即返回;
+     * >0表示等待指定时间
      * @return 失败返回false
      */
-    bool popFrame(Frame &frame, int timeout = -1);
+    bool popFrame(Frame& frame, int timeout = -1);
 
     /**
      * @brief 目前还有多少帧没有显示
@@ -187,18 +186,18 @@ public:
 
     void flush();
 
-private:
-    std::vector<Frame> queue_;     // 帧队列
-    int rindex_;                   // 读索引
-    int rindexShown_;              // 当前帧是否已展示
-    int windex_;                   // 写索引
-    int size_;                     // 队列大小
-    int maxSize_;                  // 最大帧数量
-    bool keepLast_;                // 是否保留最后一帧
+   private:
+    std::vector<Frame> queue_;  // 帧队列
+    int rindex_;                // 读索引
+    int rindexShown_;           // 当前帧是否已展示
+    int windex_;                // 写索引
+    int size_;                  // 队列大小
+    int maxSize_;               // 最大帧数量
+    bool keepLast_;             // 是否保留最后一帧
 
-    int serial_;                   // 当前版本，和packetQueue一致
-    bool aborted_;                 // 队列是否已中止，和packetQueue一致
-    mutable std::mutex mutex_;             // 互斥锁
-    std::condition_variable cond_; // 条件变量
+    int serial_;                    // 当前版本，和packetQueue一致
+    bool aborted_;                  // 队列是否已中止，和packetQueue一致
+    mutable std::mutex mutex_;      // 互斥锁
+    std::condition_variable cond_;  // 条件变量
 };
 #pragma endregion

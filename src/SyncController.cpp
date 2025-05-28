@@ -1,32 +1,35 @@
 #include "SyncController.h"
-#include "Utils.h"
+
 #include <algorithm>
 #include <cmath>
 
-extern "C"
-{
+extern "C" {
 #include <libavutil/time.h>
 }
 
-namespace
-{
-    constexpr double kAVSyncThreshold = 0.01;
-    constexpr double kAVNoSyncThreshold = 10.0;
-    constexpr double kMaxFrameDuration = 10.0;
-}
+#include "Logger.h"
+#include "Utils.h"
 
-SyncController::SyncController(MasterClock master, double syncThreshold, double maxDrift, double jitterAlpha)
-    : master_(master)
-    , syncThreshold_(syncThreshold)
-    , maxDrift_(maxDrift)
-    , alpha_(jitterAlpha)
+namespace {
+constexpr double kAVSyncThreshold = 0.01;
+constexpr double kAVNoSyncThreshold = 10.0;
+constexpr double kMaxFrameDuration = 10.0;
+}  // namespace
+
+SyncController::SyncController(MasterClock master, double syncThreshold,
+                               double maxDrift, double jitterAlpha)
+    : master_(master),
+      syncThreshold_(syncThreshold),
+      maxDrift_(maxDrift),
+      alpha_(jitterAlpha)
 {
     videoClock_.init(0);
     audioClock_.init(0);
     externalClock_.init(0);
 }
 
-void SyncController::setSpeed(double speed) {
+void SyncController::setSpeed(double speed)
+{
     audioClock_.setClockSpeed(speed);
     videoClock_.setClockSpeed(speed);
     externalClock_.setClockSpeed(speed);
@@ -58,28 +61,27 @@ void SyncController::resetClocks()
     smoothedAudioDrift_ = 0.0;
 }
 
-double SyncController::getMasterClock() const {
+double SyncController::getMasterClock() const
+{
     switch (master_) {
-        case MasterClock::Audio:    
+        case MasterClock::Audio:
             return audioClock_.getClock();
-        case MasterClock::Video:    
+        case MasterClock::Video:
             return videoClock_.getClock();
-        case MasterClock::External: 
+        case MasterClock::External:
             return externalClock_.getClock();
     }
     return audioClock_.getClock();
 }
 
 // EMA 平滑函数
-double smooth(double alpha, double prev, double current) {
+double smooth(double alpha, double prev, double current)
+{
     return alpha * current + (1.0 - alpha) * prev;
 }
 
-#include <iostream>
-double SyncController::computeVideoDelay(double framePts,
-                                         double frameDuration,
-                                         double baseDelay,
-                                         double speed)
+double SyncController::computeVideoDelay(double framePts, double frameDuration,
+                                         double baseDelay, double speed)
 {
     // 2. 计算帧相对于主时钟的偏差（秒）
     double master = getMasterClock();
@@ -92,10 +94,10 @@ double SyncController::computeVideoDelay(double framePts,
     double thresh = syncThreshold_ / speed;
     double drift = std::clamp(smoothedVideoDrift_, -maxDrift_, maxDrift_);
 
-    // 5. 丢帧判断：如果帧太晚，落后超过阈值，就返回一个负值，表示需要丢弃
+    // 5. 丢帧判断：如果帧太晚，落后超过阈值，就返回一个负值，表示需要丢弃或赶帧
     if (!utils::greaterAndEqual(drift, -thresh)) {
-        // std::cout << "drop frame!!!!!!!" << std::endl;
-        return -1.0;  
+        LOG_DEBUG("Frame too late, drift: {}, thresh: {}", drift, thresh);
+        return -1.0;
     }
 
     // 6. 否则按需调整延迟
@@ -104,13 +106,10 @@ double SyncController::computeVideoDelay(double framePts,
         delay += drift * 1000.0;  // 转为毫秒
     }
 
-    // std::cout << "framePts: " << framePts << ", master: " << master << ", diff: " << diff << ", drift: " << drift << ", baseDelay: " << baseDelay << ", delay: " << delay << std::endl;
-
     return !utils::greaterAndEqual(delay, 0.0) ? 0.0 : delay;
 }
 
-double SyncController::computeAudioDelay(double audioPts,
-                                         double bufferDelay,
+double SyncController::computeAudioDelay(double audioPts, double bufferDelay,
                                          double speed)
 {
     // 2) 拿到主时钟（秒）
@@ -133,8 +132,6 @@ double SyncController::computeAudioDelay(double audioPts,
         double extra = std::min(bufferDelay, maxDrift_ * 1000.0);
         delay -= extra;
     }
-
-    // std::cout << "audioPts: " << audioPts << ", bufferDelay: " << bufferDelay << ", master: " << master << ", diff: " << diff << ", delay: " << delay  << ", speed: " << speed << std::endl;
 
     // 5) 不允许负延迟
     return delay > 0.0 ? delay : 0.0;

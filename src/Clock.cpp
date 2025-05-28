@@ -3,21 +3,16 @@
 #include "Clock.h"
 #include "Utils.h"
 
-extern "C"
-{
+extern "C" {
 #include <libavutil/time.h>
 }
 
 namespace {
-    constexpr double kNoSyncThreshold = 10.0;
+constexpr double kNoSyncThreshold = 10.0;
 }
 
 Clock::Clock()
-    : pts_{0.0}
-    , lastUpdated_{0.0}
-    , speed_{1.0}
-    , serial_{0}
-    , paused_{false}
+    : pts_{0.0}, lastUpdated_{0.0}, speed_{1.0}, serial_{0}, paused_{false}
 {
 }
 
@@ -78,9 +73,9 @@ void Clock::setClockSpeed(double speed)
 // {
 //     const double clock = getClock();
 //     const double slaveClock = slave.getClock();
-//     if (!std::isnan(slaveClock) 
-//         && (std::isnan(clock) || fabs(clock - slaveClock) > kNoSyncThreshold)) {
-//         setClock(slaveClock, slave.serial());
+//     if (!std::isnan(slaveClock)
+//         && (std::isnan(clock) || fabs(clock - slaveClock) >
+//         kNoSyncThreshold)) { setClock(slaveClock, slave.serial());
 //     }
 // }
 

@@ -2,23 +2,23 @@
 
 #pragma region Frame
 Frame::Frame()
-    : frame_(nullptr)
-    , serial_(0)
-    , duration_(0)
-    , isInHardware_(false)
-    , isFlipV_(false)
-    , pts_(0.0)
+    : frame_(nullptr),
+      serial_(0),
+      duration_(0),
+      isInHardware_(false),
+      isFlipV_(false),
+      pts_(0.0)
 {
     // 不在构造函数中分配内存，只在需要时分配
 }
 
-Frame::Frame(AVFrame *srcFrame)
-    : frame_(nullptr)
-    , serial_(0)
-    , duration_(0)
-    , isInHardware_(false)
-    , isFlipV_(false)
-    , pts_(0.0)
+Frame::Frame(AVFrame* srcFrame)
+    : frame_(nullptr),
+      serial_(0),
+      duration_(0),
+      isInHardware_(false),
+      isFlipV_(false),
+      pts_(0.0)
 {
     if (srcFrame) {
         ensureAllocated();
@@ -32,13 +32,13 @@ Frame::Frame(AVFrame *srcFrame)
     }
 }
 
-Frame::Frame(const Frame &other)
-    : frame_(nullptr)
-    , serial_(other.serial_)
-    , duration_(other.duration_)
-    , isInHardware_(other.isInHardware_)
-    , isFlipV_(other.isFlipV_)
-    , pts_(other.pts_)
+Frame::Frame(const Frame& other)
+    : frame_(nullptr),
+      serial_(other.serial_),
+      duration_(other.duration_),
+      isInHardware_(other.isInHardware_),
+      isFlipV_(other.isFlipV_),
+      pts_(other.pts_)
 {
     if (other.frame_) {
         ensureAllocated();
@@ -52,7 +52,7 @@ Frame::Frame(const Frame &other)
     }
 }
 
-Frame &Frame::operator=(const Frame &other)
+Frame& Frame::operator=(const Frame& other)
 {
     if (this != &other) {
         release();
@@ -61,7 +61,7 @@ Frame &Frame::operator=(const Frame &other)
         isInHardware_ = other.isInHardware_;
         isFlipV_ = other.isFlipV_;
         pts_ = other.pts_;
-        
+
         if (other.frame_) {
             ensureAllocated();
 #ifdef USE_VAAPI
@@ -78,12 +78,12 @@ Frame &Frame::operator=(const Frame &other)
 
 // 移动构造函数
 Frame::Frame(Frame&& other) noexcept
-    : frame_(other.frame_)
-    , serial_(other.serial_)
-    , duration_(other.duration_)
-    , isInHardware_(other.isInHardware_)
-    , isFlipV_(other.isFlipV_)
-    , pts_(other.pts_)
+    : frame_(other.frame_),
+      serial_(other.serial_),
+      duration_(other.duration_),
+      isInHardware_(other.isInHardware_),
+      isFlipV_(other.isFlipV_),
+      pts_(other.pts_)
 {
     // 转移所有权，避免深拷贝
     other.frame_ = nullptr;
@@ -94,7 +94,7 @@ Frame& Frame::operator=(Frame&& other) noexcept
 {
     if (this != &other) {
         release();
-        
+
         // 转移所有权
         frame_ = other.frame_;
         serial_ = other.serial_;
@@ -102,7 +102,7 @@ Frame& Frame::operator=(Frame&& other) noexcept
         isInHardware_ = other.isInHardware_;
         isFlipV_ = other.isFlipV_;
         pts_ = other.pts_;
-        
+
         other.frame_ = nullptr;
     }
     return *this;
@@ -113,7 +113,7 @@ Frame::~Frame()
     release();
 }
 
-AVFrame *Frame::get() const
+AVFrame* Frame::get() const
 {
     return frame_;
 }
@@ -186,12 +186,10 @@ void Frame::unref()
         av_frame_unref(frame_);
 
 #ifdef USE_VAAPI
-        if (frame_->data[0])
-        {
+        if (frame_->data[0]) {
             free(frame_->data[0]);
         }
-        if (frame_->data[1])
-        {
+        if (frame_->data[1]) {
             free(frame_->data[1]);
         }
 #endif
@@ -208,7 +206,7 @@ void Frame::release()
 }
 
 #ifdef USE_VAAPI
-bool Frame::copyFrmae(AVFrame *srcFrame)
+bool Frame::copyFrmae(AVFrame* srcFrame)
 {
     if (!srcFrame)
         return false;
@@ -217,11 +215,13 @@ bool Frame::copyFrmae(AVFrame *srcFrame)
     frame_->height = srcFrame->height;
     frame_->format = srcFrame->format;
 
-    egl::RDDmaBufExternalMemory yBuf = *reinterpret_cast<egl::RDDmaBufExternalMemory*>(srcFrame->data[0]);
+    egl::RDDmaBufExternalMemory yBuf =
+        *reinterpret_cast<egl::RDDmaBufExternalMemory*>(srcFrame->data[0]);
     frame_->data[0] = (uint8_t*)malloc(sizeof(egl::RDDmaBufExternalMemory));
     memcpy(frame_->data[0], &(yBuf), sizeof(egl::RDDmaBufExternalMemory));
 
-    egl::RDDmaBufExternalMemory uvBuf = *reinterpret_cast<egl::RDDmaBufExternalMemory*>(srcFrame->data[1]);
+    egl::RDDmaBufExternalMemory uvBuf =
+        *reinterpret_cast<egl::RDDmaBufExternalMemory*>(srcFrame->data[1]);
     frame_->data[1] = (uint8_t*)malloc(sizeof(egl::RDDmaBufExternalMemory));
     memcpy(frame_->data[1], &(uvBuf), sizeof(egl::RDDmaBufExternalMemory));
 
@@ -231,16 +231,15 @@ bool Frame::copyFrmae(AVFrame *srcFrame)
 
 #pragma endregion
 
-
 #pragma region FrameQueue
 
 FrameQueue::FrameQueue(int maxSize, bool keepLast)
-    : rindex_{0}
-    , rindexShown_{0}
-    , windex_{0}
-    , size_{0}
-    , maxSize_{maxSize}
-    , keepLast_{keepLast}
+    : rindex_{0},
+      rindexShown_{0},
+      windex_{0},
+      size_{0},
+      maxSize_{maxSize},
+      keepLast_{keepLast}
 {
     for (int i = 0; i < maxSize_; ++i) {
         Frame frame;
@@ -251,7 +250,7 @@ FrameQueue::FrameQueue(int maxSize, bool keepLast)
 
 FrameQueue::~FrameQueue()
 {
-    while(!queue_.empty()) {
+    while (!queue_.empty()) {
         queue_.pop_back();
     }
 }
@@ -275,13 +274,11 @@ void FrameQueue::awakeCond()
     cond_.notify_all();
 }
 
-Frame *FrameQueue::peekWritable()
+Frame* FrameQueue::peekWritable()
 {
     {
         std::unique_lock<std::mutex> lock(mutex_);
-        cond_.wait(lock, [this](){
-            return size_ < maxSize_ || aborted_;
-        });
+        cond_.wait(lock, [this]() { return size_ < maxSize_ || aborted_; });
     }
 
     if (aborted_)
@@ -290,13 +287,12 @@ Frame *FrameQueue::peekWritable()
     return &queue_[windex_];
 }
 
-Frame *FrameQueue::peekReadable()
+Frame* FrameQueue::peekReadable()
 {
     {
         std::unique_lock<std::mutex> lock(mutex_);
-        cond_.wait(lock, [this](){
-            return size_ - rindexShown_ > 0 || aborted_;
-        });
+        cond_.wait(lock,
+                   [this]() { return size_ - rindexShown_ > 0 || aborted_; });
     }
 
     if (aborted_)
@@ -305,17 +301,17 @@ Frame *FrameQueue::peekReadable()
     return &queue_[(rindex_ + rindexShown_) % maxSize_];
 }
 
-Frame *FrameQueue::peek()
+Frame* FrameQueue::peek()
 {
     return &queue_[(rindex_ + rindexShown_) % maxSize_];
 }
 
-Frame *FrameQueue::peekNext()
+Frame* FrameQueue::peekNext()
 {
     return &queue_[(rindex_ + rindexShown_ + 1) % maxSize_];
 }
 
-Frame *FrameQueue::peekLast()
+Frame* FrameQueue::peekLast()
 {
     return &queue_[rindex_];
 }
@@ -345,7 +341,7 @@ int FrameQueue::pop()
         rindex_ = (rindex_ + 1) % maxSize_;
         --size_;
         cond_.notify_one();  // 唤醒等待线程
-        return 0;  // 成功
+        return 0;            // 成功
     }
 
     return -1;  // 队列为空，未能成功弹出帧
@@ -364,7 +360,7 @@ void FrameQueue::next()
     cond_.notify_one();
 }
 
-bool FrameQueue::popFrame(Frame &frame, int timeout)
+bool FrameQueue::popFrame(Frame& frame, int timeout)
 {
     std::unique_lock<std::mutex> lock(mutex_);
     if (timeout == 0) {
@@ -376,7 +372,7 @@ bool FrameQueue::popFrame(Frame &frame, int timeout)
             rindex_ = (rindex_ + 1) % maxSize_;
             --size_;
             cond_.notify_one();  // 唤醒其他线程
-            return true;  // 成功
+            return true;         // 成功
         }
     }
 
@@ -385,7 +381,9 @@ bool FrameQueue::popFrame(Frame &frame, int timeout)
         cond_.wait(lock, [this]() { return size_ > 0 || aborted_; });
     } else {
         // 等待指定的超时时间
-        if (cond_.wait_for(lock, std::chrono::milliseconds(timeout), [this]() { return size_ > 0 || aborted_; }) == false) {
+        if (cond_.wait_for(lock, std::chrono::milliseconds(timeout), [this]() {
+                return size_ > 0 || aborted_;
+            }) == false) {
             return false;  // 超时
         }
     }
@@ -396,7 +394,7 @@ bool FrameQueue::popFrame(Frame &frame, int timeout)
         rindex_ = (rindex_ + 1) % maxSize_;
         --size_;
         cond_.notify_one();  // 唤醒其他线程
-        return true;  // 成功
+        return true;         // 成功
     }
 
     return false;  // 队列为空或中止请求
@@ -409,7 +407,7 @@ int FrameQueue::remainingCount() const
 
 int FrameQueue::lastFramePts()
 {
-    Frame *frame = &queue_[rindex_];
+    Frame* frame = &queue_[rindex_];
 
     if (rindexShown_ && frame->serial() == serial_)
         return frame->get() ? frame->get()->pkt_pos : -1;
@@ -420,19 +418,19 @@ int FrameQueue::lastFramePts()
 void FrameQueue::flush()
 {
     std::lock_guard<std::mutex> lock(mutex_);
-    
+
     // 清空所有帧
     for (int i = 0; i < size_; i++) {
         int idx = (rindex_ + i) % maxSize_;
         queue_[idx].unref();
     }
-    
+
     // 重置索引和计数器
     rindex_ = 0;
     windex_ = 0;
     rindexShown_ = 0;
     size_ = 0;
-    
+
     // 通知所有等待的线程
     cond_.notify_all();
 }

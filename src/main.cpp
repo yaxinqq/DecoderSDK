@@ -1,26 +1,25 @@
-﻿#include <iostream>
-#include <chrono>
+﻿#include <chrono>
 #include <iomanip>
 #include <thread>
-#include "DecoderController.h"
-#include "Utils.h"
 
-extern "C"
-{
-#include "libavformat/avformat.h"
-#include "libavdevice/avdevice.h"
+extern "C" {
 #include <libavutil/time.h>
+#include "libavdevice/avdevice.h"
+#include "libavformat/avformat.h"
 }
 
+#include "DecoderController.h"
+#include "Logger.h"
+#include "Utils.h"
+
 // 用于计算帧率的辅助函数
-class FPSCalculator
-{
-private:
+class FPSCalculator {
+   private:
     std::chrono::steady_clock::time_point startTime;
     int frameCount;
     double fps;
 
-public:
+   public:
     FPSCalculator() : frameCount(0), fps(0.0)
     {
         startTime = std::chrono::steady_clock::now();
@@ -30,11 +29,12 @@ public:
     {
         frameCount++;
         auto now = std::chrono::steady_clock::now();
-        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(now - startTime).count();
+        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(
+                            now - startTime)
+                            .count();
 
         // 每秒更新一次FPS
-        if (duration >= 1000)
-        {
+        if (duration >= 1000) {
             fps = frameCount * 1000.0 / duration;
             frameCount = 0;
             startTime = now;
@@ -47,7 +47,7 @@ public:
     }
 };
 
-int main(int argc, char *argv[])
+int main(int argc, char* argv[])
 {
 #ifdef _WIN32
     SetConsoleOutputCP(CP_UTF8);
@@ -56,22 +56,25 @@ int main(int argc, char *argv[])
     avdevice_register_all();
     avformat_network_init();
 
-    std::cout << "开始解码测试..." << std::endl;
-    std::string videoPath = (argc > 1) ? argv[1]
-                                       : "C:/Users/win10/Desktop/test_video/test.mp4";
+    // 初始化日志
+    Logger::initFromConfig("./etc/decodersdk.json");
+
+    LOG_INFO("开始解码测试...");
+    std::string videoPath =
+        (argc > 1) ? argv[1] : "C:/Users/win10/Desktop/test_video/test.mp4";
 
     // std::string videoPath = (argc > 1) ? argv[1]
-    //                                    : "rtsp://admin:zhkj2501@192.168.0.71:554/ch1/stream1";
+    //                                    :
+    //                                    "rtsp://admin:zhkj2501@192.168.0.71:554/ch1/stream1";
 
     float playbackSpeed = 3.0f;
     DecoderController manager;
-    if (!manager.open(videoPath))
-    {
-        std::cerr << "打开文件失败: " << videoPath << std::endl;
-        return -1; 
+    if (!manager.open(videoPath)) {
+        LOG_ERROR("打开文件失败: {}", videoPath);
+        return -1;
     }
-    std::cout << "文件打开成功" << std::endl;
-    manager.setFrameRateControl(true); // 关闭内部帧率控制
+    LOG_INFO("打开文件成功: {}", videoPath);
+    manager.setFrameRateControl(true);  // 关闭内部帧率控制
     manager.setSpeed(playbackSpeed);
     manager.startDecode();
 
@@ -86,30 +89,29 @@ int main(int argc, char *argv[])
 
     // 启动音频线程
     double lastAudioPts;
-    std::thread audioThread([&]()
-                            {
-       while (running) {
-           Frame afr;
-           if (manager.audioQueue().popFrame(afr, 1)) {
+    std::thread audioThread([&]() {
+        while (running) {
+            Frame afr;
+            if (manager.audioQueue().popFrame(afr, 1)) {
                 double audioPts = afr.pts();
-                // std::cout << "音频帧PTS: " << audioPts << std::endl;
+                LOG_DEBUG("音频帧PTS: {:.2f}", audioPts);
                 lastAudioPts = audioPts;
                 audioFPS.update();
                 audioCount++;
-           } else {
+            } else {
                 // utils::highPrecisionSleep(1); // 1ms
-           }
-       } });
+            }
+        }
+    });
 
     // 启动视频线程
     double lastVideoPts;
-    std::thread videoThread([&]()
-                            {
+    std::thread videoThread([&]() {
         while (running) {
             Frame vfr;
             if (manager.videoQueue().popFrame(vfr, 1)) {
                 double videoPts = vfr.pts();
-                // std::cout << "视频帧PTS: " << videoPts << std::endl;
+                LOG_DEBUG("视频帧PTS: {:.2f}", videoPts);
                 lastVideoPts = videoPts;
                 videoFPS.update();
                 videoCount++;
@@ -118,18 +120,19 @@ int main(int argc, char *argv[])
                 // if (videoCount.load() % 100 == 0) {
                 //    double seekPos = videoPts + 3.0; // 5秒后
                 //    manager.seek(seekPos);
-                //    std::cout << "Seek to " << seekPos << " seconds" << std::endl;
+                //    LOG_DEBUG("Seek to {} seconds", seekPos);
                 // }
             } else {
                 // utils::highPrecisionSleep(1); // 1ms
             }
-        } });
+        }
+    });
 
     // 主线程监测时长
-    while (true)
-    {
+    while (true) {
         auto now = std::chrono::steady_clock::now();
-        if (std::chrono::duration_cast<std::chrono::seconds>(now - testStart).count() >= TEST_DURATION_SEC)
+        if (std::chrono::duration_cast<std::chrono::seconds>(now - testStart)
+                .count() >= TEST_DURATION_SEC)
             break;
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
@@ -142,12 +145,12 @@ int main(int argc, char *argv[])
         videoThread.join();
 
     // 输出统计
-    std::cout << "\n测试完成" << std::endl;
-    std::cout << "音频帧数: " << audioCount.load() << " (" << audioFPS.getFPS() << " fps)" << std::endl;
-    std::cout << "视频帧数: " << videoCount.load() << " (" << videoFPS.getFPS() << " fps)" << std::endl;
+    LOG_INFO("\n测试完成");
+    LOG_INFO("音频帧数: {} ({:.2f} fps)", audioCount.load(), audioFPS.getFPS());
+    LOG_INFO("视频帧数: {} ({:.2f} fps)", videoCount.load(), videoFPS.getFPS());
 
-    std::cout << "音频帧PTS: " << lastAudioPts << std::endl;
-    std::cout << "视频帧PTS: " << lastVideoPts << std::endl;
+    LOG_INFO("音频帧PTS: {}", lastAudioPts);
+    LOG_INFO("视频帧PTS: {}", lastVideoPts);
 
     manager.stopDecode();
     manager.close();
