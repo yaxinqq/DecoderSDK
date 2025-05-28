@@ -1,24 +1,25 @@
 # .clang-format
 BasedOnStyle: Google
 
+# 缩进设置
 IndentWidth: 4
 TabWidth: 4
 UseTab: Never
 
+# 行宽限制
 ColumnLimit: 80
-DerivePointerAlignment: false
+
+# 指针风格
 PointerAlignment: Left
+DerivePointerAlignment: false
 
-AllowShortFunctionsOnASingleLine: None
-AllowShortIfStatementsOnASingleLine: false
-AllowShortLoopsOnASingleLine: false
-
+# 括号风格控制
 BreakBeforeBraces: Custom
 BraceWrapping:
   AfterClass: false
-  AfterControlStatement: false    # if/else/for/while on same line
+  AfterControlStatement: false  # if/else/for/while/try/catch 与 { 同行
   AfterEnum: false
-  AfterFunction: true             # function body on next line
+  AfterFunction: true           # 函数体 { 换行
   AfterNamespace: false
   AfterStruct: false
   AfterUnion: false
@@ -26,9 +27,20 @@ BraceWrapping:
   BeforeElse: false
   IndentBraces: false
 
+# public/private 顶格
+AccessModifierOffset: -4
+
+# 控制结构中的空格
 SpaceBeforeParens: ControlStatements
-Cpp11BracedListStyle: true
+
+# 简洁函数设置
+AllowShortFunctionsOnASingleLine: None
+AllowShortIfStatementsOnASingleLine: false
+AllowShortLoopsOnASingleLine: false
+
+# include 和注释风格
 IncludeBlocks: Preserve
+SortIncludes: true
 IncludeCategories:
   - Regex: '^<.*\.h>'
     Priority: 1
@@ -36,16 +48,19 @@ IncludeCategories:
     Priority: 2
   - Regex: '.*'
     Priority: 3
-SortIncludes: true
 IncludeIsMainRegex: '([-_]?test)?$'
 
 ReflowComments: true
+
+# 括号和空格设置
+Cpp11BracedListStyle: true
 SpacesInAngles: false
 SpacesInContainerLiterals: false
 SpacesInParentheses: false
 SpacesInSquareBrackets: false
 SpaceInEmptyParentheses: false
 
+# 其他风格
 AlwaysBreakTemplateDeclarations: Yes
 AlignConsecutiveAssignments: false
 AlignConsecutiveDeclarations: false

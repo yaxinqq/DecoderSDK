@@ -11,7 +11,7 @@ extern "C" {
 }
 
 class Demuxer {
-   public:
+public:
     Demuxer();
     virtual ~Demuxer();
 
@@ -29,6 +29,7 @@ class Demuxer {
     AVFormatContext* formatContext() const;
     int streamIndex(AVMediaType mediaType) const;
     std::shared_ptr<PacketQueue> packetQueue(AVMediaType mediaType) const;
+    std::shared_ptr<PacketQueue> recordPacketQueue(AVMediaType mediaType) const;
 
     // 检查是否有视频流
     bool hasVideo() const;
@@ -39,10 +40,15 @@ class Demuxer {
     // 是否暂停
     bool isPaused() const;
 
-   protected:
+    // 初始化录像队列
+    void initRecordQueue();
+    // 销毁录像队列
+    void destroyRecordQueue();
+
+protected:
     void demuxLoop();
 
-   private:
+private:
     std::mutex mutex_;
     AVFormatContext* formatContext_ = nullptr;
 
@@ -55,4 +61,8 @@ class Demuxer {
     std::thread thread_;
     std::atomic<bool> isRunning_ = false;
     std::atomic<bool> isPaused_ = false;
+
+    // 录像相关
+    std::shared_ptr<PacketQueue> videoRecordPacketQueue_;
+    std::shared_ptr<PacketQueue> audioRecordPacketQueue_;
 };

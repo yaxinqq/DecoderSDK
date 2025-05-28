@@ -68,12 +68,14 @@ void VideoDecoder::decodeLoop()
     int serial = packetQueue->serial();
     syncController_->updateVideoClock(0.0, serial);
 
+    bool hasKeyFrame = false;
     while (isRunning_.load()) {
         // 检查序列号是否变化
         if (serial != packetQueue->serial()) {
             avcodec_flush_buffers(codecCtx_);
             serial = packetQueue->serial();
             frameQueue_.setSerial(serial);
+            hasKeyFrame = false;
 
             // 重置视频时钟
             syncController_->updateVideoClock(0.0, serial);
@@ -100,6 +102,12 @@ void VideoDecoder::decodeLoop()
         // 检查序列号
         if (packet.serial() != serial)
             continue;
+
+        // 如果是关键帧，再解
+        if (!hasKeyFrame && (packet.get()->flags & AV_PKT_FLAG_KEY) == 0) {
+            continue;
+        }
+        hasKeyFrame = true;
 
         // 发送包到解码器
         int ret = avcodec_send_packet(codecCtx_, packet.get());

@@ -6,7 +6,7 @@
 #include <memory>
 
 class DecoderController {
-   public:
+public:
     struct Config {
         // 是否开启帧率控制
         bool enableFrameRateControl = true;
@@ -20,7 +20,7 @@ class DecoderController {
         AVPixelFormat videoOutFormat = AV_PIX_FMT_YUV420P;
     };
 
-   public:
+public:
     DecoderController();
     ~DecoderController();
 
@@ -55,9 +55,21 @@ class DecoderController {
     // 获取是否启用帧率控制
     bool isFrameRateControlEnabled() const;
 
+    // 当前播放速度
     double curSpeed() const;
 
-   private:
+    // 开始录像，暂时将输出文件保存为.mp4格式
+    bool startRecording(const std::string& outputPath);
+    // 停止录像
+    bool stopRecording();
+    // 是否正在录像
+    bool isRecording() const;
+
+private:
+    // 录像线程
+    void recordingLoop();
+
+private:
     std::shared_ptr<Demuxer> demuxer_;
     std::shared_ptr<VideoDecoder> videoDecoder_;
     std::shared_ptr<AudioDecoder> audioDecoder_;
@@ -70,4 +82,13 @@ class DecoderController {
     Config config_;
     // 是否是实时流
     bool isLiveStream_ = false;
+
+    // 录制相关
+    AVFormatContext* recordFormatCtx_ = nullptr;
+    std::string recordFilePath_;
+    std::atomic_bool isRecording_ = false;
+    std::thread recordThread_;
+    std::mutex recordMutex_;
+    std::condition_variable recordCv_;
+    std::atomic_bool recordStopFlag_ = false;
 };

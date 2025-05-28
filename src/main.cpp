@@ -14,12 +14,12 @@ extern "C" {
 
 // 用于计算帧率的辅助函数
 class FPSCalculator {
-   private:
+private:
     std::chrono::steady_clock::time_point startTime;
     int frameCount;
     double fps;
 
-   public:
+public:
     FPSCalculator() : frameCount(0), fps(0.0)
     {
         startTime = std::chrono::steady_clock::now();
@@ -60,14 +60,14 @@ int main(int argc, char* argv[])
     Logger::initFromConfig("./etc/decodersdk.json");
 
     LOG_INFO("开始解码测试...");
+    // std::string videoPath =
+    //     (argc > 1) ? argv[1] : "C:/Users/win10/Desktop/test_video/test.mp4";
+
     std::string videoPath =
-        (argc > 1) ? argv[1] : "C:/Users/win10/Desktop/test_video/test.mp4";
+        (argc > 1) ? argv[1]
+                   : "rtsp://admin:zhkj2501@192.168.0.71:554/ch1/stream1";
 
-    // std::string videoPath = (argc > 1) ? argv[1]
-    //                                    :
-    //                                    "rtsp://admin:zhkj2501@192.168.0.71:554/ch1/stream1";
-
-    float playbackSpeed = 3.0f;
+    float playbackSpeed = 1.0f;
     DecoderController manager;
     if (!manager.open(videoPath)) {
         LOG_ERROR("打开文件失败: {}", videoPath);
@@ -76,10 +76,11 @@ int main(int argc, char* argv[])
     LOG_INFO("打开文件成功: {}", videoPath);
     manager.setFrameRateControl(true);  // 关闭内部帧率控制
     manager.setSpeed(playbackSpeed);
+    manager.startRecording("./output.mp4");
     manager.startDecode();
 
     // 测试时长和计时
-    const int TEST_DURATION_SEC = 10;
+    const int TEST_DURATION_SEC = 60;
     auto testStart = std::chrono::steady_clock::now();
     std::atomic<bool> running{true};
 
@@ -137,7 +138,6 @@ int main(int argc, char* argv[])
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
 
-    // 停止
     running = false;
     if (audioThread.joinable())
         audioThread.join();
@@ -152,6 +152,7 @@ int main(int argc, char* argv[])
     LOG_INFO("音频帧PTS: {}", lastAudioPts);
     LOG_INFO("视频帧PTS: {}", lastVideoPts);
 
+    manager.stopRecording();
     manager.stopDecode();
     manager.close();
     avformat_network_deinit();

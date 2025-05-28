@@ -74,6 +74,19 @@ std::shared_ptr<PacketQueue> Demuxer::packetQueue(AVMediaType mediaType) const
     }
 }
 
+std::shared_ptr<PacketQueue> Demuxer::recordPacketQueue(
+    AVMediaType mediaType) const
+{
+    switch (mediaType) {
+        case AVMEDIA_TYPE_VIDEO:
+            return videoRecordPacketQueue_;
+        case AVMEDIA_TYPE_AUDIO:
+            return audioRecordPacketQueue_;
+        default:
+            return nullptr;
+    }
+}
+
 bool Demuxer::hasVideo() const
 {
     return videoStreamIndex_ >= 0 && formatContext_ != nullptr;
@@ -87,6 +100,21 @@ bool Demuxer::hasAudio() const
 bool Demuxer::isPaused() const
 {
     return isPaused_.load();
+}
+
+void Demuxer::initRecordQueue()
+{
+    videoRecordPacketQueue_.reset(new PacketQueue(INT_MAX));
+    audioRecordPacketQueue_.reset(new PacketQueue(INT_MAX));
+}
+
+void Demuxer::destroyRecordQueue()
+{
+    if (videoPacketQueue_)
+        videoRecordPacketQueue_.reset();
+
+    if (audioPacketQueue_)
+        audioRecordPacketQueue_.reset();
 }
 
 void Demuxer::close()
@@ -134,6 +162,9 @@ void Demuxer::stop()
     // 中止队列
     videoPacketQueue_->abort();
     audioPacketQueue_->abort();
+
+    // 销毁录像队列（如果存在）
+    destroyRecordQueue();
 
     if (thread_.joinable()) {
         thread_.join();
@@ -207,14 +238,14 @@ void Demuxer::demuxLoop()
     while (isRunning_.load()) {
         // 检查是否暂停
         if (isPaused_.load()) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
             continue;
         }
 
         // 检查队列是否已满，如果已满则等待
         if ((videoStreamIndex_ >= 0 && videoPacketQueue_->isFull()) ||
             (audioStreamIndex_ >= 0 && audioPacketQueue_->isFull())) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
             continue;
         }
 
@@ -230,6 +261,11 @@ void Demuxer::demuxLoop()
                     Packet endPacket(pkt);
                     endPacket.setSerial(videoPacketQueue_->serial());
                     videoPacketQueue_->push(endPacket);
+
+                    // 如果存在录像队列，则也发送空包表示结束
+                    if (videoRecordPacketQueue_) {
+                        videoRecordPacketQueue_->push(endPacket);
+                    }
                 }
 
                 if (audioStreamIndex_ >= 0) {
@@ -237,6 +273,11 @@ void Demuxer::demuxLoop()
                     Packet endPacket(pkt);
                     endPacket.setSerial(audioPacketQueue_->serial());
                     audioPacketQueue_->push(endPacket);
+
+                    // 如果存在录像队列，则也发送空包表示结束
+                    if (audioRecordPacketQueue_) {
+                        audioRecordPacketQueue_->push(endPacket);
+                    }
                 }
 
                 std::this_thread::sleep_for(std::chrono::milliseconds(10));
@@ -252,10 +293,20 @@ void Demuxer::demuxLoop()
             Packet packet(pkt);
             packet.setSerial(videoPacketQueue_->serial());
             videoPacketQueue_->push(packet);
+
+            // 如果存在录像队列，则也将数据包放入录像队列
+            if (videoRecordPacketQueue_) {
+                videoRecordPacketQueue_->push(packet);
+            }
         } else if (pkt->stream_index == audioStreamIndex_) {
             Packet packet(pkt);
             packet.setSerial(audioPacketQueue_->serial());
             audioPacketQueue_->push(packet);
+
+            // 如果存在录像队列，则也将数据包放入录像队列
+            if (audioRecordPacketQueue_) {
+                audioRecordPacketQueue_->push(packet);
+            }
         }
 
         av_packet_unref(pkt);
