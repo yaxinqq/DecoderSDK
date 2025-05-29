@@ -5,7 +5,7 @@
 #include "Logger.h"
 
 // 静态成员初始化
-std::map<AVCodecContext*, HardwareAccel*> HardwareAccel::hwAccelMap_;
+std::map<AVCodecContext *, HardwareAccel *> HardwareAccel::hwAccelMap_;
 std::mutex HardwareAccel::hwAccelMapMutex_;
 
 //-----------------------------------------------------------------------------
@@ -78,7 +78,7 @@ bool HardwareAccel::init(HWAccelType type, int deviceIndex)
         deviceType = toAVHWDeviceType(type_);
 
         // 检查指定的硬件加速类型是否可用
-        AVBufferRef* testDeviceCtx = nullptr;
+        AVBufferRef *testDeviceCtx = nullptr;
         int ret = av_hwdevice_ctx_create(&testDeviceCtx, deviceType, nullptr,
                                          nullptr, 0);
         if (ret < 0) {
@@ -110,7 +110,7 @@ bool HardwareAccel::init(HWAccelType type, int deviceIndex)
     return true;
 }
 
-bool HardwareAccel::setupDecoder(AVCodecContext* codecCtx)
+bool HardwareAccel::setupDecoder(AVCodecContext *codecCtx)
 {
     if (!codecCtx || !initialized_ || !hwDeviceCtx_) {
         return false;
@@ -137,7 +137,7 @@ bool HardwareAccel::setupDecoder(AVCodecContext* codecCtx)
     return true;
 }
 
-AVFrame* HardwareAccel::getHWFrame(AVFrame* frame)
+AVFrame *HardwareAccel::getHWFrame(AVFrame *frame)
 {
     if (!frame || !initialized_) {
         return nullptr;
@@ -149,7 +149,7 @@ AVFrame* HardwareAccel::getHWFrame(AVFrame* frame)
     }
 
     // 创建硬件帧
-    AVFrame* hwFrame = av_frame_alloc();
+    AVFrame *hwFrame = av_frame_alloc();
     if (!hwFrame) {
         LOG_WARN("Failed to allocate hardware frame");
         return nullptr;
@@ -186,7 +186,7 @@ AVFrame* HardwareAccel::getHWFrame(AVFrame* frame)
     return hwFrame;
 }
 
-bool HardwareAccel::transferFrameToHost(AVFrame* hwFrame, AVFrame* swFrame)
+bool HardwareAccel::transferFrameToHost(AVFrame *hwFrame, AVFrame *swFrame)
 {
     if (!hwFrame || !swFrame || !initialized_) {
         return false;
@@ -197,6 +197,9 @@ bool HardwareAccel::transferFrameToHost(AVFrame* hwFrame, AVFrame* swFrame)
         LOG_WARN("Not a hardware frame");
         return false;
     }
+
+    // 每次使用前先 unref，确保 frame 干净
+    av_frame_unref(swFrame);
 
     // 设置软件帧参数
     swFrame->width = hwFrame->width;
@@ -250,7 +253,7 @@ std::vector<HWAccelInfo> HardwareAccel::getSupportedHWAccelTypes()
         info.description = getHWAccelTypeDescription(fromAVHWDeviceType(type));
 
         // 检查是否可用
-        AVBufferRef* hwDeviceCtx = nullptr;
+        AVBufferRef *hwDeviceCtx = nullptr;
         int ret =
             av_hwdevice_ctx_create(&hwDeviceCtx, type, nullptr, nullptr, 0);
         info.available = (ret >= 0);
@@ -260,12 +263,12 @@ std::vector<HWAccelInfo> HardwareAccel::getSupportedHWAccelTypes()
 
             // 获取支持的软件像素格式
             if (info.hwFormat != AV_PIX_FMT_NONE) {
-                AVBufferRef* hwFramesCtx = nullptr;
-                AVHWFramesContext* hwFramesCtxData = nullptr;
+                AVBufferRef *hwFramesCtx = nullptr;
+                AVHWFramesContext *hwFramesCtxData = nullptr;
 
                 hwFramesCtx = av_hwframe_ctx_alloc(hwDeviceCtx);
                 if (hwFramesCtx) {
-                    hwFramesCtxData = (AVHWFramesContext*)hwFramesCtx->data;
+                    hwFramesCtxData = (AVHWFramesContext *)hwFramesCtx->data;
                     hwFramesCtxData->format = info.hwFormat;
                     hwFramesCtxData->sw_format = AV_PIX_FMT_NV12;
                     hwFramesCtxData->width = 1920;
@@ -273,11 +276,11 @@ std::vector<HWAccelInfo> HardwareAccel::getSupportedHWAccelTypes()
 
                     ret = av_hwframe_ctx_init(hwFramesCtx);
                     if (ret >= 0) {
-                        AVHWFramesConstraints* constraints =
+                        AVHWFramesConstraints *constraints =
                             av_hwdevice_get_hwframe_constraints(hwDeviceCtx,
                                                                 nullptr);
                         if (constraints) {
-                            for (const AVPixelFormat* p =
+                            for (const AVPixelFormat *p =
                                      constraints->valid_sw_formats;
                                  p && *p != AV_PIX_FMT_NONE; p++) {
                                 info.swFormats.push_back(*p);
@@ -400,11 +403,11 @@ AVHWDeviceType HardwareAccel::toAVHWDeviceType(HWAccelType type)
     }
 }
 
-AVPixelFormat HardwareAccel::getHWPixelFormat(AVCodecContext* codecCtx,
-                                              const AVPixelFormat* pix_fmts)
+AVPixelFormat HardwareAccel::getHWPixelFormat(AVCodecContext *codecCtx,
+                                              const AVPixelFormat *pix_fmts)
 {
     // 查找与解码器上下文关联的硬件加速对象
-    HardwareAccel* hwAccel = nullptr;
+    HardwareAccel *hwAccel = nullptr;
     {
         std::lock_guard<std::mutex> lock(hwAccelMapMutex_);
         auto it = hwAccelMap_.find(codecCtx);
@@ -463,7 +466,7 @@ AVHWDeviceType HardwareAccel::findBestHWAccelType()
         AV_HWDEVICE_TYPE_VIDEOTOOLBOX};
 
     for (AVHWDeviceType type : priorityList) {
-        AVBufferRef* hwDeviceCtx = nullptr;
+        AVBufferRef *hwDeviceCtx = nullptr;
         int ret =
             av_hwdevice_ctx_create(&hwDeviceCtx, type, nullptr, nullptr, 0);
         if (ret >= 0) {
@@ -502,7 +505,7 @@ AVPixelFormat HardwareAccel::getHWPixelFormatForDevice(
 // HardwareAccelFactory 实现
 //-----------------------------------------------------------------------------
 
-HardwareAccelFactory& HardwareAccelFactory::getInstance()
+HardwareAccelFactory &HardwareAccelFactory::getInstance()
 {
     static HardwareAccelFactory instance;
     return instance;

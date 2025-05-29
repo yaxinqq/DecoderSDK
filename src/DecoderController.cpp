@@ -14,7 +14,7 @@ DecoderController::~DecoderController()
     close();
 }
 
-bool DecoderController::open(const std::string& filePath, const Config& config)
+bool DecoderController::open(const std::string &filePath, const Config &config)
 {
     config_ = config;
     isLiveStream_ = utils::isRealtime(filePath);
@@ -78,7 +78,8 @@ bool DecoderController::startDecode()
         videoDecoder_ =
             std::make_shared<VideoDecoder>(demuxer_, syncController_);
         videoDecoder_->init(config_.hwAccelType, config_.hwDeviceIndex,
-                            config_.videoOutFormat);
+                            config_.videoOutFormat,
+                            config_.requireFrameInSystemMemory);
         videoDecoder_->setFrameRateControl(config_.enableFrameRateControl);
         videoDecoder_->setSpeed(config_.speed);
         if (!videoDecoder_->open()) {
@@ -209,13 +210,13 @@ bool DecoderController::setSpeed(double speed)
     return true;
 }
 
-FrameQueue& DecoderController::videoQueue()
+FrameQueue &DecoderController::videoQueue()
 {
     static FrameQueue emptyQueue;
     return videoDecoder_ ? videoDecoder_->frameQueue() : emptyQueue;
 }
 
-FrameQueue& DecoderController::audioQueue()
+FrameQueue &DecoderController::audioQueue()
 {
     static FrameQueue emptyQueue;
     return audioDecoder_ ? audioDecoder_->frameQueue() : emptyQueue;
@@ -249,7 +250,7 @@ double DecoderController::curSpeed() const
     return config_.speed;
 }
 
-bool DecoderController::startRecording(const std::string& outputPath)
+bool DecoderController::startRecording(const std::string &outputPath)
 {
     std::lock_guard<std::mutex> lock(recordMutex_);
 
@@ -272,16 +273,16 @@ bool DecoderController::startRecording(const std::string& outputPath)
     }
 
     // 复制媒体文件的流信息到输出格式上下文
-    AVFormatContext* inputFormatCtx = demuxer_->formatContext();
+    AVFormatContext *inputFormatCtx = demuxer_->formatContext();
     for (unsigned int i = 0; i < inputFormatCtx->nb_streams; i++) {
-        AVStream* inStream = inputFormatCtx->streams[i];
+        AVStream *inStream = inputFormatCtx->streams[i];
         if (inStream->codecpar->codec_type != AVMEDIA_TYPE_VIDEO &&
             inStream->codecpar->codec_type != AVMEDIA_TYPE_AUDIO) {
             continue;
         }
 
         // 创建新的输出流
-        AVStream* outStream = avformat_new_stream(recordFormatCtx_, nullptr);
+        AVStream *outStream = avformat_new_stream(recordFormatCtx_, nullptr);
         if (!outStream) {
             LOG_ERROR("Failed to allocate output stream");
             avformat_free_context(recordFormatCtx_);
@@ -314,7 +315,7 @@ bool DecoderController::startRecording(const std::string& outputPath)
     }
 
     // 写入文件头
-    AVDictionary* opts = nullptr;
+    AVDictionary *opts = nullptr;
     if (avformat_write_header(recordFormatCtx_, &opts) < 0) {
         if (!(recordFormatCtx_->oformat->flags & AVFMT_NOFILE)) {
             avio_closep(&recordFormatCtx_->pb);
@@ -397,11 +398,11 @@ void DecoderController::recordingLoop()
         return;
     }
 
-    AVFormatContext* inputFormatCtx = demuxer_->formatContext();
+    AVFormatContext *inputFormatCtx = demuxer_->formatContext();
 
     // 创建流索引映射表
-    int* streamMapping =
-        (int*)av_malloc_array(inputFormatCtx->nb_streams, sizeof(int));
+    int *streamMapping =
+        (int *)av_malloc_array(inputFormatCtx->nb_streams, sizeof(int));
     if (!streamMapping) {
         LOG_ERROR(
             "Failed to allocate stream mapping array, file {} record failed!",
@@ -412,7 +413,7 @@ void DecoderController::recordingLoop()
     // 初始化流映射
     int streamIndex = 0;
     for (unsigned int i = 0; i < inputFormatCtx->nb_streams; i++) {
-        AVStream* inStream = inputFormatCtx->streams[i];
+        AVStream *inStream = inputFormatCtx->streams[i];
         if (inStream->codecpar->codec_type != AVMEDIA_TYPE_VIDEO &&
             inStream->codecpar->codec_type != AVMEDIA_TYPE_AUDIO) {
             streamMapping[i] = -1;
@@ -430,7 +431,7 @@ void DecoderController::recordingLoop()
     int audioSerial = audioQueue ? audioQueue->serial() : -1;
 
     // 创建临时packet，从队列中获取数据
-    AVPacket* tempPacket = av_packet_alloc();
+    AVPacket *tempPacket = av_packet_alloc();
     if (!tempPacket) {
         LOG_ERROR("Failed to allocate temporary packet, file {} record failed!",
                   recordFilePath_);
@@ -485,9 +486,9 @@ void DecoderController::recordingLoop()
                     tempPacket->stream_index = outStreamIndex;
 
                     // 调整时间戳
-                    AVStream* inStream =
+                    AVStream *inStream =
                         inputFormatCtx->streams[tempPacket->stream_index];
-                    AVStream* outStream =
+                    AVStream *outStream =
                         recordFormatCtx_->streams[outStreamIndex];
                     av_packet_rescale_ts(tempPacket, inStream->time_base,
                                          outStream->time_base);
@@ -517,15 +518,15 @@ void DecoderController::recordingLoop()
                     tempPacket->stream_index = outStreamIndex;
 
                     // 调整时间戳
-                    AVStream* inStream =
+                    AVStream *inStream =
                         inputFormatCtx->streams[packet.get()->stream_index];
-                    AVStream* outStream =
+                    AVStream *outStream =
                         recordFormatCtx_->streams[outStreamIndex];
                     av_packet_rescale_ts(tempPacket, inStream->time_base,
                                          outStream->time_base);
 
                     // 写入packet
-                    //std::lock_guard<std::mutex> lock(recordMutex_);
+                    // std::lock_guard<std::mutex> lock(recordMutex_);
                     if (av_interleaved_write_frame(recordFormatCtx_,
                                                    tempPacket) < 0) {
                         // 写入失败处理

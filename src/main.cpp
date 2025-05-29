@@ -50,7 +50,7 @@ public:
     }
 };
 
-int main(int argc, char* argv[])
+int main(int argc, char *argv[])
 {
 #ifdef _WIN32
     SetConsoleOutputCP(CP_UTF8);
@@ -73,8 +73,9 @@ int main(int argc, char* argv[])
     float playbackSpeed = 1.0f;
     DecoderController manager;
     DecoderController::Config config;
-    config.hwAccelType = HWAccelType::NONE;
+    config.hwAccelType = HWAccelType::AUTO;
     config.videoOutFormat = AV_PIX_FMT_RGB24;
+    config.requireFrameInSystemMemory = true;
     if (!manager.open(videoPath, config)) {
         LOG_ERROR("打开文件失败: {}", videoPath);
         return -1;
@@ -114,20 +115,28 @@ int main(int argc, char* argv[])
     // 启动视频线程
     double lastVideoPts;
     std::thread videoThread([&]() {
-        const AVCodec* codec = avcodec_find_encoder(AV_CODEC_ID_PNG);
+        const AVCodec *codec = avcodec_find_encoder(AV_CODEC_ID_PNG);
         if (!codec) {
             LOG_ERROR("PNG 编码器未找到");
             return;
         }
 
-        AVCodecContext* codecCtx = nullptr;
-        AVPacket* pkt = av_packet_alloc();
+        AVCodecContext *codecCtx = nullptr;
+        AVPacket *pkt = av_packet_alloc();
 
         int i = 0;
         while (running) {
             Frame vfr;
             if (manager.videoQueue().popFrame(vfr, 1) && vfr.isValid()) {
-                AVFrame* frame = vfr.get();
+                AVFrame *frame = vfr.get();
+                double videoPts = vfr.pts();
+                LOG_DEBUG("视频帧PTS: {:.2f}", videoPts);
+                lastVideoPts = videoPts;
+                videoFPS.update();
+                videoCount++;
+
+                // 保存图片验证解码有效性
+                // 1. 创建编码器上下文
                 if (!codecCtx) {
                     codecCtx = avcodec_alloc_context3(codec);
                     codecCtx->bit_rate = 400000;
@@ -142,54 +151,6 @@ int main(int argc, char* argv[])
                         return;
                     }
                 }
-
-                // if (vfr.isInHardware()) {
-                //     // 如果是硬解码帧，需要转换为软件帧
-                //     if (!swFrame_) {
-                //         swFrame_ = av_frame_alloc();
-                //         if (!swFrame_) {
-                //             LOG_ERROR("无法分配软件帧");
-                //             return;
-                //         }
-                //     }
-
-                //     // 设置软件帧参数
-                //     swFrame_->width = avFrame->width;
-                //     swFrame_->height = avFrame->height;
-                //     swFrame_->format =
-                //         AV_PIX_FMT_NV12;  // 大多数硬件解码器输出NV12格式
-
-                //     // 分配软件帧缓冲区
-                //     // int ret = av_frame_get_buffer(swFrame_, 0);
-                //     // if (ret < 0) {
-                //     //     char errBuf[AV_ERROR_MAX_STRING_SIZE];
-                //     //     av_strerror(ret, errBuf, sizeof(errBuf));
-                //     //     LOG_ERROR("无法分配软件帧缓冲区: {}", errBuf);
-                //     //     return;
-                //     // }
-
-                //     // 将硬件帧数据传输到软件帧
-                //     av_frame_unref(swFrame_);
-                //     int ret = av_hwframe_transfer_data(swFrame_, avFrame, 0);
-                //     if (ret < 0) {
-                //         char errBuf[AV_ERROR_MAX_STRING_SIZE];
-                //         av_strerror(ret, errBuf, sizeof(errBuf));
-                //         LOG_ERROR("无法将硬件帧数据传输到软件帧: {}",
-                //         errBuf); return;
-                //     }
-
-                //     // 复制帧属性
-                //     av_frame_copy_props(swFrame_, avFrame);
-
-                //     // 使用转换后的软件帧
-                //     renderFrame = swFrame_;
-                // }
-
-                double videoPts = vfr.pts();
-                LOG_DEBUG("视频帧PTS: {:.2f}", videoPts);
-                lastVideoPts = videoPts;
-                videoFPS.update();
-                videoCount++;
 
                 // 3. 编码帧
                 int ret = avcodec_send_frame(codecCtx, frame);
@@ -207,7 +168,7 @@ int main(int argc, char* argv[])
                 // 4. 写入文件
                 const std::string filename =
                     fmt::format("./images/{}.png", i++);
-                FILE* outFile = fopen(filename.c_str(), "wb");
+                FILE *outFile = fopen(filename.c_str(), "wb");
                 fwrite(pkt->data, 1, pkt->size, outFile);
                 fclose(outFile);
 

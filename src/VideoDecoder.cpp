@@ -54,9 +54,10 @@ bool VideoDecoder::open()
 
 void VideoDecoder::decodeLoop()
 {
-    AVFrame* frame = av_frame_alloc();
-    AVFrame* swsFrame = nullptr;          // 用于格式转换的帧
-    struct SwsContext* swsCtx = nullptr;  // 格式转换上下文
+    AVFrame *frame = av_frame_alloc();
+    AVFrame *memoryFrame = nullptr;       // 用于保存内存帧
+    AVFrame *swsFrame = nullptr;          // 用于格式转换的帧
+    struct SwsContext *swsCtx = nullptr;  // 格式转换上下文
 
     if (!frame)
         return;
@@ -86,7 +87,7 @@ void VideoDecoder::decodeLoop()
         }
 
         // 获取一个可写入的帧
-        Frame* outFrame = frameQueue_.peekWritable();
+        Frame *outFrame = frameQueue_.peekWritable();
         if (!outFrame)
             break;
 
@@ -141,9 +142,28 @@ void VideoDecoder::decodeLoop()
         }
 
         // 软解时进行图像格式转换
-        AVFrame* outputFrame = frame;
-        if (!frame->hw_frames_ctx && frame->format != softPixelFormat_) {
-            // 如果是软解且格式不匹配，进行格式转换
+        AVFrame *outputFrame = frame;
+        // 如果是硬件加速解码，且需要将帧转换到主机内存，进行转换
+        if (outputFrame->hw_frames_ctx && requireFrameInMemory_) {
+            if (!memoryFrame) {
+                memoryFrame = av_frame_alloc();
+                if (!memoryFrame) {
+                    av_frame_unref(frame);
+                    continue;
+                }
+            }
+
+            if (!hwAccel_->transferFrameToHost(frame, memoryFrame)) {
+                av_frame_unref(frame);
+                continue;
+            }
+            outputFrame = memoryFrame;
+        }
+
+        // 如果是软解或需要在内存中存储帧，且格式不匹配，进行格式转换
+        if (!outputFrame->hw_frames_ctx &&
+            outputFrame->format != softPixelFormat_) {
+            // 如果是(软解或需要在内存中存储帧）的格式不匹配，进行格式转换
             if (!swsFrame) {
                 swsFrame = av_frame_alloc();
                 if (!swsFrame) {
@@ -154,20 +174,23 @@ void VideoDecoder::decodeLoop()
 
             // 初始化转换上下文
             swsCtx = sws_getCachedContext(
-                swsCtx, frame->width, frame->height,
-                (AVPixelFormat)frame->format, frame->width, frame->height,
-                softPixelFormat_, SWS_BILINEAR, NULL, NULL, NULL);
+                swsCtx, outputFrame->width, outputFrame->height,
+                (AVPixelFormat)outputFrame->format, outputFrame->width,
+                outputFrame->height, softPixelFormat_, SWS_BILINEAR, NULL, NULL,
+                NULL);
 
             if (!swsCtx) {
                 av_frame_unref(frame);
                 continue;
             }
+            // 每次使用前先 unref，确保 frame 干净
+            av_frame_unref(swsFrame);
 
             // 设置目标帧参数
             swsFrame->format = softPixelFormat_;
-            swsFrame->width = frame->width;
-            swsFrame->height = frame->height;
-            swsFrame->pts = frame->pts;
+            swsFrame->width = outputFrame->width;
+            swsFrame->height = outputFrame->height;
+            swsFrame->pts = outputFrame->pts;
 
             // 分配缓冲区
             ret = av_frame_get_buffer(swsFrame, 0);
@@ -184,15 +207,17 @@ void VideoDecoder::decodeLoop()
             }
 
             // 执行格式转换
-            ret = sws_scale(swsCtx, (const uint8_t* const*)frame->data,
-                            frame->linesize, 0, frame->height, swsFrame->data,
-                            swsFrame->linesize);
+            ret = sws_scale(swsCtx, (const uint8_t *const *)outputFrame->data,
+                            outputFrame->linesize, 0, outputFrame->height,
+                            swsFrame->data, swsFrame->linesize);
 
             if (ret <= 0) {
                 av_frame_unref(frame);
                 continue;
             }
 
+            // 复制帧属性
+            av_frame_copy_props(swsFrame, outputFrame);
             // 使用转换后的帧
             outputFrame = swsFrame;
         }
@@ -204,12 +229,10 @@ void VideoDecoder::decodeLoop()
         outFrame->setPts(pts);
 
         // 检查是否是硬件加速解码
-        outFrame->setIsInHardware(frame->hw_frames_ctx != NULL);
+        outFrame->setIsInHardware(outputFrame->hw_frames_ctx != NULL);
 
-        // 如果使用了转换帧，需要释放原始帧
-        if (outputFrame == swsFrame) {
-            av_frame_unref(frame);
-        }
+        // 释放内存
+        av_frame_unref(frame);
 
         // 如果启用了帧率控制，则根据帧率控制推送速度
         if (frameRateControlEnabled_) {
@@ -231,6 +254,9 @@ void VideoDecoder::decodeLoop()
     }
     if (swsFrame) {
         av_frame_free(&swsFrame);
+    }
+    if (memoryFrame) {
+        av_frame_free(&memoryFrame);
     }
     av_frame_free(&frame);
 }
@@ -272,6 +298,7 @@ AVMediaType VideoDecoder::type() const
 bool VideoDecoder::requireFrameInSystemMemory(bool required)
 {
     requireFrameInMemory_ = required;
+    return true;
 }
 
 void VideoDecoder::updateFrameRate(AVRational frameRate)
