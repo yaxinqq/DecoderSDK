@@ -77,6 +77,7 @@ target_include_directories(${PROJECT_NAME}
     ${FFMPEG_INCLUDE_DIR}
     ${SPDLOG_INCLUDE_DIR}
     ${JSON_INCLUDE_DIR}
+    ${FMT_INCLUDE_DIR}
 )
 
 # 添加库文件路径
@@ -84,6 +85,7 @@ target_link_directories(${PROJECT_NAME}
     PRIVATE
     ${FFMPEG_LIB_DIR}
     ${SPDLOG_LIB_DIR}
+    ${FMT_LIB_DIR}
 )
 
 # ffmpeg不区分debug和release
@@ -103,12 +105,14 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Windows")
 endif ()
 
 set(SPDLOG_LIB spdlog)
+set(FMT_LIB spdlog)
 
 # 链接库
 target_link_libraries(${PROJECT_NAME}
     PRIVATE
     ${FFMPEG_LIB}
     ${SPDLOG_LIB}
+    ${FMT_LIB}
 )
 
 # 编译定义

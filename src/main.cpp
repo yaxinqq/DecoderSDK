@@ -6,7 +6,10 @@ extern "C" {
 #include <libavutil/time.h>
 #include "libavdevice/avdevice.h"
 #include "libavformat/avformat.h"
+#include "libswscale/swscale.h"
 }
+
+#include "fmt/core.h"
 
 #include "DecoderController.h"
 #include "Logger.h"
@@ -69,7 +72,10 @@ int main(int argc, char* argv[])
 
     float playbackSpeed = 1.0f;
     DecoderController manager;
-    if (!manager.open(videoPath)) {
+    DecoderController::Config config;
+    config.hwAccelType = HWAccelType::NONE;
+    config.videoOutFormat = AV_PIX_FMT_RGB24;
+    if (!manager.open(videoPath, config)) {
         LOG_ERROR("打开文件失败: {}", videoPath);
         return -1;
     }
@@ -80,7 +86,7 @@ int main(int argc, char* argv[])
     manager.startDecode();
 
     // 测试时长和计时
-    const int TEST_DURATION_SEC = 60;
+    const int TEST_DURATION_SEC = 20;
     auto testStart = std::chrono::steady_clock::now();
     std::atomic<bool> running{true};
 
@@ -108,14 +114,104 @@ int main(int argc, char* argv[])
     // 启动视频线程
     double lastVideoPts;
     std::thread videoThread([&]() {
+        const AVCodec* codec = avcodec_find_encoder(AV_CODEC_ID_PNG);
+        if (!codec) {
+            LOG_ERROR("PNG 编码器未找到");
+            return;
+        }
+
+        AVCodecContext* codecCtx = nullptr;
+        AVPacket* pkt = av_packet_alloc();
+
+        int i = 0;
         while (running) {
             Frame vfr;
-            if (manager.videoQueue().popFrame(vfr, 1)) {
+            if (manager.videoQueue().popFrame(vfr, 1) && vfr.isValid()) {
+                AVFrame* frame = vfr.get();
+                if (!codecCtx) {
+                    codecCtx = avcodec_alloc_context3(codec);
+                    codecCtx->bit_rate = 400000;
+                    codecCtx->width = frame->width;
+                    codecCtx->height = frame->height;
+                    codecCtx->pix_fmt = AV_PIX_FMT_RGB24;
+                    codecCtx->time_base = AVRational{1, 25};
+                    int ret = avcodec_open2(codecCtx, codec, nullptr);
+                    if (ret < 0) {
+                        LOG_ERROR("无法打开编码器, {}", ret);
+                        avcodec_free_context(&codecCtx);
+                        return;
+                    }
+                }
+
+                // if (vfr.isInHardware()) {
+                //     // 如果是硬解码帧，需要转换为软件帧
+                //     if (!swFrame_) {
+                //         swFrame_ = av_frame_alloc();
+                //         if (!swFrame_) {
+                //             LOG_ERROR("无法分配软件帧");
+                //             return;
+                //         }
+                //     }
+
+                //     // 设置软件帧参数
+                //     swFrame_->width = avFrame->width;
+                //     swFrame_->height = avFrame->height;
+                //     swFrame_->format =
+                //         AV_PIX_FMT_NV12;  // 大多数硬件解码器输出NV12格式
+
+                //     // 分配软件帧缓冲区
+                //     // int ret = av_frame_get_buffer(swFrame_, 0);
+                //     // if (ret < 0) {
+                //     //     char errBuf[AV_ERROR_MAX_STRING_SIZE];
+                //     //     av_strerror(ret, errBuf, sizeof(errBuf));
+                //     //     LOG_ERROR("无法分配软件帧缓冲区: {}", errBuf);
+                //     //     return;
+                //     // }
+
+                //     // 将硬件帧数据传输到软件帧
+                //     av_frame_unref(swFrame_);
+                //     int ret = av_hwframe_transfer_data(swFrame_, avFrame, 0);
+                //     if (ret < 0) {
+                //         char errBuf[AV_ERROR_MAX_STRING_SIZE];
+                //         av_strerror(ret, errBuf, sizeof(errBuf));
+                //         LOG_ERROR("无法将硬件帧数据传输到软件帧: {}",
+                //         errBuf); return;
+                //     }
+
+                //     // 复制帧属性
+                //     av_frame_copy_props(swFrame_, avFrame);
+
+                //     // 使用转换后的软件帧
+                //     renderFrame = swFrame_;
+                // }
+
                 double videoPts = vfr.pts();
                 LOG_DEBUG("视频帧PTS: {:.2f}", videoPts);
                 lastVideoPts = videoPts;
                 videoFPS.update();
                 videoCount++;
+
+                // 3. 编码帧
+                int ret = avcodec_send_frame(codecCtx, frame);
+                if (ret < 0) {
+                    LOG_ERROR("发送帧失败");
+                    return;
+                }
+
+                ret = avcodec_receive_packet(codecCtx, pkt);
+                if (ret < 0) {
+                    LOG_ERROR("接收包失败");
+                    return;
+                }
+
+                // 4. 写入文件
+                const std::string filename =
+                    fmt::format("./images/{}.png", i++);
+                FILE* outFile = fopen(filename.c_str(), "wb");
+                fwrite(pkt->data, 1, pkt->size, outFile);
+                fclose(outFile);
+
+                av_packet_unref(pkt);
 
                 // 当视频到达100帧后，调用seek
                 // if (videoCount.load() % 100 == 0) {
@@ -127,6 +223,9 @@ int main(int argc, char* argv[])
                 // utils::highPrecisionSleep(1); // 1ms
             }
         }
+
+        avcodec_free_context(&codecCtx);
+        av_packet_free(&pkt);
     });
 
     // 主线程监测时长

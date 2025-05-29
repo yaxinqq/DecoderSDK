@@ -18,6 +18,8 @@ public:
         int hwDeviceIndex = 0;
         // 软解时的视频输出格式
         AVPixelFormat videoOutFormat = AV_PIX_FMT_YUV420P;
+        // 需要解码后的帧位于内存中
+        bool requireFrameInSystemMemory = false;
     };
 
 public:
@@ -25,7 +27,7 @@ public:
     ~DecoderController();
 
     // 打开媒体文件
-    bool open(const std::string& filePath, const Config& config = Config());
+    bool open(const std::string &filePath, const Config &config = Config());
     bool close();
 
     bool pause();
@@ -38,10 +40,10 @@ public:
     bool setSpeed(double speed);
 
     // 获取视频帧队列
-    FrameQueue& videoQueue();
+    FrameQueue &videoQueue();
 
     // 获取音频帧队列
-    FrameQueue& audioQueue();
+    FrameQueue &audioQueue();
 
     // 设置主时钟类型
     void setMasterClock(SyncController::MasterClock type);
@@ -59,7 +61,7 @@ public:
     double curSpeed() const;
 
     // 开始录像，暂时将输出文件保存为.mp4格式
-    bool startRecording(const std::string& outputPath);
+    bool startRecording(const std::string &outputPath);
     // 停止录像
     bool stopRecording();
     // 是否正在录像
@@ -84,7 +86,7 @@ private:
     bool isLiveStream_ = false;
 
     // 录制相关
-    AVFormatContext* recordFormatCtx_ = nullptr;
+    AVFormatContext *recordFormatCtx_ = nullptr;
     std::string recordFilePath_;
     std::atomic_bool isRecording_ = false;
     std::thread recordThread_;

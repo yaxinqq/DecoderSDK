@@ -27,11 +27,13 @@ VideoDecoder::~VideoDecoder()
 }
 
 void VideoDecoder::init(HWAccelType type, int deviceIndex,
-                        AVPixelFormat softPixelFormat)
+                        AVPixelFormat softPixelFormat,
+                        bool requireFrameInMemory)
 {
     hwAccelType_ = type;
     deviceIndex_ = deviceIndex;
     softPixelFormat_ = softPixelFormat;
+    requireFrameInMemory_ = requireFrameInMemory;
 }
 
 bool VideoDecoder::open()
@@ -265,6 +267,11 @@ bool VideoDecoder::setHardwareDecode()
 AVMediaType VideoDecoder::type() const
 {
     return AVMEDIA_TYPE_VIDEO;
+}
+
+bool VideoDecoder::requireFrameInSystemMemory(bool required)
+{
+    requireFrameInMemory_ = required;
 }
 
 void VideoDecoder::updateFrameRate(AVRational frameRate)

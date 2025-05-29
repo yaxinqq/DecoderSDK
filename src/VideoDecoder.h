@@ -7,17 +7,21 @@
 #include <optional>
 
 class VideoDecoder : public DecoderBase {
-   public:
+public:
     VideoDecoder(std::shared_ptr<Demuxer> demuxer,
                  std::shared_ptr<SyncController> syncController);
     virtual ~VideoDecoder();
 
     void init(HWAccelType type = HWAccelType::AUTO, int deviceIndex = 0,
-              AVPixelFormat softPixelFormat = AV_PIX_FMT_YUV420P);
+              AVPixelFormat softPixelFormat = AV_PIX_FMT_YUV420P,
+              bool requireFrameInMemory = false);
 
     bool open() override;
 
     AVMediaType type() const override;
+
+    // 需要解码后的帧位于内存中
+    bool requireFrameInSystemMemory(bool required = true);
 
     // 获取检测到的帧率
     double getFrameRate() const
@@ -37,20 +41,20 @@ class VideoDecoder : public DecoderBase {
         return frameRateControlEnabled_;
     }
 
-   protected:
+protected:
     virtual void decodeLoop() override;
 
     // 根据情况，是否设置解码器的硬件解码
     bool setHardwareDecode() override;
 
-   private:
+private:
     // 更新视频帧率
     void updateFrameRate(AVRational frameRate);
 
     // 计算下一帧的显示时间
     double calculateFrameDisplayTime(double pts, double duration);
 
-   private:
+private:
     double frameRate_;  // 检测到的帧率
     std::optional<std::chrono::steady_clock::time_point>
         lastFrameTime_;  // 上一帧的时间点
@@ -63,4 +67,7 @@ class VideoDecoder : public DecoderBase {
 
     // 软解时的图像格式
     AVPixelFormat softPixelFormat_ = AV_PIX_FMT_YUV420P;
+
+    // 需要解码后的帧位于内存中
+    bool requireFrameInMemory_ = false;
 };

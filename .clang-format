@@ -10,7 +10,7 @@ UseTab: Never
 ColumnLimit: 80
 
 # 指针风格
-PointerAlignment: Left
+PointerAlignment: Right
 DerivePointerAlignment: false
 
 # 括号风格控制

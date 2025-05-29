@@ -60,6 +60,10 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Windows")
     set(SPDLOG_LIB_DIR ${CMAKE_SOURCE_DIR}/external/spdlog/windows-x86_64/lib)
     set(SPDLOG_BIN_DIR ${CMAKE_SOURCE_DIR}/external/spdlog/windows-x86_64/bin)
 
+    # fmt
+    set(FMT_INCLUDE_DIR ${CMAKE_SOURCE_DIR}/external/fmt/windows-x86_64/include)
+    set(FMT_LIB_DIR ${CMAKE_SOURCE_DIR}/external/fmt/windows-x86_64/lib)
+
 elseif (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR STREQUAL "aarch64")
     # Kylin-aarch64
     
