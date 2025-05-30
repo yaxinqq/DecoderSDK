@@ -12,8 +12,9 @@ extern "C" {
 #include "Utils.h"
 
 VideoDecoder::VideoDecoder(std::shared_ptr<Demuxer> demuxer,
-                           std::shared_ptr<SyncController> syncController)
-    : DecoderBase(demuxer, syncController),
+                           std::shared_ptr<SyncController> syncController,
+                           std::shared_ptr<EventDispatcher> eventDispatcher)
+    : DecoderBase(demuxer, syncController, eventDispatcher),
       frameRate_(0.0),
       lastFrameTime_(std::nullopt)
 {
@@ -49,6 +50,7 @@ bool VideoDecoder::open()
 
     // 更新视频帧率
     updateFrameRate(frame_rate);
+
     return true;
 }
 
@@ -72,6 +74,9 @@ void VideoDecoder::decodeLoop()
     syncController_->updateVideoClock(0.0, serial);
 
     bool hasKeyFrame = false;
+    bool readFirstFrame = false;
+    bool occuredError = false;
+
     while (isRunning_.load()) {
         // 检查序列号是否变化
         if (serial != packetQueue->serial()) {
@@ -122,7 +127,20 @@ void VideoDecoder::decodeLoop()
         if (ret < 0) {
             if (ret == AVERROR_EOF || ret == AVERROR(EAGAIN))
                 continue;
-            break;
+
+            // 解码错误
+            occuredError = true;
+            // 发送解码错误的事件
+            auto event = std::make_shared<DecoderEventArgs>(
+                codecCtx_->codec->name, streamIndex_,
+                MediaType::kMediaTypeVideo, codecCtx_->hw_device_ctx != nullptr,
+                "VideoDecoder", "Decode Error");
+            eventDispatcher_->triggerEventAsync(EventType::kDecodeError, event);
+            // 重置解码器
+            avcodec_flush_buffers(codecCtx_);
+
+            // 休眠，等待恢复
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
         }
 
         // 计算帧持续时间(单位 s)
@@ -139,6 +157,28 @@ void VideoDecoder::decodeLoop()
         if (!utils::greaterAndEqual(pts, seekPos_.load())) {
             av_frame_unref(frame);
             continue;
+        }
+
+        // 如果是第一帧，发出事件
+        if (!readFirstFrame) {
+            readFirstFrame = true;
+            auto event = std::make_shared<DecoderEventArgs>(
+                codecCtx_->codec->name, streamIndex_,
+                MediaType::kMediaTypeVideo, codecCtx_->hw_device_ctx != nullptr,
+                "VideoDecoder", "First Frame Ready");
+            eventDispatcher_->triggerEventAsync(EventType::kDecodeFirstFrame,
+                                                event);
+        }
+
+        // 如果恢复，则发出事件
+        if (occuredError) {
+            occuredError = false;
+            auto event = std::make_shared<DecoderEventArgs>(
+                codecCtx_->codec->name, streamIndex_,
+                MediaType::kMediaTypeVideo, codecCtx_->hw_device_ctx != nullptr,
+                "VideoDecoder", "Decoder Recovery");
+            eventDispatcher_->triggerEventAsync(EventType::kDecodeRecovery,
+                                                event);
         }
 
         // 软解时进行图像格式转换

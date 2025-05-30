@@ -7,8 +7,10 @@ extern "C" {
 }
 
 AudioDecoder::AudioDecoder(std::shared_ptr<Demuxer> demuxer,
-                           std::shared_ptr<SyncController> syncController)
-    : DecoderBase(demuxer, syncController), lastFrameTime_(std::nullopt)
+                           std::shared_ptr<SyncController> syncController,
+                           std::shared_ptr<EventDispatcher> eventDispatcher)
+    : DecoderBase(demuxer, syncController, eventDispatcher),
+      lastFrameTime_(std::nullopt)
 {
 }
 
@@ -19,7 +21,7 @@ AudioDecoder::~AudioDecoder()
 
 void AudioDecoder::decodeLoop()
 {
-    AVFrame* frame = av_frame_alloc();
+    AVFrame *frame = av_frame_alloc();
     if (!frame)
         return;
 
@@ -31,6 +33,9 @@ void AudioDecoder::decodeLoop()
 
     int serial = packetQueue->serial();
     syncController_->updateAudioClock(0.0, serial);
+
+    bool readFirstFrame = false;
+    bool occuredError = false;
 
     while (isRunning_) {
         // 检查序列号是否变化
@@ -46,7 +51,7 @@ void AudioDecoder::decodeLoop()
         }
 
         // 获取一个可写入的帧
-        Frame* outFrame = frameQueue_.peekWritable();
+        Frame *outFrame = frameQueue_.peekWritable();
         if (!outFrame)
             break;
 
@@ -75,7 +80,20 @@ void AudioDecoder::decodeLoop()
         if (ret < 0) {
             if (ret == AVERROR_EOF || ret == AVERROR(EAGAIN))
                 continue;
-            break;
+
+            // 解码错误
+            occuredError = true;
+            // 发送解码错误的事件
+            auto event = std::make_shared<DecoderEventArgs>(
+                codecCtx_->codec->name, streamIndex_,
+                MediaType::kMediaTypeAudio, false, "AudioDecoder",
+                "Decode Error");
+            eventDispatcher_->triggerEventAsync(EventType::kDecodeError, event);
+            // 重置解码器
+            avcodec_flush_buffers(codecCtx_);
+
+            // 休眠，等待恢复
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
         }
 
         // 当播放速度改变时，重新初始化重采样上下文
@@ -87,7 +105,7 @@ void AudioDecoder::decodeLoop()
 
         // 如果需要，重采样音频数据
         if (needResample_ && swrCtx_) {
-            AVFrame* resampledFrame = resampleFrame(frame);
+            AVFrame *resampledFrame = resampleFrame(frame);
             if (resampledFrame != frame) {
                 // 如果重采样成功，使用重采样后的帧
                 av_frame_free(&frame);
@@ -110,6 +128,28 @@ void AudioDecoder::decodeLoop()
         if (!utils::greaterAndEqual(pts, seekPos_.load())) {
             av_frame_unref(frame);
             continue;
+        }
+
+        // 如果是第一帧，发出事件
+        if (!readFirstFrame) {
+            readFirstFrame = true;
+            auto event = std::make_shared<DecoderEventArgs>(
+                codecCtx_->codec->name, streamIndex_,
+                MediaType::kMediaTypeAudio, false, "AudioDecoder",
+                "First Frame Ready");
+            eventDispatcher_->triggerEventAsync(EventType::kDecodeFirstFrame,
+                                                event);
+        }
+
+        // 如果恢复，则发出事件
+        if (occuredError) {
+            occuredError = false;
+            auto event = std::make_shared<DecoderEventArgs>(
+                codecCtx_->codec->name, streamIndex_,
+                MediaType::kMediaTypeAudio, false, "AudioDecoder",
+                "Decoder Recovery");
+            eventDispatcher_->triggerEventAsync(EventType::kDecodeRecovery,
+                                                event);
         }
 
         // 将解码后的帧复制到输出帧
@@ -182,14 +222,14 @@ bool AudioDecoder::initResampleContext()
     return true;
 }
 
-AVFrame* AudioDecoder::resampleFrame(AVFrame* frame)
+AVFrame *AudioDecoder::resampleFrame(AVFrame *frame)
 {
     if (!needResample_ || !swrCtx_ || !frame) {
         return frame;
     }
 
     // 创建输出帧
-    AVFrame* outFrame = av_frame_alloc();
+    AVFrame *outFrame = av_frame_alloc();
     if (!outFrame) {
         return frame;
     }
@@ -214,7 +254,7 @@ AVFrame* AudioDecoder::resampleFrame(AVFrame* frame)
 
     // 执行重采样
     ret = swr_convert(swrCtx_, outFrame->data, outSamples,
-                      (const uint8_t**)frame->data, frame->nb_samples);
+                      (const uint8_t **)frame->data, frame->nb_samples);
     if (ret < 0) {
         av_frame_free(&outFrame);
         return frame;

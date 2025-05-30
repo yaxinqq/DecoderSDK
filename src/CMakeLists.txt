@@ -3,41 +3,37 @@
 # 定义工程名称变量
 set(PROJECT_NAME DecoderSDK)
 
-# 定义源文件列表
-set(SRC_FILES
-    AudioDecoder.h
-    AudioDecoder.cpp
-    Clock.h
-    Clock.cpp
-    DecoderBase.h
-    DecoderBase.cpp
-    DecoderController.h
-    DecoderController.cpp
-    Demuxer.h
-    Demuxer.cpp
-    FrameQueue.h
-    FrameQueue.cpp
-    HardwareAccel.h
-    HardwareAccel.cpp
-    Logger.h
-    Logger.cpp
-    main.cpp
-    PacketQueue.h
-    PacketQueue.cpp
-    SyncController.h
-    SyncController.cpp
-    Utils.h
-    Utils.cpp
-    VideoDecoder.h
-    VideoDecoder.cpp
+# 模块目录配置
+set(MODULE_DIRS
+)
+
+# 源文件收集
+foreach(MODULE ${MODULE_DIRS})
+    string(TOUPPER ${MODULE} MODULE_UPPER)
+    file(GLOB ${MODULE_UPPER}_SRC
+        "${MODULE}/*.h"
+        "${MODULE}/*.cpp"
+        "${MODULE}/*.hpp"
+        "${MODULE}/*.cc"
+    )
+    source_group(${MODULE} FILES ${${MODULE_UPPER}_SRC})
+    list(APPEND ALL_MODULE_SOURCES ${${MODULE_UPPER}_SRC})
+endforeach()
+
+# 根目录源文件收集
+file(GLOB ROOT_SRC
+    "*.h"
+    "*.cpp"
+    "*.hpp"
+    "*.cc"
 )
 
 # 定义库
 # add_library(${PROJECT_NAME} SHARED
-#     ${SRC_FILES}
+#     ${ROOT_SRC}
 # )
 add_executable(${PROJECT_NAME}
-    ${SRC_FILES}
+    ${ROOT_SRC}
 )
 
 # # 生成资源文件，并参与编译

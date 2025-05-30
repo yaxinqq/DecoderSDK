@@ -1,9 +1,25 @@
 #include "DecoderBase.h"
 
+namespace {
+MediaType transAVMediaType(AVMediaType type)
+{
+    switch (type) {
+        case AVMEDIA_TYPE_VIDEO:
+            return MediaType::kMediaTypeVideo;
+        case AVMEDIA_TYPE_AUDIO:
+            return MediaType::kMediaTypeAudio;
+        default:
+            return MediaType::kMediaTypeUnknown;
+    }
+}
+}  // namespace
+
 DecoderBase::DecoderBase(std::shared_ptr<Demuxer> demuxer,
-                         std::shared_ptr<SyncController> syncController)
+                         std::shared_ptr<SyncController> syncController,
+                         std::shared_ptr<EventDispatcher> eventDispatcher)
     : demuxer_(demuxer),
       syncController_(syncController),
+      eventDispatcher_(eventDispatcher),
       frameRateControlEnabled_{true},
       frameQueue_(3, true),
       isRunning_(false),
@@ -20,43 +36,66 @@ DecoderBase::~DecoderBase()
 
 bool DecoderBase::open()
 {
-    auto* const formatContext = demuxer_->formatContext();
+    const auto sendFailedEvent = [this]() {
+        auto event = std::make_shared<DecoderEventArgs>(
+            codecCtx_ ? codecCtx_->codec->name : "", streamIndex_,
+            transAVMediaType(type()), false, "Decoder",
+            "Decode Created Failed");
+        eventDispatcher_->triggerEventAsync(EventType::kCreateDecoderSuccess,
+                                            event);
+    };
+
+    auto *const formatContext = demuxer_->formatContext();
     if (!formatContext) {
+        sendFailedEvent();
         return false;
     }
 
     streamIndex_ = demuxer_->streamIndex(type());
     if (streamIndex_ < 0) {
         // Todo: log error
+        sendFailedEvent();
         return false;
     }
 
     stream_ = formatContext->streams[streamIndex_];
 
-    const AVCodec* codec = avcodec_find_decoder(stream_->codecpar->codec_id);
+    const AVCodec *codec = avcodec_find_decoder(stream_->codecpar->codec_id);
     if (!codec) {
         // Todo: log
+        sendFailedEvent();
         return false;
     }
 
     codecCtx_ = avcodec_alloc_context3(codec);
     if (!codecCtx_) {
         // Todo: log
+        sendFailedEvent();
         return false;
     }
 
     if (avcodec_parameters_to_context(codecCtx_, stream_->codecpar) < 0) {
         // Todo: log
+        sendFailedEvent();
         return false;
     }
     // 尝试设置硬解
-    setHardwareDecode();
+    const bool useHw = setHardwareDecode();
 
     if (avcodec_open2(codecCtx_, codec, nullptr) < 0) {
         // Todo: log
+        sendFailedEvent();
         return false;
     }
 
+    // 发送解码已开始的事件
+    auto event = std::make_shared<DecoderEventArgs>(
+        codecCtx_->codec->name, streamIndex_, transAVMediaType(type()), useHw,
+        "Decoder", "Decode Created Success");
+    eventDispatcher_->triggerEventAsync(EventType::kCreateDecoderSuccess,
+                                        event);
+
+    needClose_ = true;
     return true;
 }
 
@@ -80,6 +119,12 @@ void DecoderBase::start()
 
     isRunning_ = true;
     thread_ = std::thread(&DecoderBase::decodeLoop, this);
+
+    // 发送解码已开始的事件
+    auto event = std::make_shared<DecoderEventArgs>(
+        codecCtx_->codec->name, streamIndex_, transAVMediaType(type()),
+        codecCtx_->hw_device_ctx != nullptr, "Decoder", "Decode Started");
+    eventDispatcher_->triggerEventAsync(EventType::kDecodeStarted, event);
 }
 
 void DecoderBase::stop()
@@ -95,13 +140,33 @@ void DecoderBase::stop()
 
     if (thread_.joinable())
         thread_.join();
+
+    // 发送解码已停止的事件
+    auto event = std::make_shared<DecoderEventArgs>(
+        codecCtx_->codec->name, streamIndex_, transAVMediaType(type()),
+        codecCtx_->hw_device_ctx != nullptr, "Decoder", "Decode Stopped");
+    eventDispatcher_->triggerEventAsync(EventType::kDecodeStopped, event);
 }
 
 void DecoderBase::close()
 {
+    if (!needClose_)
+        return;
+
+    const auto codecName = codecCtx_ ? codecCtx_->codec->name : "";
+    const bool useHw = codecCtx_ ? codecCtx_->hw_device_ctx != nullptr : false;
+
     if (codecCtx_) {
         avcodec_free_context(&codecCtx_);
     }
+
+    needClose_ = false;
+
+    // 发送解码已销毁的事件
+    auto event = std::make_shared<DecoderEventArgs>(
+        codecName, streamIndex_, transAVMediaType(type()), useHw, "Decoder",
+        "Decode Destoryed");
+    eventDispatcher_->triggerEventAsync(EventType::kDestoryDecoder, event);
 }
 
 void DecoderBase::setSeekPos(double pos)
@@ -109,7 +174,7 @@ void DecoderBase::setSeekPos(double pos)
     seekPos_.store(pos);
 }
 
-FrameQueue& DecoderBase::frameQueue()
+FrameQueue &DecoderBase::frameQueue()
 {
     return frameQueue_;
 }
@@ -127,7 +192,7 @@ bool DecoderBase::setSpeed(double speed)
     return true;
 }
 
-double DecoderBase::calculatePts(AVFrame* frame) const
+double DecoderBase::calculatePts(AVFrame *frame) const
 {
     const int64_t pts =
         (frame->pts != AV_NOPTS_VALUE)

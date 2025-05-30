@@ -2,20 +2,22 @@
 #include <atomic>
 #include <thread>
 
-#include "Clock.h"
-#include "Demuxer.h"
-#include "FrameQueue.h"
-#include "SyncController.h"
-
 extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
 }
 
+#include "Clock.h"
+#include "Demuxer.h"
+#include "EventDispatcher.h"
+#include "FrameQueue.h"
+#include "SyncController.h"
+
 class DecoderBase {
-   public:
+public:
     DecoderBase(std::shared_ptr<Demuxer> demuxer,
-                std::shared_ptr<SyncController> syncController);
+                std::shared_ptr<SyncController> syncController,
+                std::shared_ptr<EventDispatcher> eventDispatcher);
     virtual ~DecoderBase();
 
     virtual bool open();
@@ -24,13 +26,13 @@ class DecoderBase {
     virtual void close();
     virtual void setSeekPos(double pos);
 
-    FrameQueue& frameQueue();
+    FrameQueue &frameQueue();
 
     bool setSpeed(double speed);
 
     virtual AVMediaType type() const = 0;
 
-   protected:
+protected:
     virtual void decodeLoop() = 0;
 
     // 根据情况，是否设置解码器的硬件解码
@@ -40,13 +42,14 @@ class DecoderBase {
     };
 
     // 计算AVFrame对应的pts(单位 s)
-    double calculatePts(AVFrame* frame) const;
+    double calculatePts(AVFrame *frame) const;
 
-   protected:
-    AVCodecContext* codecCtx_ = nullptr;
+protected:
+    AVCodecContext *codecCtx_ = nullptr;
+    bool needClose_ = false;
 
     int streamIndex_ = -1;
-    AVStream* stream_ = nullptr;
+    AVStream *stream_ = nullptr;
 
     std::shared_ptr<Demuxer> demuxer_;
     FrameQueue frameQueue_;
@@ -62,4 +65,7 @@ class DecoderBase {
 
     std::shared_ptr<SyncController> syncController_;  // 同步控制器
     bool frameRateControlEnabled_;                    // 是否启用帧率控制
+
+    // 事件分发器
+    std::shared_ptr<EventDispatcher> eventDispatcher_;
 };

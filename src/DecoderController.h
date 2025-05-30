@@ -1,9 +1,11 @@
 #pragma once
+#include <memory>
+
 #include "AudioDecoder.h"
+#include "EventDispatcher.h"
 #include "Logger.h"
 #include "SyncController.h"
 #include "VideoDecoder.h"
-#include <memory>
 
 class DecoderController {
 public:
@@ -67,11 +69,39 @@ public:
     // 是否正在录像
     bool isRecording() const;
 
-private:
-    // 录像线程
-    void recordingLoop();
+    // 监听器相关
+    // 设置全部事件的监听器
+    EventListenerHandle addGlobalEventListener(EventCallback callback);
+
+    // 移除全局事件监听器
+    bool removeGlobalEventListener(EventListenerHandle handle);
+
+    // 移除所有全局事件监听器
+    void removeAllGlobalListeners();
+
+    // 获取全局监听器数量
+    size_t getGlobalListenerCount() const;
+
+    // 添加事件监听器
+    EventListenerHandle addEventListener(EventType eventType,
+                                         EventCallback callback);
+
+    // 移除事件监听器
+    bool removeEventListener(EventType eventType, EventListenerHandle handle);
+
+    // 移除指定事件类型的所有监听器
+    void removeAllListeners(EventType eventType);
+
+    // 移除所有监听器
+    void removeAllListeners();
+
+    // 启用/禁用异步事件处理
+    void setAsyncProcessing(bool enabled);
 
 private:
+    // 事件分发
+    std::shared_ptr<EventDispatcher> eventDispatcher_;
+
     std::shared_ptr<Demuxer> demuxer_;
     std::shared_ptr<VideoDecoder> videoDecoder_;
     std::shared_ptr<AudioDecoder> audioDecoder_;
@@ -82,15 +112,4 @@ private:
 
     // 解码器配置项
     Config config_;
-    // 是否是实时流
-    bool isLiveStream_ = false;
-
-    // 录制相关
-    AVFormatContext *recordFormatCtx_ = nullptr;
-    std::string recordFilePath_;
-    std::atomic_bool isRecording_ = false;
-    std::thread recordThread_;
-    std::mutex recordMutex_;
-    std::condition_variable recordCv_;
-    std::atomic_bool recordStopFlag_ = false;
 };

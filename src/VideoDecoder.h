@@ -9,7 +9,8 @@
 class VideoDecoder : public DecoderBase {
 public:
     VideoDecoder(std::shared_ptr<Demuxer> demuxer,
-                 std::shared_ptr<SyncController> syncController);
+                 std::shared_ptr<SyncController> syncController,
+                 std::shared_ptr<EventDispatcher> eventDispatcher);
     virtual ~VideoDecoder();
 
     void init(HWAccelType type = HWAccelType::AUTO, int deviceIndex = 0,

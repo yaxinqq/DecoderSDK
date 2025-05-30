@@ -72,6 +72,14 @@ int main(int argc, char *argv[])
 
     float playbackSpeed = 1.0f;
     DecoderController manager;
+
+    // 注册事件回调函数
+    manager.addGlobalEventListener(
+        [](EventType eventType, std::shared_ptr<EventArgs> event) {
+            LOG_INFO("收到{}的回调：{}", event->source, event->description);
+        });
+    manager.setAsyncProcessing(false);
+
     DecoderController::Config config;
     config.hwAccelType = HWAccelType::AUTO;
     config.videoOutFormat = AV_PIX_FMT_RGB24;
@@ -135,44 +143,44 @@ int main(int argc, char *argv[])
                 videoFPS.update();
                 videoCount++;
 
-                // 保存图片验证解码有效性
-                // 1. 创建编码器上下文
-                if (!codecCtx) {
-                    codecCtx = avcodec_alloc_context3(codec);
-                    codecCtx->bit_rate = 400000;
-                    codecCtx->width = frame->width;
-                    codecCtx->height = frame->height;
-                    codecCtx->pix_fmt = AV_PIX_FMT_RGB24;
-                    codecCtx->time_base = AVRational{1, 25};
-                    int ret = avcodec_open2(codecCtx, codec, nullptr);
-                    if (ret < 0) {
-                        LOG_ERROR("无法打开编码器, {}", ret);
-                        avcodec_free_context(&codecCtx);
-                        return;
-                    }
-                }
+                // // 保存图片验证解码有效性
+                // // 1. 创建编码器上下文
+                // if (!codecCtx) {
+                //     codecCtx = avcodec_alloc_context3(codec);
+                //     codecCtx->bit_rate = 400000;
+                //     codecCtx->width = frame->width;
+                //     codecCtx->height = frame->height;
+                //     codecCtx->pix_fmt = AV_PIX_FMT_RGB24;
+                //     codecCtx->time_base = AVRational{1, 25};
+                //     int ret = avcodec_open2(codecCtx, codec, nullptr);
+                //     if (ret < 0) {
+                //         LOG_ERROR("无法打开编码器, {}", ret);
+                //         avcodec_free_context(&codecCtx);
+                //         return;
+                //     }
+                // }
 
-                // 3. 编码帧
-                int ret = avcodec_send_frame(codecCtx, frame);
-                if (ret < 0) {
-                    LOG_ERROR("发送帧失败");
-                    return;
-                }
+                // // 3. 编码帧
+                // int ret = avcodec_send_frame(codecCtx, frame);
+                // if (ret < 0) {
+                //     LOG_ERROR("发送帧失败");
+                //     return;
+                // }
 
-                ret = avcodec_receive_packet(codecCtx, pkt);
-                if (ret < 0) {
-                    LOG_ERROR("接收包失败");
-                    return;
-                }
+                // ret = avcodec_receive_packet(codecCtx, pkt);
+                // if (ret < 0) {
+                //     LOG_ERROR("接收包失败");
+                //     return;
+                // }
 
-                // 4. 写入文件
-                const std::string filename =
-                    fmt::format("./images/{}.png", i++);
-                FILE *outFile = fopen(filename.c_str(), "wb");
-                fwrite(pkt->data, 1, pkt->size, outFile);
-                fclose(outFile);
+                // // 4. 写入文件
+                // const std::string filename =
+                //     fmt::format("./images/{}.png", i++);
+                // FILE *outFile = fopen(filename.c_str(), "wb");
+                // fwrite(pkt->data, 1, pkt->size, outFile);
+                // fclose(outFile);
 
-                av_packet_unref(pkt);
+                // av_packet_unref(pkt);
 
                 // 当视频到达100帧后，调用seek
                 // if (videoCount.load() % 100 == 0) {
