@@ -16,7 +16,7 @@ public:
     Demuxer(std::shared_ptr<EventDispatcher> eventDispatcher);
     virtual ~Demuxer();
 
-    bool open(const std::string &url, bool isRealTime);
+    bool open(const std::string &url, bool isRealTime, bool isReopen = false);
     bool close();
 
     bool pause();
@@ -103,4 +103,7 @@ private:
     bool isRealTime_ = false;
     // 是否需要关闭
     bool needClose_ = false;
+
+    // 是否为重新打开
+    bool isReopen_ = false;
 };

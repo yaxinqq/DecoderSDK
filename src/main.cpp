@@ -68,7 +68,7 @@ int main(int argc, char *argv[])
 
     std::string videoPath =
         (argc > 1) ? argv[1]
-                   : "rtsp://admin:zhkj2501@192.168.0.71:554/ch1/stream1";
+                   : "rtsp://stream.strba.sk:1935/strba/VYHLAD_JAZERO.stream";
 
     float playbackSpeed = 1.0f;
     DecoderController manager;
@@ -76,12 +76,15 @@ int main(int argc, char *argv[])
     // 注册事件回调函数
     manager.addGlobalEventListener(
         [](EventType eventType, std::shared_ptr<EventArgs> event) {
-            LOG_INFO("收到{}的回调：{}", event->source, event->description);
+            LOG_INFO("收到{}的{}回调：{}", event->source,
+                     EventDispatcher::getEventTypeName(eventType),
+                     event->description);
         });
     manager.setAsyncProcessing(false);
 
     DecoderController::Config config;
     config.hwAccelType = HWAccelType::AUTO;
+    config.hwDeviceIndex = 1;
     config.videoOutFormat = AV_PIX_FMT_RGB24;
     config.requireFrameInSystemMemory = true;
     if (!manager.open(videoPath, config)) {
@@ -91,11 +94,11 @@ int main(int argc, char *argv[])
     LOG_INFO("打开文件成功: {}", videoPath);
     manager.setFrameRateControl(true);  // 关闭内部帧率控制
     manager.setSpeed(playbackSpeed);
-    manager.startRecording("./output.mp4");
+    // manager.startRecording("./output.mp4");
     manager.startDecode();
 
     // 测试时长和计时
-    const int TEST_DURATION_SEC = 20;
+    const int TEST_DURATION_SEC = 3000000;
     auto testStart = std::chrono::steady_clock::now();
     std::atomic<bool> running{true};
 
@@ -143,8 +146,8 @@ int main(int argc, char *argv[])
                 videoFPS.update();
                 videoCount++;
 
-                // // 保存图片验证解码有效性
-                // // 1. 创建编码器上下文
+                // 保存图片验证解码有效性
+                // 1. 创建编码器上下文
                 // if (!codecCtx) {
                 //     codecCtx = avcodec_alloc_context3(codec);
                 //     codecCtx->bit_rate = 400000;

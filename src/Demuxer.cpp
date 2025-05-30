@@ -18,12 +18,20 @@ Demuxer::~Demuxer()
     close();
 }
 
-bool Demuxer::open(const std::string &url, bool isRealTime)
+bool Demuxer::open(const std::string &url, bool isRealTime, bool isReopen)
 {
     // 上报流正在打开事件
     auto event = std::make_shared<StreamEventArgs>(url, "DecoderController",
                                                    "Stream Opening");
     eventDispatcher_->triggerEventAsync(EventType::kStreamOpening, event);
+
+    const auto sendFailedEvent = [this, isReopen, url]() {
+        // 上报流打开失败事件
+        auto event = std::make_shared<StreamEventArgs>(url, "Demuxer",
+                                                       "Stream OpenFiled");
+        eventDispatcher_->triggerEventAsync(EventType::kStreamOpenFailed,
+                                            event);
+    };
 
     AVDictionary *options = nullptr;
     av_dict_set(&options, "timeout", "3000000", 0);
@@ -38,17 +46,13 @@ bool Demuxer::open(const std::string &url, bool isRealTime)
         0) {
         av_dict_free(&options);
 
-        // 上报流打开失败事件
-        event = std::make_shared<StreamEventArgs>(url, "Demuxer",
-                                                  "Stream OpenFiled");
-        eventDispatcher_->triggerEventAsync(EventType::kStreamOpenFailed,
-                                            event);
-
+        sendFailedEvent();
         return false;
     }
     av_dict_free(&options);
 
     if (avformat_find_stream_info(formatContext_, nullptr) < 0) {
+        sendFailedEvent();
         return false;
     }
 
@@ -66,11 +70,19 @@ bool Demuxer::open(const std::string &url, bool isRealTime)
     // 上报流打开成功事件
     event = std::make_shared<StreamEventArgs>(url, "DecoderController",
                                               "Stream Opened");
-    eventDispatcher_->triggerEventAsync(EventType::kStreamOpenFailed, event);
+    eventDispatcher_->triggerEventAsync(EventType::kStreamOpened, event);
 
     url_ = url;
     isRealTime_ = isRealTime;
     needClose_ = true;
+    isReopen_ = isReopen;
+    if (isReopen) {
+        // 上报流恢复事件
+        event = std::make_shared<StreamEventArgs>(url, "DecoderController",
+                                                  "Stream Recovery");
+        eventDispatcher_->triggerEventAsync(EventType::kStreamReadRecovery,
+                                            event);
+    }
 
     return true;
 }
@@ -105,6 +117,11 @@ bool Demuxer::close()
     eventDispatcher_->triggerEventAsync(EventType::kStreamClosed, event);
 
     needClose_ = false;
+    isReopen_ = false;
+
+    url_.clear();
+    videoStreamIndex_ = -1;
+    audioStreamIndex_ = -1;
     return true;
 }
 
@@ -456,14 +473,7 @@ void Demuxer::demuxLoop()
                     eventDispatcher_->triggerEventAsync(
                         EventType::kStreamReadError, event);
 
-                    // 关闭当前的上下文，重新打开
-                    if (formatContext_) {
-                        avformat_close_input(&formatContext_);
-                    }
-                    open(url_, isRealTime_);
-                    reopened = true;
-
-                    // break;
+                    break;
                 }
             }
             continue;

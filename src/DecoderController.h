@@ -22,6 +22,11 @@ public:
         AVPixelFormat videoOutFormat = AV_PIX_FMT_YUV420P;
         // 需要解码后的帧位于内存中
         bool requireFrameInSystemMemory = false;
+
+        // 重连配置
+        bool enableAutoReconnect = true;  // 是否启用自动重连
+        int maxReconnectAttempts = -1;    // 最大重连次数
+        int reconnectIntervalMs = 1000;   // 重连间隔(毫秒)
     };
 
 public:
@@ -76,9 +81,6 @@ public:
     // 移除全局事件监听器
     bool removeGlobalEventListener(EventListenerHandle handle);
 
-    // 移除所有全局事件监听器
-    void removeAllGlobalListeners();
-
     // 获取全局监听器数量
     size_t getGlobalListenerCount() const;
 
@@ -89,14 +91,26 @@ public:
     // 移除事件监听器
     bool removeEventListener(EventType eventType, EventListenerHandle handle);
 
-    // 移除指定事件类型的所有监听器
-    void removeAllListeners(EventType eventType);
-
     // 移除所有监听器
     void removeAllListeners();
 
     // 启用/禁用异步事件处理
     void setAsyncProcessing(bool enabled);
+
+    // 停止重连任务
+    void stopReconnect();
+
+    // 检查是否正在重连
+    bool isReconnecting() const;
+
+private:
+    // 流读取错误后，重新打开
+    bool reopen(const std::string &url);
+    // 处理重连
+    void handleReconnect(const std::string &url);
+
+    bool startDecodeInternal(bool reopen);
+    bool stopDecodeInternal(bool reopen);
 
 private:
     // 事件分发
@@ -112,4 +126,9 @@ private:
 
     // 解码器配置项
     Config config_;
+
+    // 重连相关
+    std::atomic<int> reconnectAttempts_{0};
+    std::atomic_bool isReconnecting_{false};
+    std::atomic_bool shouldStopReconnect_{false};  // 添加重连停止标志
 };

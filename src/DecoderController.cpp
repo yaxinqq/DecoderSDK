@@ -5,8 +5,24 @@
 DecoderController::DecoderController()
     : eventDispatcher_(std::make_shared<EventDispatcher>()),
       demuxer_(std::make_shared<Demuxer>(eventDispatcher_)),
-      syncController_(std::make_shared<SyncController>())
+      syncController_(std::make_shared<SyncController>()),
+      reconnectAttempts_(0)  // 添加重连计数器
 {
+    eventDispatcher_->addEventListener(
+        EventType::kStreamReadError,
+        [this](EventType, std::shared_ptr<EventArgs> event) {
+            StreamEventArgs *streamEvent =
+                dynamic_cast<StreamEventArgs *>(event.get());
+            if (streamEvent && config_.enableAutoReconnect &&
+                !shouldStopReconnect_.load()) {
+                // 设置重连状态
+                isReconnecting_.store(true);
+                // 异步执行重连，避免死锁
+                std::thread([this, url = streamEvent->filePath]() {
+                    handleReconnect(url);
+                }).detach();
+            }
+        });
 }
 
 DecoderController::~DecoderController()
@@ -17,6 +33,18 @@ DecoderController::~DecoderController()
 
 bool DecoderController::open(const std::string &filePath, const Config &config)
 {
+    // 停止任何正在进行的重连任务
+    shouldStopReconnect_.store(true);
+
+    // 等待重连任务结束
+    while (isReconnecting_.load()) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+
+    // 重置重连相关状态
+    reconnectAttempts_.store(0);
+    shouldStopReconnect_.store(false);
+
     config_ = config;
 
     // 打开媒体文件，并启用解复用器
@@ -29,6 +57,18 @@ bool DecoderController::open(const std::string &filePath, const Config &config)
 
 bool DecoderController::close()
 {
+    // 停止任何正在进行的重连任务
+    shouldStopReconnect_.store(true);
+
+    // 等待重连任务结束
+    while (isReconnecting_.load()) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+
+    // 重置重连相关状态
+    reconnectAttempts_.store(0);
+    shouldStopReconnect_.store(false);
+
     const auto ret = demuxer_->close();
 
     return ret;
@@ -54,73 +94,12 @@ bool DecoderController::resume()
 
 bool DecoderController::startDecode()
 {
-    // 如果当前已开始解码，则先停止
-    if (isStartDecoding_) {
-        stopDecode();
-    }
-
-    // 重置同步控制器
-    syncController_->resetClocks();
-
-    // 创建视频解码器
-    if (demuxer_->hasVideo()) {
-        videoDecoder_ = std::make_shared<VideoDecoder>(
-            demuxer_, syncController_, eventDispatcher_);
-        videoDecoder_->init(config_.hwAccelType, config_.hwDeviceIndex,
-                            config_.videoOutFormat,
-                            config_.requireFrameInSystemMemory);
-        videoDecoder_->setFrameRateControl(config_.enableFrameRateControl);
-        videoDecoder_->setSpeed(config_.speed);
-        if (!videoDecoder_->open()) {
-            return false;
-        }
-    }
-
-    // 创建音频解码器
-    if (demuxer_->hasAudio()) {
-        audioDecoder_ = std::make_shared<AudioDecoder>(
-            demuxer_, syncController_, eventDispatcher_);
-        audioDecoder_->setSpeed(config_.speed);
-        if (!audioDecoder_->open()) {
-            return false;
-        }
-    }
-
-    // 默认使用音频作为主时钟
-    if (demuxer_->hasAudio()) {
-        syncController_->setMaster(SyncController::MasterClock::Audio);
-    } else if (demuxer_->hasVideo()) {
-        syncController_->setMaster(SyncController::MasterClock::Video);
-    }
-
-    // 启动解码器
-    if (videoDecoder_) {
-        videoDecoder_->start();
-    }
-
-    if (audioDecoder_) {
-        audioDecoder_->start();
-    }
-
-    isStartDecoding_ = true;
-    return true;
+    return startDecodeInternal(false);
 }
 
 bool DecoderController::stopDecode()
 {
-    // 停止解码器，并销毁
-    if (videoDecoder_) {
-        videoDecoder_->stop();
-        videoDecoder_.reset();
-    }
-
-    if (audioDecoder_) {
-        audioDecoder_->stop();
-        audioDecoder_.reset();
-    }
-
-    isStartDecoding_ = false;
-    return true;
+    return stopDecodeInternal(false);
 }
 
 bool DecoderController::seek(double position)
@@ -292,11 +271,6 @@ bool DecoderController::removeGlobalEventListener(EventListenerHandle handle)
     return eventDispatcher_->removeGlobalEventListener(handle);
 }
 
-void DecoderController::removeAllGlobalListeners()
-{
-    eventDispatcher_->removeAllGlobalListeners();
-}
-
 size_t DecoderController::getGlobalListenerCount() const
 {
     return eventDispatcher_->getGlobalListenerCount();
@@ -308,27 +282,199 @@ EventListenerHandle DecoderController::addEventListener(EventType eventType,
     return eventDispatcher_->addEventListener(eventType, callback);
 }
 
-// 移除事件监听器
 bool DecoderController::removeEventListener(EventType eventType,
                                             EventListenerHandle handle)
 {
     return eventDispatcher_->removeEventListener(eventType, handle);
 }
 
-// 移除指定事件类型的所有监听器
-void DecoderController::removeAllListeners(EventType eventType)
-{
-    eventDispatcher_->removeAllListeners(eventType);
-}
-
-// 移除所有监听器
 void DecoderController::removeAllListeners()
 {
     eventDispatcher_->removeAllListeners();
 }
 
-// 启用/禁用异步事件处理
 void DecoderController::setAsyncProcessing(bool enabled)
 {
     eventDispatcher_->setAsyncProcessing(enabled);
+}
+
+void DecoderController::stopReconnect()
+{
+    shouldStopReconnect_.store(true);
+
+    // 等待重连任务结束
+    while (isReconnecting_.load()) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+
+    // 重置状态
+    reconnectAttempts_.store(0);
+    shouldStopReconnect_.store(false);
+}
+
+bool DecoderController::isReconnecting() const
+{
+    return isReconnecting_.load();
+}
+
+bool DecoderController::reopen(const std::string &url)
+{
+    LOG_INFO("开始重连流: {}", url);
+    isReconnecting_.store(true);
+
+    // 停止当前解码
+    bool wasDecoding = isStartDecoding_;
+    if (wasDecoding) {
+        stopDecodeInternal(true);
+    }
+
+    // 关闭当前连接
+    demuxer_->close();
+
+    // 等待一段时间后重新连接
+    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+
+    // 重新打开流，标记为重连
+    bool reopenSuccess = demuxer_->open(url, utils::isRealtime(url), true);
+
+    if (reopenSuccess && wasDecoding) {
+        // 如果重连成功且之前在解码，则重新开始解码
+        startDecodeInternal(true);
+    }
+
+    if (reopenSuccess) {
+        LOG_INFO("重连成功: {}", url);
+    } else {
+        LOG_ERROR("重连失败: {}", url);
+    }
+
+    isReconnecting_.store(!reopenSuccess);
+    return reopenSuccess;
+}
+
+// 添加新的重连处理方法
+void DecoderController::handleReconnect(const std::string &url)
+{
+    const auto checkStopReconnection = [this, url]() {
+        // 检查是否需要停止重连
+        if (shouldStopReconnect_.load()) {
+            LOG_INFO("收到停止重连信号，终止重连任务: {}", url);
+            isReconnecting_.store(false);
+            reconnectAttempts_.store(0);
+            return true;
+        }
+        return false;
+    };
+
+    // 检查是否需要停止重连
+    if (checkStopReconnection()) {
+        return;
+    }
+
+    if (config_.maxReconnectAttempts >= 0 &&
+        reconnectAttempts_ >= config_.maxReconnectAttempts) {
+        LOG_ERROR("达到最大重连次数 {}, 停止重连",
+                  config_.maxReconnectAttempts);
+        reconnectAttempts_.store(0);
+        isReconnecting_.store(false);
+        return;
+    }
+
+    reconnectAttempts_++;
+    LOG_INFO("第 {} 次重连尝试: {}", reconnectAttempts_.load(), url);
+
+    if (reopen(url)) {
+        reconnectAttempts_.store(0);  // 重连成功，重置计数器
+        isReconnecting_.store(false);
+    } else {
+        // 重连失败，等待后再次尝试
+        // 在等待期间也要检查停止标志
+        for (int i = 0; i < config_.reconnectIntervalMs; i += 100) {
+            if (checkStopReconnection()) {
+                return;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+        if (checkStopReconnection()) {
+            return;
+        }
+        handleReconnect(url);
+    }
+}
+
+bool DecoderController::startDecodeInternal(bool reopen)
+{
+    // 如果当前已开始解码，则先停止
+    if (isStartDecoding_) {
+        stopDecodeInternal(reopen);
+    }
+
+    // 重置同步控制器
+    syncController_->resetClocks();
+
+    // 创建视频解码器
+    if (demuxer_->hasVideo()) {
+        videoDecoder_ = std::make_shared<VideoDecoder>(
+            demuxer_, syncController_, eventDispatcher_);
+        videoDecoder_->init(config_.hwAccelType, config_.hwDeviceIndex,
+                            config_.videoOutFormat,
+                            config_.requireFrameInSystemMemory);
+        videoDecoder_->setFrameRateControl(config_.enableFrameRateControl);
+        videoDecoder_->setSpeed(config_.speed);
+        if (!videoDecoder_->open()) {
+            return false;
+        }
+    }
+
+    // 创建音频解码器
+    if (demuxer_->hasAudio()) {
+        audioDecoder_ = std::make_shared<AudioDecoder>(
+            demuxer_, syncController_, eventDispatcher_);
+        audioDecoder_->setSpeed(config_.speed);
+        if (!audioDecoder_->open()) {
+            return false;
+        }
+    }
+
+    // 默认使用音频作为主时钟
+    if (demuxer_->hasAudio()) {
+        syncController_->setMaster(SyncController::MasterClock::Audio);
+    } else if (demuxer_->hasVideo()) {
+        syncController_->setMaster(SyncController::MasterClock::Video);
+    }
+
+    // 启动解码器
+    if (videoDecoder_) {
+        videoDecoder_->start();
+    }
+
+    if (audioDecoder_) {
+        audioDecoder_->start();
+    }
+
+    if (!reopen) {
+        isStartDecoding_ = true;
+    }
+
+    return true;
+}
+
+bool DecoderController::stopDecodeInternal(bool reopen)
+{
+    // 停止解码器，并销毁
+    if (videoDecoder_) {
+        videoDecoder_->stop();
+        videoDecoder_.reset();
+    }
+
+    if (audioDecoder_) {
+        audioDecoder_->stop();
+        audioDecoder_.reset();
+    }
+
+    if (!reopen) {
+        isStartDecoding_ = false;
+    }
+
+    return true;
 }
