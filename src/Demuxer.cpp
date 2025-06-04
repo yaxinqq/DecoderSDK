@@ -9,8 +9,8 @@ constexpr int kReadErrorMaxCount = 5;
 Demuxer::Demuxer(std::shared_ptr<EventDispatcher> eventDispatcher)
     : eventDispatcher_(eventDispatcher)
 {
-    videoPacketQueue_ = std::make_shared<PacketQueue>(INT_MAX);
-    audioPacketQueue_ = std::make_shared<PacketQueue>(INT_MAX);
+    videoPacketQueue_ = std::make_shared<PacketQueue>(1000);
+    audioPacketQueue_ = std::make_shared<PacketQueue>(1000);
 }
 
 Demuxer::~Demuxer()
@@ -54,6 +54,10 @@ bool Demuxer::open(const std::string &url, bool isRealTime, bool isReopen)
     if (avformat_find_stream_info(formatContext_, nullptr) < 0) {
         sendFailedEvent();
         return false;
+    }
+
+    if (formatContext_->pb && formatContext_->pb->seekable) {
+        avio_seek(formatContext_->pb, 0, SEEK_SET);
     }
 
     int ret = av_find_best_stream(formatContext_, AVMEDIA_TYPE_VIDEO, -1, -1,
@@ -405,17 +409,11 @@ void Demuxer::demuxLoop()
     int errorTimes = 0;
     bool reopened = false;
     bool readFirstPacket = false;
+    bool isEof = false;
 
     while (isRunning_.load()) {
         // 检查是否暂停
         if (isPaused_.load()) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
-            continue;
-        }
-
-        // 检查队列是否已满，如果已满则等待
-        if ((videoStreamIndex_ >= 0 && videoPacketQueue_->isFull()) ||
-            (audioStreamIndex_ >= 0 && audioPacketQueue_->isFull())) {
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
             continue;
         }
@@ -451,13 +449,12 @@ void Demuxer::demuxLoop()
                     }
                 }
 
-                // 发送流结束事件
-                auto event = std::make_shared<StreamEventArgs>(url_, "Demuxer",
-                                                               "Stream Ended");
-                eventDispatcher_->triggerEventAsync(EventType::kStreamEnded,
-                                                    event);
-
-                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                if (isRealTime_) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                } else {
+                    isEof = true;
+                    break;
+                }
             } else if (ret != AVERROR(EAGAIN)) {
                 // 真正的错误
                 if (errorTimes++ >= kReadErrorMaxCount) {
@@ -504,24 +501,39 @@ void Demuxer::demuxLoop()
         if (pkt->stream_index == videoStreamIndex_) {
             Packet packet(pkt);
             packet.setSerial(videoPacketQueue_->serial());
-            videoPacketQueue_->push(packet);
+            videoPacketQueue_->push(packet, -1);
 
             // 如果存在录像队列，则也将数据包放入录像队列
             if (videoRecordPacketQueue_) {
-                videoRecordPacketQueue_->push(packet);
+                videoRecordPacketQueue_->push(packet, -1);
             }
         } else if (pkt->stream_index == audioStreamIndex_) {
             Packet packet(pkt);
             packet.setSerial(audioPacketQueue_->serial());
-            audioPacketQueue_->push(packet);
+            audioPacketQueue_->push(packet, -1);
 
             // 如果存在录像队列，则也将数据包放入录像队列
             if (audioRecordPacketQueue_) {
-                audioRecordPacketQueue_->push(packet);
+                audioRecordPacketQueue_->push(packet, -1);
             }
         }
 
         av_packet_unref(pkt);
+    }
+
+    // 如果是eof，则等待，如果Packet全部被消费，则发送事件
+    if (isEof) {
+        while (isRunning_.load()) {
+            if (videoPacketQueue_->isEmpty() && audioPacketQueue_->isEmpty()) {
+                // 发送流结束事件
+                auto event = std::make_shared<StreamEventArgs>(url_, "Demuxer",
+                                                               "Stream Ended");
+                eventDispatcher_->triggerEventAsync(EventType::kStreamEnded,
+                                                    event);
+                break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
     }
 
     av_packet_free(&pkt);

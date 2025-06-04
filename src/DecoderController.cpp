@@ -177,7 +177,7 @@ bool DecoderController::setSpeed(double speed)
     }
 
     // 如果是实时流，则不支持设置速度
-    if (!demuxer_ || !demuxer_->isRealTime()) {
+    if (!demuxer_ || demuxer_->isRealTime()) {
         return false;
     }
 

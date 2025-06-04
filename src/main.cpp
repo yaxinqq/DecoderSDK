@@ -64,7 +64,7 @@ int main(int argc, char *argv[])
 
     LOG_INFO("开始解码测试...");
     std::string videoPath =
-        (argc > 1) ? argv[1] : "C:/Users/win10/Desktop/test_video/test.mp4";
+        (argc > 1) ? argv[1] : "C:/Users/win10/Desktop/test_video/output.mp4";
 
     // std::string videoPath =
     //     (argc > 1) ? argv[1]
@@ -84,9 +84,8 @@ int main(int argc, char *argv[])
 
     DecoderController::Config config;
     config.hwAccelType = HWAccelType::AUTO;
-    config.hwDeviceIndex = 1;
     config.videoOutFormat = AV_PIX_FMT_RGB24;
-    config.requireFrameInSystemMemory = true;
+    config.requireFrameInSystemMemory = false;
     if (!manager.open(videoPath, config)) {
         LOG_ERROR("打开文件失败: {}", videoPath);
         return -1;
@@ -98,7 +97,7 @@ int main(int argc, char *argv[])
     manager.startDecode();
 
     // 测试时长和计时
-    const int TEST_DURATION_SEC = 3;
+    const int TEST_DURATION_SEC = 10;
     auto testStart = std::chrono::steady_clock::now();
     std::atomic<bool> running{true};
 
