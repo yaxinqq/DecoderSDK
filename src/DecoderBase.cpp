@@ -21,7 +21,7 @@ DecoderBase::DecoderBase(std::shared_ptr<Demuxer> demuxer,
       syncController_(syncController),
       eventDispatcher_(eventDispatcher),
       frameRateControlEnabled_{true},
-      frameQueue_(3, true),
+      frameQueue_(3, false),
       isRunning_(false),
       speed_(1.0f),
       seekPos_{0.0}
@@ -134,7 +134,6 @@ void DecoderBase::stop()
 
     isRunning_ = false;
     frameQueue_.setAbortStatus(true);
-    frameQueue_.awakeCond();
 
     sleepCond_.notify_all();
 

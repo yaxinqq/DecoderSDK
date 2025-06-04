@@ -1,0 +1,510 @@
+#include "Frame.h"
+
+Frame::Frame()
+    : frame_(nullptr), serial_(0), duration_(0), isInHardware_(false), pts_(0.0)
+{
+    // 不在构造函数中分配内存，只在需要时分配
+}
+
+Frame::Frame(AVFrame *srcFrame)
+    : frame_(nullptr), serial_(0), duration_(0), isInHardware_(false), pts_(0.0)
+{
+    if (srcFrame) {
+        ensureAllocated();
+#ifdef USE_VAAPI
+        if (!copyFrmae(srcFrame)) {
+#else
+        if (av_frame_ref(frame_, srcFrame) != 0) {
+#endif
+            release();
+        }
+    }
+}
+
+Frame::Frame(const Frame &other)
+    : frame_(nullptr),
+      serial_(other.serial_),
+      duration_(other.duration_),
+      isInHardware_(other.isInHardware_),
+      pts_(other.pts_)
+{
+    if (other.frame_) {
+        ensureAllocated();
+#ifdef USE_VAAPI
+        if (!copyFrmae(other.frame_)) {
+#else
+        if (av_frame_ref(frame_, other.frame_) != 0) {
+#endif
+            release();
+        }
+    }
+}
+
+Frame &Frame::operator=(const Frame &other)
+{
+    if (this != &other) {
+        release();
+        serial_ = other.serial_;
+        duration_ = other.duration_;
+        isInHardware_ = other.isInHardware_;
+        pts_ = other.pts_;
+
+        if (other.frame_) {
+            ensureAllocated();
+#ifdef USE_VAAPI
+            if (!copyFrmae(other.frame_)) {
+#else
+            if (av_frame_ref(frame_, other.frame_) != 0) {
+#endif
+                release();
+            }
+        }
+    }
+    return *this;
+}
+
+// 移动构造函数
+Frame::Frame(Frame &&other) noexcept
+    : frame_(other.frame_),
+      serial_(other.serial_),
+      duration_(other.duration_),
+      isInHardware_(other.isInHardware_),
+      pts_(other.pts_)
+{
+    // 转移所有权，避免深拷贝
+    other.frame_ = nullptr;
+}
+
+// 移动赋值运算符
+Frame &Frame::operator=(Frame &&other) noexcept
+{
+    if (this != &other) {
+        release();
+
+        // 转移所有权
+        frame_ = other.frame_;
+        serial_ = other.serial_;
+        duration_ = other.duration_;
+        isInHardware_ = other.isInHardware_;
+        pts_ = other.pts_;
+
+        other.frame_ = nullptr;
+    }
+    return *this;
+}
+
+Frame::~Frame()
+{
+    release();
+}
+
+AVFrame *Frame::get() const
+{
+    return frame_;
+}
+
+bool Frame::isValid() const
+{
+    return frame_ != nullptr;
+}
+
+int Frame::width() const
+{
+    return frame_ ? frame_->width : 0;
+}
+int Frame::height() const
+{
+    return frame_ ? frame_->height : 0;
+}
+void Frame::setWidth(int width)
+{
+    if (frame_)
+        frame_->width = width;
+}
+void Frame::setHeight(int height)
+{
+    if (frame_)
+        frame_->height = height;
+}
+
+AVPixelFormat Frame::pixelFormat() const
+{
+    return frame_ ? static_cast<AVPixelFormat>(frame_->format)
+                  : AV_PIX_FMT_NONE;
+}
+void Frame::setPixelFormat(AVPixelFormat format)
+{
+    if (frame_)
+        frame_->format = format;
+}
+
+int64_t Frame::avPts() const
+{
+    return frame_ ? frame_->pts : AV_NOPTS_VALUE;
+}
+void Frame::setAvPts(int64_t pts)
+{
+    if (frame_)
+        frame_->pts = pts;
+}
+
+int64_t Frame::pktDts() const
+{
+    return frame_ ? frame_->pkt_dts : AV_NOPTS_VALUE;
+}
+void Frame::setPktDts(int64_t dts)
+{
+    if (frame_)
+        frame_->pkt_dts = dts;
+}
+
+int64_t Frame::pktPos() const
+{
+    return frame_ ? frame_->pkt_pos : -1;
+}
+void Frame::setPktPos(int64_t pos)
+{
+    if (frame_)
+        frame_->pkt_pos = pos;
+}
+
+int64_t Frame::pktSize() const
+{
+    return frame_ ? frame_->pkt_size : -1;
+}
+void Frame::setPktSize(int64_t size)
+{
+    if (frame_)
+        frame_->pkt_size = size;
+}
+
+AVRational Frame::timeBase() const
+{
+    return frame_ ? frame_->time_base : AVRational{0, 1};
+}
+void Frame::setTimeBase(AVRational tb)
+{
+    if (frame_)
+        frame_->time_base = tb;
+}
+
+AVRational Frame::sampleAspectRatio() const
+{
+    return frame_ ? frame_->sample_aspect_ratio : AVRational{0, 1};
+}
+void Frame::setSampleAspectRatio(AVRational sar)
+{
+    if (frame_)
+        frame_->sample_aspect_ratio = sar;
+}
+
+int Frame::quality() const
+{
+    return frame_ ? frame_->quality : 0;
+}
+void Frame::setQuality(int quality)
+{
+    if (frame_)
+        frame_->quality = quality;
+}
+
+int Frame::repeatPict() const
+{
+    return frame_ ? frame_->repeat_pict : 0;
+}
+void Frame::setRepeatPict(int repeat)
+{
+    if (frame_)
+        frame_->repeat_pict = repeat;
+}
+
+int Frame::interlacedFrame() const
+{
+    return frame_ ? frame_->interlaced_frame : 0;
+}
+void Frame::setInterlacedFrame(int interlaced)
+{
+    if (frame_)
+        frame_->interlaced_frame = interlaced;
+}
+
+int Frame::topFieldFirst() const
+{
+    return frame_ ? frame_->top_field_first : 0;
+}
+void Frame::setTopFieldFirst(int tff)
+{
+    if (frame_)
+        frame_->top_field_first = tff;
+}
+
+AVPictureType Frame::pictType() const
+{
+    return frame_ ? frame_->pict_type : AV_PICTURE_TYPE_NONE;
+}
+void Frame::setPictType(AVPictureType type)
+{
+    if (frame_)
+        frame_->pict_type = type;
+}
+
+int Frame::keyFrame() const
+{
+    return frame_ ? frame_->key_frame : 0;
+}
+void Frame::setKeyFrame(int key)
+{
+    if (frame_)
+        frame_->key_frame = key;
+}
+
+AVColorSpace Frame::colorspace() const
+{
+    return frame_ ? frame_->colorspace : AVCOL_SPC_UNSPECIFIED;
+}
+void Frame::setColorspace(AVColorSpace cs)
+{
+    if (frame_)
+        frame_->colorspace = cs;
+}
+
+AVColorRange Frame::colorRange() const
+{
+    return frame_ ? frame_->color_range : AVCOL_RANGE_UNSPECIFIED;
+}
+void Frame::setColorRange(AVColorRange range)
+{
+    if (frame_)
+        frame_->color_range = range;
+}
+
+AVChromaLocation Frame::chromaLocation() const
+{
+    return frame_ ? frame_->chroma_location : AVCHROMA_LOC_UNSPECIFIED;
+}
+void Frame::setChromaLocation(AVChromaLocation loc)
+{
+    if (frame_)
+        frame_->chroma_location = loc;
+}
+
+int Frame::sampleRate() const
+{
+    return frame_ ? frame_->sample_rate : 0;
+}
+void Frame::setSampleRate(int rate)
+{
+    if (frame_)
+        frame_->sample_rate = rate;
+}
+
+int Frame::nbSamples() const
+{
+    return frame_ ? frame_->nb_samples : 0;
+}
+void Frame::setNbSamples(int samples)
+{
+    if (frame_)
+        frame_->nb_samples = samples;
+}
+
+AVSampleFormat Frame::sampleFormat() const
+{
+    return frame_ ? static_cast<AVSampleFormat>(frame_->format)
+                  : AV_SAMPLE_FMT_NONE;
+}
+void Frame::setSampleFormat(AVSampleFormat fmt)
+{
+    if (frame_)
+        frame_->format = fmt;
+}
+
+#if LIBAVUTIL_VERSION_MAJOR >= 57
+AVChannelLayout Frame::channelLayout() const
+{
+    return frame_ ? frame_->ch_layout : AVChannelLayout{};
+}
+void Frame::setChannelLayout(const AVChannelLayout &layout)
+{
+    if (frame_) {
+        av_channel_layout_uninit(&frame_->ch_layout);
+        av_channel_layout_copy(&frame_->ch_layout, &layout);
+    }
+}
+#else
+// 兼容旧版本
+uint64_t Frame::channelLayout() const
+{
+    return frame_ ? frame_->channel_layout : 0;
+}
+void Frame::setChannelLayout(uint64_t layout)
+{
+    if (frame_)
+        frame_->channel_layout = layout;
+}
+
+int Frame::channels() const
+{
+    return frame_ ? frame_->channels : 0;
+}
+void Frame::setChannels(int ch)
+{
+    if (frame_)
+        frame_->channels = ch;
+}
+#endif
+
+uint8_t *Frame::data(int plane) const
+{
+    return (frame_ && plane < AV_NUM_DATA_POINTERS) ? frame_->data[plane]
+                                                    : nullptr;
+}
+
+int Frame::linesize(int plane) const
+{
+    return (frame_ && plane < AV_NUM_DATA_POINTERS) ? frame_->linesize[plane]
+                                                    : 0;
+}
+
+AVFrameSideData *Frame::getSideData(AVFrameSideDataType type) const
+{
+    return frame_ ? av_frame_get_side_data(frame_, type) : nullptr;
+}
+
+AVFrameSideData *Frame::newSideData(AVFrameSideDataType type, int size)
+{
+    return frame_ ? av_frame_new_side_data(frame_, type, size) : nullptr;
+}
+
+AVDictionary *Frame::metadata() const
+{
+    return frame_ ? frame_->metadata : nullptr;
+}
+
+const char *Frame::getMetadata(const char *key) const
+{
+    if (!frame_ || !frame_->metadata)
+        return nullptr;
+    AVDictionaryEntry *entry = av_dict_get(frame_->metadata, key, nullptr, 0);
+    return entry ? entry->value : nullptr;
+}
+
+void Frame::setMetadata(const char *key, const char *value)
+{
+    if (frame_) {
+        av_dict_set(&frame_->metadata, key, value, 0);
+    }
+}
+
+bool Frame::isAudioFrame() const
+{
+    return frame_ && frame_->nb_samples > 0;
+}
+
+bool Frame::isVideoFrame() const
+{
+    return frame_ && frame_->width > 0 && frame_->height > 0;
+}
+
+int Frame::getBufferSize() const
+{
+    return frame_
+               ? av_image_get_buffer_size(pixelFormat(), width(), height(), 1)
+               : 0;
+}
+
+void Frame::ensureAllocated()
+{
+    if (!frame_) {
+        frame_ = av_frame_alloc();
+    }
+}
+
+int Frame::serial() const
+{
+    return serial_;
+}
+
+void Frame::setSerial(int serial)
+{
+    serial_ = serial;
+}
+
+double Frame::durationByFps() const
+{
+    return duration_;
+}
+
+void Frame::setDurationByFps(double duration)
+{
+    duration_ = duration;
+}
+
+bool Frame::isInHardware() const
+{
+    return isInHardware_;
+}
+
+void Frame::setIsInHardware(bool isInHardware)
+{
+    isInHardware_ = isInHardware;
+}
+
+void Frame::setSecPts(double pts)
+{
+    pts_ = pts;
+}
+
+double Frame::secPts() const
+{
+    return pts_;
+}
+
+void Frame::unref()
+{
+    if (frame_) {
+        av_frame_unref(frame_);
+
+#ifdef USE_VAAPI
+        if (frame_->data[0]) {
+            free(frame_->data[0]);
+        }
+        if (frame_->data[1]) {
+            free(frame_->data[1]);
+        }
+#endif
+    }
+}
+
+void Frame::release()
+{
+    if (frame_) {
+        unref();
+        av_frame_free(&frame_);
+        frame_ = nullptr;
+    }
+}
+
+#ifdef USE_VAAPI
+bool Frame::copyFrmae(AVFrame *srcFrame)
+{
+    if (!srcFrame)
+        return false;
+
+    frame_->width = srcFrame->width;
+    frame_->height = srcFrame->height;
+    frame_->format = srcFrame->format;
+
+    egl::RDDmaBufExternalMemory yBuf =
+        *reinterpret_cast<egl::RDDmaBufExternalMemory *>(srcFrame->data[0]);
+    frame_->data[0] = (uint8_t *)malloc(sizeof(egl::RDDmaBufExternalMemory));
+    memcpy(frame_->data[0], &(yBuf), sizeof(egl::RDDmaBufExternalMemory));
+
+    egl::RDDmaBufExternalMemory uvBuf =
+        *reinterpret_cast<egl::RDDmaBufExternalMemory *>(srcFrame->data[1]);
+    frame_->data[1] = (uint8_t *)malloc(sizeof(egl::RDDmaBufExternalMemory));
+    memcpy(frame_->data[1], &(uvBuf), sizeof(egl::RDDmaBufExternalMemory));
+
+    return true;
+}
+#endif

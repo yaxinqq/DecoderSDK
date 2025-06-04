@@ -63,12 +63,12 @@ int main(int argc, char *argv[])
     Logger::initFromConfig("./etc/decodersdk.json");
 
     LOG_INFO("开始解码测试...");
-    // std::string videoPath =
-    //     (argc > 1) ? argv[1] : "C:/Users/win10/Desktop/test_video/test.mp4";
-
     std::string videoPath =
-        (argc > 1) ? argv[1]
-                   : "rtsp://stream.strba.sk:1935/strba/VYHLAD_JAZERO.stream";
+        (argc > 1) ? argv[1] : "C:/Users/win10/Desktop/test_video/test.mp4";
+
+    // std::string videoPath =
+    //     (argc > 1) ? argv[1]
+    //                : "rtsp://admin:zhkj2501@192.168.0.71:554/ch1/stream1";
 
     float playbackSpeed = 1.0f;
     DecoderController manager;
@@ -98,7 +98,7 @@ int main(int argc, char *argv[])
     manager.startDecode();
 
     // 测试时长和计时
-    const int TEST_DURATION_SEC = 3000000;
+    const int TEST_DURATION_SEC = 3;
     auto testStart = std::chrono::steady_clock::now();
     std::atomic<bool> running{true};
 
@@ -111,8 +111,8 @@ int main(int argc, char *argv[])
     std::thread audioThread([&]() {
         while (running) {
             Frame afr;
-            if (manager.audioQueue().popFrame(afr, 1)) {
-                double audioPts = afr.pts();
+            if (manager.audioQueue().pop(afr, 1)) {
+                double audioPts = afr.secPts();
                 LOG_DEBUG("音频帧PTS: {:.2f}", audioPts);
                 lastAudioPts = audioPts;
                 audioFPS.update();
@@ -138,16 +138,16 @@ int main(int argc, char *argv[])
         int i = 0;
         while (running) {
             Frame vfr;
-            if (manager.videoQueue().popFrame(vfr, 1) && vfr.isValid()) {
+            if (manager.videoQueue().pop(vfr, 1) && vfr.isValid()) {
                 AVFrame *frame = vfr.get();
-                double videoPts = vfr.pts();
+                double videoPts = vfr.secPts();
                 LOG_DEBUG("视频帧PTS: {:.2f}", videoPts);
                 lastVideoPts = videoPts;
                 videoFPS.update();
                 videoCount++;
 
-                // 保存图片验证解码有效性
-                // 1. 创建编码器上下文
+                // // 保存图片验证解码有效性
+                // // 1. 创建编码器上下文
                 // if (!codecCtx) {
                 //     codecCtx = avcodec_alloc_context3(codec);
                 //     codecCtx->bit_rate = 400000;

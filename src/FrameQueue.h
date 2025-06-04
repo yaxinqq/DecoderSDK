@@ -4,200 +4,112 @@
 #include <functional>
 #include <memory>
 #include <mutex>
-#include <queue>
+#include <vector>
 
-extern "C" {
-#include <libavutil/frame.h>
-}
+#include "Frame.h"
 
-#pragma region Frame
-class Frame {
-   public:
-    Frame();
-    explicit Frame(AVFrame* srcFrame);
-    Frame(const Frame& other);
-    Frame& operator=(const Frame& other);
-    ~Frame();
-
-    // 移动构造和移动赋值
-    Frame(Frame&& other) noexcept;
-    Frame& operator=(Frame&& other) noexcept;
-
-    // 获得帧指针
-    AVFrame* get() const;
-
-    // 判断帧是否有效
-    bool isValid() const;
-
-    // 获得序列号
-    int serial() const;
-    // 设置序列号
-    void setSerial(int serial);
-
-    // 获得帧时长
-    double duration() const;
-    // 设置帧时长
-    void setDuration(double duration);
-
-    // 是否是硬解码
-    bool isInHardware() const;
-    // 设置是否是硬解码
-    void setIsInHardware(bool isInHardware);
-
-    // 是否需要翻转
-    bool isFlipV() const;
-    // 设置是否需要翻转
-    void setIsFlipV(bool isFlipV);
-
-    void setPts(double pts);
-    double pts() const;
-
-    // 确保帧已分配
-    void ensureAllocated();
-
-   private:
-    void release();
-    void unref();
-
-#ifdef USE_VAAPI
-    bool copyFrmae(AVFrame* srcFrame);
-#endif
-
-   private:
-    friend class FrameQueue;
-
-    // 帧
-    AVFrame* frame_ = nullptr;
-    // 序列号
-    int serial_ = 0;
-    // 帧的时长
-    double duration_ = 0.0;
-    // 是否是硬解码
-    bool isInHardware_ = false;
-    // 是否需要翻转
-    bool isFlipV_ = false;
-
-    // pts 单位s
-    double pts_ = 0.0;
-};
-#pragma endregion
-
-#pragma region FrameQueue
 /**
- * @brief 数据包队列类，用于缓存音视频数据包
- *
+ * @brief 帧队列类，用于缓存音视频帧
  */
 class FrameQueue {
-   public:
+public:
     /**
      * @brief 构造函数
      * @param maxSize 最大帧数量
      * @param keepLast 是否保留最后一帧
      */
-    FrameQueue(int maxSize = 3, bool keepLast = true);
+    FrameQueue(int maxSize = 3, bool keepLast = false);
 
     /**
      * @brief 析构函数
      */
     ~FrameQueue();
 
-    /**
-     * @brief 设置是否需要终止，和对应的PacketQueue保持一致
-     * @param abort 是否终止
-     */
-    void setAbortStatus(bool abort);
-    /**
-     * @brief 设置帧队列版本序号
-     * @param serial 版本序号
-     */
-    void setSerial(int serial);
-
-    /*
-     * @brief 唤醒条件变量
-     */
-    void awakeCond();
-
-    /**
-     * @brief 获取可写入的帧
-     * @return 可写入的帧指针，失败返回nullptr
-     */
-    Frame* peekWritable();
-    /**
-     * @brief 获取可读取的帧
-     * @return 可读取的帧指针，失败返回nullptr
-     */
-    Frame* peekReadable();
-
-    /**
-     * @brief 获取可读取的帧
-     * @return 可读取的帧指针，失败返回nullptr
-     */
-    Frame* peek();
-
-    /**
-     * @brief 获取下一帧
-     * @return 下一帧指针，失败返回nullptr
-     */
-    Frame* peekNext();
-
-    /**
-     * @brief 获取最后一帧
-     * @return 最后一帧指针，失败返回nullptr
-     */
-    Frame* peekLast();
+    // 禁用拷贝构造和拷贝赋值
+    FrameQueue(const FrameQueue &) = delete;
+    FrameQueue &operator=(const FrameQueue &) = delete;
 
     /**
      * @brief 推入一帧
-     * @return 成功返回0，失败返回负值
+     * @param frame 要推入的帧
+     * @param timeout 超时时间(毫秒)，<0表示无限等待; 0立即返回;
+     * >0表示等待指定时间
+     * @return 成功返回true，失败返回false
      */
-    int push();
+    bool push(Frame frame, int timeout = -1);
 
     /**
      * @brief 弹出一帧
-     * @return 成功返回0，失败返回负值
-     */
-    int pop();
-
-    /*
-     * @brief 移动到下一帧，更新 FrameQueue
-     * 的读取位置（rindex），并释放当前帧资源。
-     */
-    void next();
-
-    /**
-     * @brief 获取并弹出一帧
+     * @param frame 输出参数，存储弹出的帧
      * @param timeout 超时时间(毫秒)，<0表示无限等待; 0立即返回;
      * >0表示等待指定时间
-     * @return 失败返回false
+     * @return 成功返回true，失败返回false
      */
-    bool popFrame(Frame& frame, int timeout = -1);
+    bool pop(Frame &frame, int timeout = -1);
 
     /**
-     * @brief 目前还有多少帧没有显示
-     * @return 返回尚未显示的帧数量
+     * @brief 非阻塞弹出一帧
+     * @param frame 输出参数，存储弹出的帧
+     * @return 成功返回true，失败返回false
      */
+    bool tryPop(Frame &frame);
+
+    /**
+     * @brief 获取可写入的帧指针（用于直接写入）
+     * @param timeout 超时时间(毫秒)
+     * @return 可写入的帧指针，失败返回nullptr
+     */
+    Frame *getWritableFrame(int timeout = -1);
+
+    /**
+     * @brief 提交写入的帧
+     * @return 成功返回true，失败返回false
+     */
+    bool commitFrame();
+
+    // 查询接口
+    bool empty() const;
+    bool full() const;
+    int size() const;
+    int capacity() const;
     int remainingCount() const;
 
-    /**
-     * @brief 最后一帧的播放时间戳
-     * @return 返回最后一帧的播放时间戳
-     */
-    int lastFramePts();
+    // 控制接口
+    void clear();
+    void setAbortStatus(bool abort);
+    void setSerial(int serial);
+    void setKeepLast(bool keepLast);
+    bool isKeepLast() const;
 
-    void flush();
+private:
+    // 推入一帧 内部使用
+    bool pushInternal(Frame frame);
+    // 弹出一帧 内部使用
+    bool popInternal(Frame &frame);
+    // 通知等待的线程
+    void notifyWaiters();
 
-   private:
+    // 处理保留最后一帧的情况
+    bool handleKeepLastCase(Frame &frame);
+    // 是否能弹出
+    bool canPop() const;
+    // 应该弹出最后一帧
+    bool shouldReturnLastFrame() const;
+    // 等待数据
+    bool waitForData(std::unique_lock<std::mutex> &lock, int timeout);
+
+private:
     std::vector<Frame> queue_;  // 帧队列
-    int rindex_;                // 读索引
-    int rindexShown_;           // 当前帧是否已展示
-    int windex_;                // 写索引
-    int size_;                  // 队列大小
-    int maxSize_;               // 最大帧数量
+    int head_;                  // 读取位置
+    int tail_;                  // 写入位置
+    int size_;                  // 当前大小
+    int maxSize_;               // 最大容量
     bool keepLast_;             // 是否保留最后一帧
 
-    int serial_;                    // 当前版本，和packetQueue一致
-    bool aborted_;                  // 队列是否已中止，和packetQueue一致
+    int pendingWriteIndex_;  // 待写入帧的索引
+
+    int serial_;                    // 当前版本序号
+    std::atomic<bool> aborted_;     // 是否已中止
     mutable std::mutex mutex_;      // 互斥锁
     std::condition_variable cond_;  // 条件变量
 };
-#pragma endregion

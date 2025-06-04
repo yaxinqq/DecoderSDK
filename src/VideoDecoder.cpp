@@ -92,7 +92,7 @@ void VideoDecoder::decodeLoop()
         }
 
         // 获取一个可写入的帧
-        Frame *outFrame = frameQueue_.peekWritable();
+        Frame *outFrame = frameQueue_.getWritableFrame();
         if (!outFrame)
             break;
 
@@ -265,8 +265,8 @@ void VideoDecoder::decodeLoop()
         // 将解码后的帧复制到输出帧
         *outFrame = Frame(outputFrame);
         outFrame->setSerial(serial);
-        outFrame->setDuration(duration);
-        outFrame->setPts(pts);
+        outFrame->setDurationByFps(duration);
+        outFrame->setSecPts(pts);
 
         // 检查是否是硬件加速解码
         outFrame->setIsInHardware(outputFrame->hw_frames_ctx != NULL);
@@ -284,8 +284,8 @@ void VideoDecoder::decodeLoop()
             // std::this_thread::sleep_until(nextFrameTime_.value());
         }
 
-        // 推入帧队列
-        frameQueue_.push();
+        // 提交帧到队列
+        frameQueue_.commitFrame();
     }
 
     // 清理资源

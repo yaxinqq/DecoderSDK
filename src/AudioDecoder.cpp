@@ -51,7 +51,7 @@ void AudioDecoder::decodeLoop()
         }
 
         // 获取一个可写入的帧
-        Frame *outFrame = frameQueue_.peekWritable();
+        Frame *outFrame = frameQueue_.getWritableFrame();
         if (!outFrame)
             break;
 
@@ -155,8 +155,8 @@ void AudioDecoder::decodeLoop()
         // 将解码后的帧复制到输出帧
         *outFrame = Frame(frame);
         outFrame->setSerial(serial);
-        outFrame->setDuration(duration);
-        outFrame->setPts(pts);
+        outFrame->setDurationByFps(duration);
+        outFrame->setSecPts(pts);
 
         // 计算延时
         // 如果启用了帧率控制，则根据帧率控制推送速度
@@ -168,8 +168,8 @@ void AudioDecoder::decodeLoop()
             }
         }
 
-        // 推入帧队列
-        frameQueue_.push();
+        // 提交帧到队列
+        frameQueue_.commitFrame();
     }
 
     av_frame_free(&frame);
