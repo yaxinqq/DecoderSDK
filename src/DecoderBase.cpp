@@ -112,7 +112,7 @@ void DecoderBase::start()
     // 设置帧队列的序列号与包队列一致
     frameQueue_.setSerial(packetQueue->serial());
     // 设置帧队列的中止状态与包队列一致
-    frameQueue_.setAbortStatus(packetQueue->isAbort());
+    frameQueue_.setAbortStatus(packetQueue->isAborted());
 
     // 清空seek节点
     seekPos_.store(0.0);

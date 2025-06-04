@@ -102,7 +102,7 @@ void VideoDecoder::decodeLoop()
 
         if (!gotPacket) {
             // 没有包可用，可能是队列为空或已中止
-            if (packetQueue->isAbort())
+            if (packetQueue->isAborted())
                 break;
             continue;
         }

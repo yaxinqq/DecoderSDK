@@ -70,7 +70,7 @@ int main(int argc, char *argv[])
     //     (argc > 1) ? argv[1]
     //                : "rtsp://admin:zhkj2501@192.168.0.71:554/ch1/stream1";
 
-    float playbackSpeed = 1.0f;
+    float playbackSpeed = 16.0f;
     DecoderController manager;
 
     // 注册事件回调函数
@@ -97,7 +97,7 @@ int main(int argc, char *argv[])
     manager.startDecode();
 
     // 测试时长和计时
-    const int TEST_DURATION_SEC = 10;
+    const int TEST_DURATION_SEC = 3;
     auto testStart = std::chrono::steady_clock::now();
     std::atomic<bool> running{true};
 

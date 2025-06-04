@@ -1,260 +1,229 @@
 #include "PacketQueue.h"
-
-#pragma region Packet
-Packet::Packet() : packet_(av_packet_alloc()), serial_(0)
-{
-}
-
-Packet::Packet(AVPacket* pkt) : Packet()
-{
-    av_packet_ref(packet_, pkt);
-}
-
-Packet::~Packet()
-{
-    if (packet_) {
-        av_packet_free(&packet_);
-    }
-}
-
-Packet::Packet(const Packet& other)
-    : packet_(av_packet_alloc()), serial_(other.serial_)
-{
-    av_packet_ref(packet_, other.packet_);
-}
-
-Packet& Packet::operator=(const Packet& other)
-{
-    if (this != &other) {
-        if (!packet_) {
-            packet_ = av_packet_alloc();
-        } else {
-            av_packet_unref(packet_);
-        }
-        av_packet_ref(packet_, other.packet_);
-        serial_ = other.serial_;
-    }
-    return *this;
-}
-
-Packet::Packet(Packet&& other) noexcept
-    : packet_(other.packet_), serial_(other.serial_)
-{
-    other.packet_ = nullptr;
-}
-
-Packet& Packet::operator=(Packet&& other) noexcept
-{
-    if (this != &other) {
-        if (packet_) {
-            av_packet_free(&packet_);
-        }
-        packet_ = other.packet_;
-        serial_ = other.serial_;
-        other.packet_ = nullptr;
-    }
-    return *this;
-}
-
-AVPacket* Packet::get() const
-{
-    return packet_;
-}
-
-void Packet::setSerial(int serial)
-{
-    serial_ = serial;
-}
-
-int Packet::serial() const
-{
-    return serial_;
-}
-
-#pragma endregion
-
-#pragma region PacketQueue
+#include <algorithm>
+#include <stdexcept>
 
 PacketQueue::PacketQueue(int maxPacketCount)
-    : maxPacketCount_{maxPacketCount}, serial_{0}
+    : maxPacketCount_(std::max(1, maxPacketCount))
 {
-    requestAborted_.store(false);
 }
 
 PacketQueue::~PacketQueue()
 {
-    while (!queue_.empty()) {
-        queue_.pop();
-    }
+    abort();
+
+    std::lock_guard<std::mutex> lock(mutex_);
+    queue_.clear();
 }
 
-bool PacketQueue::push(const Packet& pkt, int delayTimeMs)
+bool PacketQueue::push(const Packet &pkt, int timeoutMs)
 {
     std::unique_lock<std::mutex> lock(mutex_);
 
-    // 唤醒条件变量的条件（请求终止或队列有空位）
-    auto canPush = [this]() {
-        return requestAborted_.load() || queue_.size() < maxPacketCount_;
-    };
-
-    if (delayTimeMs < 0) {
-        // 无限阻塞
-        cond_.wait(lock, canPush);
-    } else if (delayTimeMs == 0) {
+    if (timeoutMs < 0) {
+        // 无限等待
+        pushCond_.wait(lock, [this] { return canPush(); });
+    } else if (timeoutMs == 0) {
         // 立即返回
-        if (!canPush())
+        if (!canPush()) {
             return false;
+        }
     } else {
-        // 阻塞时长
-        if (!cond_.wait_for(lock, std::chrono::milliseconds(delayTimeMs),
-                            canPush)) {
+        // 超时等待
+        if (!pushCond_.wait_for(lock, std::chrono::milliseconds(timeoutMs),
+                                [this] { return canPush(); })) {
             return false;
         }
     }
 
-    // 检查是否请求终止
-    if (requestAborted_.load())
+    // 检查是否已中止
+    if (aborted_.load(std::memory_order_acquire)) {
         return false;
+    }
 
-    // 入队
-    queue_.push(pkt);
-    // 增加数据大小和时长
-    size_ += pkt.get()->size;
-    duration_ += pkt.get()->duration;
+    // 添加到队列
+    queue_.push_back(pkt);
+    updateStatisticsOnPush(pkt);
 
-    // 唤醒条件变量
-    cond_.notify_one();
+    // 通知等待pop的线程
+    popCond_.notify_one();
     return true;
 }
 
-bool PacketQueue::pop(Packet& pkt, int delayTimeMs)
+bool PacketQueue::pop(Packet &pkt, int timeoutMs)
 {
     std::unique_lock<std::mutex> lock(mutex_);
 
-    // 唤醒条件变量的条件（请求终止或队列非空）
-    auto canPop = [this]() {
-        return requestAborted_.load() || !queue_.empty();
-    };
-
-    if (delayTimeMs < 0) {
-        // 无限阻塞
-        if (!canPop())
-            return false;
-    } else if (delayTimeMs == 0) {
+    if (timeoutMs < 0) {
+        // 无限等待
+        popCond_.wait(lock, [this] { return canPop(); });
+    } else if (timeoutMs == 0) {
         // 立即返回
-        cond_.wait(lock, canPop);
+        if (!canPop()) {
+            return false;
+        }
     } else {
-        // 阻塞时长
-        if (!cond_.wait_for(lock, std::chrono::milliseconds(delayTimeMs),
-                            canPop)) {
+        // 超时等待
+        if (!popCond_.wait_for(lock, std::chrono::milliseconds(timeoutMs),
+                               [this] { return canPop(); })) {
             return false;
         }
     }
 
-    // 检查是否请求终止
-    if (requestAborted_ && queue_.empty())
+    // 如果队列为空且已中止，返回false
+    if (queue_.empty() && aborted_.load(std::memory_order_acquire)) {
         return false;
+    }
 
-    // 出队
+    // 从队列中取出数据包
+    pkt = std::move(queue_.front());
+    queue_.pop_front();
+    updateStatisticsOnPop(pkt);
+
+    // 通知等待push的线程
+    pushCond_.notify_one();
+    return true;
+}
+
+bool PacketQueue::tryPop(Packet &pkt)
+{
+    return pop(pkt, 0);
+}
+
+bool PacketQueue::front(Packet &pkt) const
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    if (queue_.empty()) {
+        return false;
+    }
+
     pkt = queue_.front();
-    queue_.pop();
-    // 减少数据大小和时长
-    size_ -= pkt.get()->size;
-    duration_ -= pkt.get()->duration;
-
-    // 唤醒条件变量
-    cond_.notify_one();
     return true;
 }
 
 void PacketQueue::flush()
 {
     std::lock_guard<std::mutex> lock(mutex_);
-    while (!queue_.empty()) {
-        queue_.pop();
-    }
 
-    size_ = 0;
-    duration_ = 0;
-    serial_++;
+    queue_.clear();
+    size_.store(0, std::memory_order_release);
+    duration_.store(0, std::memory_order_release);
+    serial_.fetch_add(1, std::memory_order_acq_rel);
+
+    // 唤醒所有等待的线程
+    pushCond_.notify_all();
+    popCond_.notify_all();
 }
 
 void PacketQueue::start()
 {
     std::lock_guard<std::mutex> lock(mutex_);
-    requestAborted_.store(false);
-    serial_++;
+
+    aborted_.store(false, std::memory_order_release);
+    serial_.fetch_add(1, std::memory_order_acq_rel);
+
+    pushCond_.notify_all();
+    popCond_.notify_all();
 }
 
 void PacketQueue::abort()
 {
     std::lock_guard<std::mutex> lock(mutex_);
-    requestAborted_.store(true);
-    cond_.notify_all();
+
+    aborted_.store(true, std::memory_order_release);
+
+    // 唤醒所有等待的线程
+    pushCond_.notify_all();
+    popCond_.notify_all();
 }
 
-bool PacketQueue::isAbort() const
+bool PacketQueue::isAborted() const noexcept
 {
-    return requestAborted_.load();
+    return aborted_.load(std::memory_order_acquire);
 }
 
-int PacketQueue::packetCount() const
+size_t PacketQueue::packetCount() const noexcept
 {
+    std::lock_guard<std::mutex> lock(mutex_);
     return queue_.size();
 }
 
-int PacketQueue::packetSize() const
+size_t PacketQueue::packetSize() const noexcept
 {
-    return size_;
+    return size_.load(std::memory_order_acquire);
 }
 
-int64_t PacketQueue::packetDuration() const
+int64_t PacketQueue::packetDuration() const noexcept
 {
-    return duration_;
+    return duration_.load(std::memory_order_acquire);
 }
 
-int PacketQueue::maxPacketCount() const
+size_t PacketQueue::maxPacketCount() const noexcept
 {
-    return maxPacketCount_;
+    return maxPacketCount_.load(std::memory_order_acquire);
 }
 
-int PacketQueue::serial() const
+int PacketQueue::serial() const noexcept
 {
-    return serial_;
+    return serial_.load(std::memory_order_acquire);
 }
 
-void PacketQueue::destory()
-{
-    flush();
-    clear();
-}
-
-void PacketQueue::clear()
+bool PacketQueue::isFull() const noexcept
 {
     std::lock_guard<std::mutex> lock(mutex_);
-    while (!queue_.empty()) {
-        queue_.pop();
-    }
+    return queue_.size() >= maxPacketCount_.load(std::memory_order_acquire);
 }
 
-bool PacketQueue::isFull() const
+bool PacketQueue::isEmpty() const noexcept
 {
-    return queue_.size() >= maxPacketCount_;
-}
-
-bool PacketQueue::isEmpty() const
-{
+    std::lock_guard<std::mutex> lock(mutex_);
     return queue_.empty();
 }
 
-void PacketQueue::setMaxPacketCount(int maxPacketCount)
+void PacketQueue::setMaxPacketCount(size_t maxCount)
 {
-    if (maxPacketCount_ <= 0)
-        return;
+    if (maxCount == 0) {
+        throw std::invalid_argument("maxCount must be positive");
+    }
 
     std::lock_guard<std::mutex> lock(mutex_);
-    maxPacketCount_ = maxPacketCount;
-    cond_.notify_one();
+    maxPacketCount_.store(maxCount, std::memory_order_release);
+    pushCond_.notify_all();
 }
 
-#pragma endregion
+PacketQueue::Statistics PacketQueue::getStatistics() const
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    return {queue_.size(), size_.load(std::memory_order_acquire),
+            duration_.load(std::memory_order_acquire),
+            serial_.load(std::memory_order_acquire),
+            aborted_.load(std::memory_order_acquire)};
+}
+
+// 私有辅助方法实现
+bool PacketQueue::canPush() const noexcept
+{
+    return aborted_.load(std::memory_order_acquire) ||
+           queue_.size() < maxPacketCount_.load(std::memory_order_acquire);
+}
+
+bool PacketQueue::canPop() const noexcept
+{
+    return aborted_.load(std::memory_order_acquire) || !queue_.empty();
+}
+
+void PacketQueue::updateStatisticsOnPush(const Packet &pkt) noexcept
+{
+    if (pkt.isValid()) {
+        size_.fetch_add(pkt.size(), std::memory_order_acq_rel);
+        duration_.fetch_add(pkt.duration(), std::memory_order_acq_rel);
+    }
+}
+
+void PacketQueue::updateStatisticsOnPop(const Packet &pkt) noexcept
+{
+    if (pkt.isValid()) {
+        size_.fetch_sub(pkt.size(), std::memory_order_acq_rel);
+        duration_.fetch_sub(pkt.duration(), std::memory_order_acq_rel);
+    }
+}

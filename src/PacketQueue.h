@@ -1,164 +1,174 @@
 #pragma once
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
+#include <deque>
 #include <functional>
 #include <memory>
 #include <mutex>
-#include <queue>
 
 extern "C" {
 #include <libavcodec/avcodec.h>
 }
 
-#pragma region Packet
-class Packet {
-   public:
-    Packet();
-    explicit Packet(AVPacket* pkt);
-    ~Packet();
+#include "Packet.h"
 
-    Packet(const Packet& other);
-    Packet& operator=(const Packet& other);
-
-    // 可以支持移动构造和移动赋值（提高效率）
-    Packet(Packet&& other) noexcept;
-    Packet& operator=(Packet&& other) noexcept;
-
-    AVPacket* get() const;
-
-    void setSerial(int serial);
-    int serial() const;
-
-   private:
-    AVPacket* packet_ = nullptr;
-    int serial_;
-};
-#pragma endregion
-
-#pragma region PacketQueue
 /**
- * @brief 数据包队列类，用于缓存音视频数据包
- *
+ * @brief 高性能数据包队列类，用于缓存音视频数据包
+ * 支持多线程安全访问，提供阻塞和非阻塞操作
  */
 class PacketQueue {
-   public:
+public:
     /**
      * @brief 构造函数
+     * @param maxPacketCount 最大包数量，默认16
+     * @param reserveSize 预分配大小，默认为maxPacketCount
      */
-    PacketQueue(int maxPacketCount = 16);
+    explicit PacketQueue(int maxPacketCount = 16);
 
     /**
      * @brief 析构函数
      */
     ~PacketQueue();
 
-    /*
-     * @brief 添加数据包
-     * @param pkt 数据包
-     * @param delayTimeMs 阻塞时长 <0 无限阻塞，0 立即返回，>0 阻塞时长
-     * @return 成功返回0，失败返回负值
-     */
-    bool push(const Packet& pkt, int delayTimeMs = 0);
-
-    /*
-     * @brief 弹出数据包
-     * @param pkt 数据包
-     * @param delayTimeMs 阻塞时长 <0 无限阻塞，0 立即返回，>0 阻塞时长
-     * @return 成功返回0，失败返回负值
-     */
-    bool pop(Packet& pkt, int delayTimeMs = 0);
+    // 禁用拷贝构造和拷贝赋值
+    PacketQueue(const PacketQueue &) = delete;
+    PacketQueue &operator=(const PacketQueue &) = delete;
 
     /**
-     * @brief 刷新队列
-     * @param type 刷新类型
+     * @brief 添加数据包
+     * @param pkt 数据包
+     * @param timeoutMs 超时时间：<0 无限阻塞，0 立即返回，>0 超时时间(ms)
+     * @return 成功返回true，失败返回false
+     */
+    bool push(const Packet &pkt, int timeoutMs = 0);
+
+    /**
+     * @brief 弹出数据包
+     * @param pkt 输出数据包
+     * @param timeoutMs 超时时间：<0 无限阻塞，0 立即返回，>0 超时时间(ms)
+     * @return 成功返回true，失败返回false
+     */
+    bool pop(Packet &pkt, int timeoutMs = 0);
+
+    /**
+     * @brief 尝试弹出数据包（非阻塞）
+     * @param pkt 输出数据包
+     * @return 成功返回true，队列为空返回false
+     */
+    bool tryPop(Packet &pkt);
+
+    /**
+     * @brief 查看队首数据包但不移除
+     * @param pkt 输出数据包
+     * @return 成功返回true，队列为空返回false
+     */
+    bool front(Packet &pkt) const;
+
+    /**
+     * @brief 刷新队列，清空所有数据包并增加序列号
      */
     void flush();
 
     /**
-     * @brief 开启队列
+     * @brief 启动队列
      */
     void start();
 
     /**
-     * @brief 中止队列
+     * @brief 中止队列，唤醒所有等待的线程
      */
     void abort();
+
     /**
-     * @brief 是否已中止队列
+     * @brief 检查队列是否已中止
+     * @return 已中止返回true
      */
-    bool isAbort() const;
+    bool isAborted() const noexcept;
 
     /**
      * @brief 获取队列包数量
      * @return 包数量
      */
-    int packetCount() const;
+    size_t packetCount() const noexcept;
+
     /**
-     * @brief 获取队列包数据量
-     * @return 数据量
+     * @brief 获取队列包数据总大小
+     * @return 数据总大小(字节)
      */
-    int packetSize() const;
+    size_t packetSize() const noexcept;
+
     /**
      * @brief 获取队列包总时长
-     * @return 总时长
+     * @return 总时长(微秒)
      */
-    int64_t packetDuration() const;
-    /**
-     * @brief 获取队列包最大数量
-     * @return 包最大数量
-     */
-    int maxPacketCount() const;
-    /**
-     * @brief 获取队列包的版本序号
-     * @return 包版本序号
-     */
-    int serial() const;
-
-    /*
-     * @brief 销毁队列
-     */
-    void destory();
-    /**
-     * @brief 清空队列
-     */
-    void clear();
+    int64_t packetDuration() const noexcept;
 
     /**
-     * @brief 获取队列是否已满
-     * @return 是否已满
+     * @brief 获取队列最大包数量
+     * @return 最大包数量
      */
-    bool isFull() const;
+    size_t maxPacketCount() const noexcept;
+
     /**
-     * @brief 获取队列是否为空
-     * @return 是否为空
+     * @brief 获取队列序列号
+     * @return 序列号
      */
-    bool isEmpty() const;
+    int serial() const noexcept;
+
+    /**
+     * @brief 检查队列是否已满
+     * @return 已满返回true
+     */
+    bool isFull() const noexcept;
+
+    /**
+     * @brief 检查队列是否为空
+     * @return 为空返回true
+     */
+    bool isEmpty() const noexcept;
 
     /**
      * @brief 设置队列最大包数量
-     * @param maxPacketCount 最大包数量
+     * @param maxCount 最大包数量，必须大于0
      */
-    void setMaxPacketCount(int maxPacketCount);
+    void setMaxPacketCount(size_t maxCount);
 
-   private:
-    // 数据包队列
-    std::queue<Packet> queue_;
-    // 队列版本
-    int serial_;
+    /**
+     * @brief 获取队列统计信息
+     */
+    struct Statistics {
+        size_t count;
+        size_t size;
+        int64_t duration;
+        int serial;
+        bool aborted;
+    };
 
-    // 请求停止
-    std::atomic<bool> requestAborted_;
-    // 队列最大包数量
-    int maxPacketCount_;
+    Statistics getStatistics() const;
 
-    // 队列包总数据大小
-    int size_;
-    // 队列包总时长
-    int64_t duration_;
+private:
+    // 内部辅助方法
+    bool canPush() const noexcept;
+    bool canPop() const noexcept;
+    void updateStatisticsOnPush(const Packet &pkt) noexcept;
+    void updateStatisticsOnPop(const Packet &pkt) noexcept;
 
-    // 互斥锁
+private:
+    // 使用deque提供更好的性能
+    std::deque<Packet> queue_;
+
+    // 队列状态
+    std::atomic<bool> aborted_{false};
+    std::atomic<int> serial_{0};
+    std::atomic<size_t> maxPacketCount_;
+
+    // 统计信息（原子操作保证线程安全）
+    std::atomic<size_t> size_{0};
+    std::atomic<int64_t> duration_{0};
+
+    // 同步原语
     mutable std::mutex mutex_;
-    // 条件变量
-    std::condition_variable cond_;
+    std::condition_variable pushCond_;  // 用于push操作的条件变量
+    std::condition_variable popCond_;   // 用于pop操作的条件变量
 };
-#pragma endregion
