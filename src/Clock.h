@@ -1,116 +1,150 @@
 #pragma once
+#include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <mutex>
 
 class Clock {
-   public:
+public:
+    // 时钟同步类型
     enum class ClockSyncType : std::uint8_t {
         kAudioMaster,
         kVideoMaster,
         kExternalClock,
     };
 
-   public:
+    // 时钟状态
+    enum class ClockState { Invalid, Valid, Stale };
+
+public:
     Clock();
     ~Clock();
 
-    /*
+    // 禁用拷贝构造和拷贝赋值
+    Clock(const Clock &) = delete;
+    Clock &operator=(const Clock &) = delete;
+
+    /**
      * @brief 初始化时钟
      * @param queueSerial 包队列数据包序号
      */
     void init(int queueSerial);
     void reset();
 
-    /*
-     * @brief 获得当前时钟
+    /**
+     * @brief 获得当前时钟（高性能版本）
+     * @return 当前时钟时间，如果时钟无效返回NaN
      */
     double getClock() const;
 
-    /*
-     * @brief 设置当前时钟
+    /**
+     * @brief 获取时钟但不更新缓存（用于内部计算）
+     */
+    double getClockNoCache() const;
+
+    /**
+     * @brief 设置当前时钟（线程安全）
      * @param pts 显示时间戳
      * @param serial 数据版本号
      */
     void setClock(double pts, int serial);
-    /*
-     * @brief 设置当前时钟速度
+
+    /**
+     * @brief 设置当前时钟速度（线程安全）
      * @param speed 时钟速度
      */
     void setClockSpeed(double speed);
 
-    /*
-     * @brief 和其他时钟进行同步
-     * @param slave 从时钟
+    /**
+     * @brief 校准时钟，减少累积误差
      */
-    // void syncClockToSlave(const Clock& slave);
+    void calibrate();
 
-    /*
-     * @brief 获取当前显示时间戳（PTS）
-     * @return 当前显示时间戳
+    /**
+     * @brief 检查时钟是否有效
      */
+    bool isValid() const;
+
+    /**
+     * @brief 获取时钟状态
+     */
+    ClockState getState() const;
+
+    // Getter方法（原子操作，高性能）
     double pts() const
     {
-        return pts_;
+        return pts_.load(std::memory_order_acquire);
     }
-
-    /*
-     * @brief 获取PTS相对于系统时间的漂移值
-     * @return PTS漂移值
-     */
     double ptsDrift() const
     {
-        return ptsDrift_;
+        return ptsDrift_.load(std::memory_order_acquire);
     }
-
-    /*
-     * @brief 获取上次更新的系统时间
-     * @return 上次更新时间
-     */
     double lastUpdated() const
     {
-        return lastUpdated_;
+        return lastUpdated_.load(std::memory_order_acquire);
     }
-
-    /*
-     * @brief 获取时钟播放速度
-     * @return 播放速度（如2.0表示2倍速）
-     */
     double speed() const
     {
-        return speed_;
+        return speed_.load(std::memory_order_acquire);
     }
-
-    /*
-     * @brief 获取时钟对应的数据包序号
-     * @return 数据包序号
-     */
     int serial() const
     {
-        return serial_;
+        return serial_.load(std::memory_order_acquire);
     }
-
-    /*
-     * @brief 获取时钟是否处于暂停状态
-     * @return true表示暂停，false表示正在播放
-     */
     bool isPaused() const
     {
-        return paused_;
+        return paused_.load(std::memory_order_acquire);
     }
 
-    /*
-     * @brief 设置时钟的暂停状态
+    /**
+     * @brief 设置时钟的暂停状态（改进版）
      * @param paused true表示暂停，false表示播放
      */
     void setPaused(bool paused);
 
-   private:
-    mutable std::mutex mutex_;  // 互斥锁，用于保护共享资源的访问
+    /**
+     * @brief 获取时钟统计信息
+     */
+    struct ClockStats {
+        double currentTime;
+        double drift;
+        double speed;
+        int serial;
+        bool paused;
+        ClockState state;
+        int64_t updateCount;
+    };
 
-    double pts_;          // 当前时钟的显示时间（Presentation Time Stamp）
-    double ptsDrift_;     // pts - 当前系统时间，表示相对于系统时间的漂移
-    double lastUpdated_;  // 上次更新时间（系统时间），用于计算经过的时间
-    double speed_;        // 时钟的播放速度，比如倍速播放时为 2.0
-    int serial_;  // 该时钟对应数据包的序号（比如解码序列），用于判断是否为最新数据
-    bool paused_;  // 是否暂停，1 为暂停
+    ClockStats getStats() const;
+
+private:
+    // 内部辅助方法
+    double getCurrentSystemTime() const;
+    bool isCacheValid() const;
+    void updateCache(double clockValue) const;
+
+private:
+    // 使用原子变量提高性能
+    std::atomic<double> pts_{0.0};
+    std::atomic<double> ptsDrift_{0.0};
+    std::atomic<double> lastUpdated_{0.0};
+    std::atomic<double> speed_{1.0};
+    std::atomic<int> serial_{0};
+    std::atomic<bool> paused_{false};
+
+    // 性能优化相关
+    mutable std::atomic<double> cachedClock_{0.0};
+    mutable std::atomic<int64_t> cacheTimestamp_{0};
+    mutable std::atomic<int64_t> updateCount_{0};
+
+    // 时钟校准相关
+    std::atomic<double> driftAccumulator_{0.0};
+    std::atomic<int> calibrationCounter_{0};
+
+    mutable std::mutex mutex_;  // 仅用于复杂操作
+
+    // 常量
+    static constexpr double kMaxDrift = 10.0;          // 最大允许漂移
+    static constexpr int64_t kCacheValidityUs = 1000;  // 缓存有效期（微秒）
+    static constexpr int kCalibrationInterval = 100;   // 校准间隔
 };
