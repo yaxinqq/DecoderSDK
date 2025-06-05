@@ -80,7 +80,6 @@ int main(int argc, char *argv[])
                      EventDispatcher::getEventTypeName(eventType),
                      event->description);
         });
-    manager.setAsyncProcessing(false);
 
     DecoderController::Config config;
     config.hwAccelType = HWAccelType::AUTO;
@@ -97,7 +96,7 @@ int main(int argc, char *argv[])
     manager.startDecode();
 
     // 测试时长和计时
-    const int TEST_DURATION_SEC = 3;
+    const int TEST_DURATION_SEC = 5;
     auto testStart = std::chrono::steady_clock::now();
     std::atomic<bool> running{true};
 

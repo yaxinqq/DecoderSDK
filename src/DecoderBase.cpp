@@ -41,8 +41,7 @@ bool DecoderBase::open()
             codecCtx_ ? codecCtx_->codec->name : "", streamIndex_,
             transAVMediaType(type()), false, "Decoder",
             "Decode Created Failed");
-        eventDispatcher_->triggerEventAsync(EventType::kCreateDecoderSuccess,
-                                            event);
+        eventDispatcher_->triggerEvent(EventType::kCreateDecoderSuccess, event);
     };
 
     auto *const formatContext = demuxer_->formatContext();
@@ -92,8 +91,7 @@ bool DecoderBase::open()
     auto event = std::make_shared<DecoderEventArgs>(
         codecCtx_->codec->name, streamIndex_, transAVMediaType(type()), useHw,
         "Decoder", "Decode Created Success");
-    eventDispatcher_->triggerEventAsync(EventType::kCreateDecoderSuccess,
-                                        event);
+    eventDispatcher_->triggerEvent(EventType::kCreateDecoderSuccess, event);
 
     needClose_ = true;
     return true;
@@ -124,7 +122,7 @@ void DecoderBase::start()
     auto event = std::make_shared<DecoderEventArgs>(
         codecCtx_->codec->name, streamIndex_, transAVMediaType(type()),
         codecCtx_->hw_device_ctx != nullptr, "Decoder", "Decode Started");
-    eventDispatcher_->triggerEventAsync(EventType::kDecodeStarted, event);
+    eventDispatcher_->triggerEvent(EventType::kDecodeStarted, event);
 }
 
 void DecoderBase::stop()
@@ -144,7 +142,7 @@ void DecoderBase::stop()
     auto event = std::make_shared<DecoderEventArgs>(
         codecCtx_->codec->name, streamIndex_, transAVMediaType(type()),
         codecCtx_->hw_device_ctx != nullptr, "Decoder", "Decode Stopped");
-    eventDispatcher_->triggerEventAsync(EventType::kDecodeStopped, event);
+    eventDispatcher_->triggerEvent(EventType::kDecodeStopped, event);
 }
 
 void DecoderBase::close()
@@ -165,7 +163,7 @@ void DecoderBase::close()
     auto event = std::make_shared<DecoderEventArgs>(
         codecName, streamIndex_, transAVMediaType(type()), useHw, "Decoder",
         "Decode Destoryed");
-    eventDispatcher_->triggerEventAsync(EventType::kDestoryDecoder, event);
+    eventDispatcher_->triggerEvent(EventType::kDestoryDecoder, event);
 }
 
 void DecoderBase::setSeekPos(double pos)

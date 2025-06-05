@@ -76,13 +76,10 @@ public:
 
     // 监听器相关
     // 设置全部事件的监听器
-    EventListenerHandle addGlobalEventListener(EventCallback callback);
+    GlobalEventListenerHandle addGlobalEventListener(EventCallback callback);
 
     // 移除全局事件监听器
-    bool removeGlobalEventListener(EventListenerHandle handle);
-
-    // 获取全局监听器数量
-    size_t getGlobalListenerCount() const;
+    bool removeGlobalEventListener(const GlobalEventListenerHandle &handle);
 
     // 添加事件监听器
     EventListenerHandle addEventListener(EventType eventType,
@@ -91,11 +88,17 @@ public:
     // 移除事件监听器
     bool removeEventListener(EventType eventType, EventListenerHandle handle);
 
-    // 移除所有监听器
-    void removeAllListeners();
+    // 异步事件处理
+    void processAsyncEvents();    // 主线程调用poll
+    void startAsyncProcessing();  // 启动后台线程
+    void stopAsyncProcessing();   // 停止后台线程
 
-    // 启用/禁用异步事件处理
-    void setAsyncProcessing(bool enabled);
+    // 状态查询
+    bool isAsyncProcessingActive() const;
+    // 获得所有事件类型
+    std::vector<EventType> allEventTypes() const;
+    // 获得事件名称(枚举定义)
+    std::string getEventTypeName(EventType type) const;
 
     // 停止重连任务
     void stopReconnect();

@@ -135,7 +135,7 @@ void VideoDecoder::decodeLoop()
                 codecCtx_->codec->name, streamIndex_,
                 MediaType::kMediaTypeVideo, codecCtx_->hw_device_ctx != nullptr,
                 "VideoDecoder", "Decode Error");
-            eventDispatcher_->triggerEventAsync(EventType::kDecodeError, event);
+            eventDispatcher_->triggerEvent(EventType::kDecodeError, event);
             // 重置解码器
             avcodec_flush_buffers(codecCtx_);
 
@@ -166,8 +166,7 @@ void VideoDecoder::decodeLoop()
                 codecCtx_->codec->name, streamIndex_,
                 MediaType::kMediaTypeVideo, codecCtx_->hw_device_ctx != nullptr,
                 "VideoDecoder", "First Frame Ready");
-            eventDispatcher_->triggerEventAsync(EventType::kDecodeFirstFrame,
-                                                event);
+            eventDispatcher_->triggerEvent(EventType::kDecodeFirstFrame, event);
         }
 
         // 如果恢复，则发出事件
@@ -177,8 +176,7 @@ void VideoDecoder::decodeLoop()
                 codecCtx_->codec->name, streamIndex_,
                 MediaType::kMediaTypeVideo, codecCtx_->hw_device_ctx != nullptr,
                 "VideoDecoder", "Decoder Recovery");
-            eventDispatcher_->triggerEventAsync(EventType::kDecodeRecovery,
-                                                event);
+            eventDispatcher_->triggerEvent(EventType::kDecodeRecovery, event);
         }
 
         // 软解时进行图像格式转换

@@ -8,6 +8,9 @@ DecoderController::DecoderController()
       syncController_(std::make_shared<SyncController>()),
       reconnectAttempts_(0)  // 添加重连计数器
 {
+    eventDispatcher_->startAsyncProcessing();
+
+    // 注册事件处理函数
     eventDispatcher_->addEventListener(
         EventType::kStreamReadError,
         [this](EventType, std::shared_ptr<EventArgs> event) {
@@ -108,13 +111,13 @@ bool DecoderController::seek(double position)
     auto event = std::make_shared<SeekEventArgs>(
         syncController_->getMasterClock(), position, "DecoderController",
         "Seek Started");
-    eventDispatcher_->triggerEventAsync(EventType::kSeekStarted, event);
+    eventDispatcher_->triggerEvent(EventType::kSeekStarted, event);
 
     const auto sendFailedEvent = [this, position]() {
         auto event = std::make_shared<SeekEventArgs>(
             syncController_->getMasterClock(), position, "DecoderController",
             "Seek Failed");
-        eventDispatcher_->triggerEventAsync(EventType::kSeekFailed, event);
+        eventDispatcher_->triggerEvent(EventType::kSeekFailed, event);
     };
 
     if (!demuxer_) {
@@ -165,7 +168,7 @@ bool DecoderController::seek(double position)
     event = std::make_shared<SeekEventArgs>(syncController_->getMasterClock(),
                                             position, "DecoderController",
                                             "Seek Success");
-    eventDispatcher_->triggerEventAsync(EventType::kSeekSuccess, event);
+    eventDispatcher_->triggerEvent(EventType::kSeekSuccess, event);
 
     return result;
 }
@@ -260,20 +263,16 @@ bool DecoderController::isRecording() const
     return demuxer_ && demuxer_->isRecording();
 }
 
-EventListenerHandle DecoderController::addGlobalEventListener(
+GlobalEventListenerHandle DecoderController::addGlobalEventListener(
     EventCallback callback)
 {
     return eventDispatcher_->addGlobalEventListener(callback);
 }
 
-bool DecoderController::removeGlobalEventListener(EventListenerHandle handle)
+bool DecoderController::removeGlobalEventListener(
+    const GlobalEventListenerHandle &handle)
 {
     return eventDispatcher_->removeGlobalEventListener(handle);
-}
-
-size_t DecoderController::getGlobalListenerCount() const
-{
-    return eventDispatcher_->getGlobalListenerCount();
 }
 
 EventListenerHandle DecoderController::addEventListener(EventType eventType,
@@ -288,14 +287,34 @@ bool DecoderController::removeEventListener(EventType eventType,
     return eventDispatcher_->removeEventListener(eventType, handle);
 }
 
-void DecoderController::removeAllListeners()
+void DecoderController::processAsyncEvents()
 {
-    eventDispatcher_->removeAllListeners();
+    eventDispatcher_->processAsyncEvents();
 }
 
-void DecoderController::setAsyncProcessing(bool enabled)
+void DecoderController::startAsyncProcessing()
 {
-    eventDispatcher_->setAsyncProcessing(enabled);
+    eventDispatcher_->startAsyncProcessing();
+}
+
+void DecoderController::stopAsyncProcessing()
+{
+    eventDispatcher_->stopAsyncProcessing();
+}
+
+bool DecoderController::isAsyncProcessingActive() const
+{
+    return eventDispatcher_->isAsyncProcessingActive();
+}
+
+std::vector<EventType> DecoderController::allEventTypes() const
+{
+    return EventDispatcher::allEventTypes();
+}
+
+std::string DecoderController::getEventTypeName(EventType type) const
+{
+    return EventDispatcher::getEventTypeName(type);
 }
 
 void DecoderController::stopReconnect()

@@ -1,16 +1,16 @@
 #pragma once
-#include <any>
+
+#include <eventpp/eventdispatcher.h>
+#include <eventpp/eventqueue.h>
+
 #include <atomic>
 #include <chrono>
-#include <condition_variable>
 #include <functional>
+#include <map>
 #include <memory>
 #include <mutex>
-#include <queue>
-#include <shared_mutex>
 #include <string>
 #include <thread>
-#include <unordered_map>
 #include <vector>
 
 // 事件类型枚举
@@ -155,151 +155,99 @@ public:
     std::string format;      // 录制格式
 };
 
-// 事件回调函数类型
-using EventCallback =
-    std::function<void(EventType, std::shared_ptr<EventArgs>)>;
+// 连接类型
+enum class ConnectionType {
+    kDirect,  // 同步调用
+    kQueued,  // 异步队列
+    kAuto     // 自动选择
+};
 
-// 事件监听器句柄
-using EventListenerHandle = uint64_t;
+// 事件回调类型 - 必须匹配eventpp的函数签名格式
+using EventCallback = void(EventType, std::shared_ptr<EventArgs>);
 
-// 事件分发器类
+// 事件策略配置
+struct EventPolicy {
+    using Threading = eventpp::MultipleThreading;
+};
+
+// 基于eventpp的事件分发器类型定义
+using SyncEventDispatcher =
+    eventpp::EventDispatcher<EventType, EventCallback, EventPolicy>;
+using AsyncEventQueue =
+    eventpp::EventQueue<EventType, EventCallback, EventPolicy>;
+using EventListenerHandle = SyncEventDispatcher::Handle;
+using GlobalEventListenerHandle =
+    std::unordered_map<EventType, SyncEventDispatcher::Handle>;
+
+/**
+ * 简化的事件分发器
+ * 支持同步和异步事件分发，基于eventpp库
+ */
 class EventDispatcher {
 public:
     EventDispatcher();
     ~EventDispatcher();
 
-    // 禁用拷贝构造和赋值
+    // 禁用拷贝和移动
     EventDispatcher(const EventDispatcher &) = delete;
     EventDispatcher &operator=(const EventDispatcher &) = delete;
+    EventDispatcher(EventDispatcher &&) = delete;
+    EventDispatcher &operator=(EventDispatcher &&) = delete;
 
-    // 设置全部事件的监听器
-    EventListenerHandle addGlobalEventListener(EventCallback callback);
+    // 监听器管理
+    EventListenerHandle addEventListener(
+        EventType eventType, const std::function<EventCallback> &callback,
+        ConnectionType connectionType = ConnectionType::kAuto);
 
-    // 移除全局事件监听器
-    bool removeGlobalEventListener(EventListenerHandle handle);
-
-    // 移除所有全局事件监听器
-    void removeAllGlobalListeners();
-
-    // 获取全局监听器数量
-    size_t getGlobalListenerCount() const;
-
-    // 添加事件监听器
-    EventListenerHandle addEventListener(EventType eventType,
-                                         EventCallback callback);
-
-    // 移除事件监听器
     bool removeEventListener(EventType eventType, EventListenerHandle handle);
 
-    // 移除指定事件类型的所有监听器
-    void removeAllListeners(EventType eventType);
+    // 设置全部事件的监听器
+    GlobalEventListenerHandle addGlobalEventListener(EventCallback callback);
 
-    // 移除所有监听器
-    void removeAllListeners();
+    // 移除全局事件监听器
+    bool removeGlobalEventListener(const GlobalEventListenerHandle &handle);
 
-    // 同步触发事件（在当前线程中立即执行）
+    // 事件触发
     void triggerEvent(EventType eventType,
                       std::shared_ptr<EventArgs> args = nullptr);
-
-    // 异步触发事件（在事件处理线程中执行）
+    void triggerEventSync(EventType eventType,
+                          std::shared_ptr<EventArgs> args = nullptr);
     void triggerEventAsync(EventType eventType,
                            std::shared_ptr<EventArgs> args = nullptr);
 
-    // 启用/禁用异步事件处理
-    void setAsyncProcessing(bool enabled);
+    // 异步事件处理
+    void processAsyncEvents();    // 主线程调用poll
+    void startAsyncProcessing();  // 启动后台线程
+    void stopAsyncProcessing();   // 停止后台线程
 
-    // 获取监听器数量
-    size_t getListenerCount(EventType eventType) const;
+    // 状态查询
+    bool isAsyncProcessingActive() const;
+    // 获得所有事件类型
+    static std::vector<EventType> allEventTypes();
+    // 获得事件名称
+    static std::string getEventTypeName(EventType type);
 
-    // 检查是否有监听器
-    bool hasListeners(EventType eventType) const;
-
-    // 设置事件队列最大大小（用于异步处理）
-    void setMaxEventQueueSize(size_t maxSize);
-
-    // 获取待处理事件数量
-    size_t getPendingEventCount() const;
-
-    // 清空待处理事件队列
-    void clearPendingEvents();
-
-    // 等待所有待处理事件完成
-    void waitForPendingEvents();
-
-    // 获取事件类型名称（用于调试）
-    static std::string getEventTypeName(EventType eventType);
-
-    // 启用/禁用事件日志
-    void setEventLogging(bool enabled);
-
-    // 获取事件统计信息
-    struct EventStats {
-        size_t totalTriggered = 0;
-        size_t totalProcessed = 0;
-        size_t pendingCount = 0;
-        std::unordered_map<EventType, size_t> eventCounts;
-    };
-    EventStats getEventStats() const;
+    // 获取底层分发器（用于扩展）
+    SyncEventDispatcher *getSyncDispatcher();
+    AsyncEventQueue *getAsyncQueue();
 
 private:
-    // 事件处理线程函数
-    void eventProcessingLoop();
+    // 内部方法
+    void asyncProcessingLoop();
+    ConnectionType determineConnectionType(ConnectionType requested) const;
 
-    // 内部触发事件实现
-    void triggerEventInternal(EventType eventType,
-                              std::shared_ptr<EventArgs> args);
-
-    // 生成唯一的监听器句柄
-    EventListenerHandle generateHandle();
-
-    // 记录事件日志
-    void logEvent(EventType eventType, std::shared_ptr<EventArgs> args);
+    bool isMainThread() const;
 
 private:
-    // 监听器存储结构
-    struct ListenerInfo {
-        EventListenerHandle handle;
-        EventCallback callback;
-    };
+    // 核心组件
+    std::unique_ptr<SyncEventDispatcher> syncDispatcher_;
+    std::unique_ptr<AsyncEventQueue> asyncQueue_;
 
-    // 异步事件结构
-    struct AsyncEvent {
-        EventType eventType;
-        std::shared_ptr<EventArgs> args;
-    };
+    // 异步处理
+    std::atomic<bool> asyncProcessingActive_{false};
+    std::atomic<bool> stopAsyncProcessing_{false};
+    std::thread asyncProcessingThread_;
 
-    // 事件监听器映射表
-    std::unordered_map<EventType, std::vector<ListenerInfo>> listeners_;
-
-    // 保护监听器映射表的互斥锁
-    mutable std::shared_mutex listenersMutex_;
-
-    // 句柄生成器
-    std::atomic<EventListenerHandle> handleGenerator_;
-
-    // 异步事件处理相关
-    std::atomic<bool> asyncProcessingEnabled_;
-    std::atomic<bool> stopEventProcessing_;
-    std::thread eventProcessingThread_;
-
-    // 异步事件队列
-    std::queue<AsyncEvent> eventQueue_;
-    mutable std::mutex eventQueueMutex_;
-    std::condition_variable eventQueueCv_;
-
-    // 事件队列最大大小
-    std::atomic<size_t> maxEventQueueSize_;
-
-    // 统计信息
-    std::atomic<size_t> totalEventsTriggered_;
-    std::atomic<size_t> totalEventsProcessed_;
-    mutable std::mutex eventCountsMutex_;
-    std::unordered_map<EventType, size_t> eventCounts_;
-
-    // 事件日志开关
-    std::atomic<bool> eventLoggingEnabled_;
-
-    // 全局事件监听器（监听所有事件类型）
-    std::vector<ListenerInfo> globalListeners_;
-    mutable std::shared_mutex globalListenersMutex_;
+    // 记录是否未主线程
+    std::thread::id mainThreadId_;
 };

@@ -23,14 +23,13 @@ bool Demuxer::open(const std::string &url, bool isRealTime, bool isReopen)
     // 上报流正在打开事件
     auto event = std::make_shared<StreamEventArgs>(url, "DecoderController",
                                                    "Stream Opening");
-    eventDispatcher_->triggerEventAsync(EventType::kStreamOpening, event);
+    eventDispatcher_->triggerEvent(EventType::kStreamOpening, event);
 
     const auto sendFailedEvent = [this, isReopen, url]() {
         // 上报流打开失败事件
         auto event = std::make_shared<StreamEventArgs>(url, "Demuxer",
                                                        "Stream OpenFiled");
-        eventDispatcher_->triggerEventAsync(EventType::kStreamOpenFailed,
-                                            event);
+        eventDispatcher_->triggerEvent(EventType::kStreamOpenFailed, event);
     };
 
     AVDictionary *options = nullptr;
@@ -74,7 +73,7 @@ bool Demuxer::open(const std::string &url, bool isRealTime, bool isReopen)
     // 上报流打开成功事件
     event = std::make_shared<StreamEventArgs>(url, "DecoderController",
                                               "Stream Opened");
-    eventDispatcher_->triggerEventAsync(EventType::kStreamOpened, event);
+    eventDispatcher_->triggerEvent(EventType::kStreamOpened, event);
 
     url_ = url;
     isRealTime_ = isRealTime;
@@ -84,8 +83,7 @@ bool Demuxer::open(const std::string &url, bool isRealTime, bool isReopen)
         // 上报流恢复事件
         event = std::make_shared<StreamEventArgs>(url, "DecoderController",
                                                   "Stream Recovery");
-        eventDispatcher_->triggerEventAsync(EventType::kStreamReadRecovery,
-                                            event);
+        eventDispatcher_->triggerEvent(EventType::kStreamReadRecovery, event);
     }
 
     return true;
@@ -100,7 +98,7 @@ bool Demuxer::close()
     // 上报流关闭事件
     auto event =
         std::make_shared<StreamEventArgs>(url_, "Demuxer", "Stream Close");
-    eventDispatcher_->triggerEventAsync(EventType::kStreamClose, event);
+    eventDispatcher_->triggerEvent(EventType::kStreamClose, event);
 
     // 如果在录像，则先停止
     if (isRecording()) {
@@ -118,7 +116,7 @@ bool Demuxer::close()
 
     // 上报流已关闭事件
     event = std::make_shared<StreamEventArgs>(url_, "Demuxer", "Stream Closed");
-    eventDispatcher_->triggerEventAsync(EventType::kStreamClosed, event);
+    eventDispatcher_->triggerEvent(EventType::kStreamClosed, event);
 
     needClose_ = false;
     isReopen_ = false;
@@ -333,7 +331,7 @@ bool Demuxer::startRecording(const std::string &outputPath)
     // 发送开始录制的事件
     auto event = std::make_shared<RecordingEventArgs>(
         recordFilePath_, "mp4", "Demuxer", "Recording Started");
-    eventDispatcher_->triggerEventAsync(EventType::kRecordingStarted, event);
+    eventDispatcher_->triggerEvent(EventType::kRecordingStarted, event);
 
     return true;
 }
@@ -366,7 +364,7 @@ bool Demuxer::stopRecording()
         // 发送录制错误的事件
         auto event = std::make_shared<RecordingEventArgs>(
             recordFilePath_, "mp4", "Demuxer", "Recording Error");
-        eventDispatcher_->triggerEventAsync(EventType::kRecordingError, event);
+        eventDispatcher_->triggerEvent(EventType::kRecordingError, event);
 
         return false;
     }
@@ -386,7 +384,7 @@ bool Demuxer::stopRecording()
     // 发送结束录制的事件
     auto event = std::make_shared<RecordingEventArgs>(
         recordFilePath_, "mp4", "Demuxer", "Recording Stopped");
-    eventDispatcher_->triggerEventAsync(EventType::kRecordingStopped, event);
+    eventDispatcher_->triggerEvent(EventType::kRecordingStopped, event);
 
     // 重置录像状态
     isRecording_.store(false);
@@ -467,8 +465,8 @@ void Demuxer::demuxLoop()
                     // 上报流错误事件
                     auto event = std::make_shared<StreamEventArgs>(
                         url_, "Demuxer", "Stream Read Error");
-                    eventDispatcher_->triggerEventAsync(
-                        EventType::kStreamReadError, event);
+                    eventDispatcher_->triggerEvent(EventType::kStreamReadError,
+                                                   event);
 
                     break;
                 }
@@ -482,8 +480,8 @@ void Demuxer::demuxLoop()
         if (reopened) {
             auto event = std::make_shared<StreamEventArgs>(url_, "Demuxer",
                                                            "Stream Recovered");
-            eventDispatcher_->triggerEventAsync(EventType::kStreamReadRecovery,
-                                                event);
+            eventDispatcher_->triggerEvent(EventType::kStreamReadRecovery,
+                                           event);
             reopened = false;
         }
 
@@ -493,8 +491,7 @@ void Demuxer::demuxLoop()
 
             auto event = std::make_shared<StreamEventArgs>(url_, "Demuxer",
                                                            "Stream Read Data");
-            eventDispatcher_->triggerEventAsync(EventType::kStreamReadData,
-                                                event);
+            eventDispatcher_->triggerEvent(EventType::kStreamReadData, event);
         }
 
         // 根据流类型分发数据包
@@ -528,8 +525,7 @@ void Demuxer::demuxLoop()
                 // 发送流结束事件
                 auto event = std::make_shared<StreamEventArgs>(url_, "Demuxer",
                                                                "Stream Ended");
-                eventDispatcher_->triggerEventAsync(EventType::kStreamEnded,
-                                                    event);
+                eventDispatcher_->triggerEvent(EventType::kStreamEnded, event);
                 break;
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(10));

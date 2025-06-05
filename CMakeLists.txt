@@ -1,4 +1,4 @@
-﻿cmake_minimum_required(VERSION 3.15)
+cmake_minimum_required(VERSION 3.15)
 project(DecoderSDK)
 
 # Only generate Debug and Release configuration types.
@@ -49,6 +49,10 @@ message(STATUS "CMake system name: ${CMAKE_SYSTEM_NAME}")
 message(STATUS "CMake system processor: ${CMAKE_SYSTEM_PROCESSOR}")
 
 # 根据系统和架构设置包含目录和库文件路径
+#eventpp
+set(EVENTPP_INCLUDE_DIR ${CMAKE_SOURCE_DIR}/external/eventpp/include)
+# magic_enum
+set(MAGIC_ENUM_INCLUDE_DIR ${CMAKE_SOURCE_DIR}/external/magic_enum/include)
 if (CMAKE_SYSTEM_NAME STREQUAL "Windows")
     # Windows-x86_64
     # FFmpeg

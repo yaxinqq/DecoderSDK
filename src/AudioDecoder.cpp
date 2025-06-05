@@ -88,7 +88,7 @@ void AudioDecoder::decodeLoop()
                 codecCtx_->codec->name, streamIndex_,
                 MediaType::kMediaTypeAudio, false, "AudioDecoder",
                 "Decode Error");
-            eventDispatcher_->triggerEventAsync(EventType::kDecodeError, event);
+            eventDispatcher_->triggerEvent(EventType::kDecodeError, event);
             // 重置解码器
             avcodec_flush_buffers(codecCtx_);
 
@@ -137,8 +137,7 @@ void AudioDecoder::decodeLoop()
                 codecCtx_->codec->name, streamIndex_,
                 MediaType::kMediaTypeAudio, false, "AudioDecoder",
                 "First Frame Ready");
-            eventDispatcher_->triggerEventAsync(EventType::kDecodeFirstFrame,
-                                                event);
+            eventDispatcher_->triggerEvent(EventType::kDecodeFirstFrame, event);
         }
 
         // 如果恢复，则发出事件
@@ -148,8 +147,7 @@ void AudioDecoder::decodeLoop()
                 codecCtx_->codec->name, streamIndex_,
                 MediaType::kMediaTypeAudio, false, "AudioDecoder",
                 "Decoder Recovery");
-            eventDispatcher_->triggerEventAsync(EventType::kDecodeRecovery,
-                                                event);
+            eventDispatcher_->triggerEvent(EventType::kDecodeRecovery, event);
         }
 
         // 将解码后的帧复制到输出帧

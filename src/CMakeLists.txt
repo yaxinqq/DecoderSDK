@@ -74,6 +74,8 @@ target_include_directories(${PROJECT_NAME}
     ${SPDLOG_INCLUDE_DIR}
     ${JSON_INCLUDE_DIR}
     ${FMT_INCLUDE_DIR}
+    ${EVENTPP_INCLUDE_DIR}
+    ${MAGIC_ENUM_INCLUDE_DIR}
 )
 
 # 添加库文件路径
