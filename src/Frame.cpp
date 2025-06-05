@@ -1,13 +1,12 @@
 #include "Frame.h"
 
-Frame::Frame()
-    : frame_(nullptr), serial_(0), duration_(0), isInHardware_(false), pts_(0.0)
+Frame::Frame() : frame_(nullptr), serial_(0), duration_(0), pts_(0.0)
 {
     // 不在构造函数中分配内存，只在需要时分配
 }
 
 Frame::Frame(AVFrame *srcFrame)
-    : frame_(nullptr), serial_(0), duration_(0), isInHardware_(false), pts_(0.0)
+    : frame_(nullptr), serial_(0), duration_(0), pts_(0.0)
 {
     if (srcFrame) {
         ensureAllocated();
@@ -25,7 +24,6 @@ Frame::Frame(const Frame &other)
     : frame_(nullptr),
       serial_(other.serial_),
       duration_(other.duration_),
-      isInHardware_(other.isInHardware_),
       pts_(other.pts_)
 {
     if (other.frame_) {
@@ -46,7 +44,6 @@ Frame &Frame::operator=(const Frame &other)
         release();
         serial_ = other.serial_;
         duration_ = other.duration_;
-        isInHardware_ = other.isInHardware_;
         pts_ = other.pts_;
 
         if (other.frame_) {
@@ -68,7 +65,6 @@ Frame::Frame(Frame &&other) noexcept
     : frame_(other.frame_),
       serial_(other.serial_),
       duration_(other.duration_),
-      isInHardware_(other.isInHardware_),
       pts_(other.pts_)
 {
     // 转移所有权，避免深拷贝
@@ -85,7 +81,6 @@ Frame &Frame::operator=(Frame &&other) noexcept
         frame_ = other.frame_;
         serial_ = other.serial_;
         duration_ = other.duration_;
-        isInHardware_ = other.isInHardware_;
         pts_ = other.pts_;
 
         other.frame_ = nullptr;
@@ -288,6 +283,17 @@ void Frame::setChromaLocation(AVChromaLocation loc)
         frame_->chroma_location = loc;
 }
 
+int64_t Frame::bestEffortTimestamp() const
+{
+    return frame_ ? frame_->best_effort_timestamp : AV_NOPTS_VALUE;
+}
+
+void Frame::setBestEffortTimestamp(int64_t ts)
+{
+    if (frame_)
+        frame_->best_effort_timestamp = ts;
+}
+
 int Frame::sampleRate() const
 {
     return frame_ ? frame_->sample_rate : 0;
@@ -442,12 +448,7 @@ void Frame::setDurationByFps(double duration)
 
 bool Frame::isInHardware() const
 {
-    return isInHardware_;
-}
-
-void Frame::setIsInHardware(bool isInHardware)
-{
-    isInHardware_ = isInHardware;
+    return frame_ && frame_->hw_frames_ctx != nullptr;
 }
 
 void Frame::setSecPts(double pts)

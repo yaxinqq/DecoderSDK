@@ -1,4 +1,5 @@
 #pragma once
+
 #include "Clock.h"
 #include "DecoderBase.h"
 #include "HardwareAccel.h"
@@ -18,7 +19,6 @@ public:
               bool requireFrameInMemory = false);
 
     bool open() override;
-
     AVMediaType type() const override;
 
     // 需要解码后的帧位于内存中
@@ -30,45 +30,35 @@ public:
         return frameRate_;
     }
 
-    // 设置是否启用帧率控制
-    void setFrameRateControl(bool enable)
-    {
-        frameRateControlEnabled_ = enable;
-    }
-
-    // 获取是否启用帧率控制
-    bool isFrameRateControlEnabled() const
-    {
-        return frameRateControlEnabled_;
-    }
-
 protected:
-    virtual void decodeLoop() override;
-
-    // 根据情况，是否设置解码器的硬件解码
+    void decodeLoop() override;
     bool setHardwareDecode() override;
 
 private:
     // 更新视频帧率
     void updateFrameRate(AVRational frameRate);
 
-    // 计算下一帧的显示时间
-    double calculateFrameDisplayTime(double pts, double duration);
+    // 处理帧格式转换
+    Frame processFrameConversion(const Frame &inputFrame);
+
+    // 处理硬件帧到内存的转换
+    Frame transferHardwareFrame(const Frame &hwFrame);
+
+    // 处理软件帧格式转换
+    Frame convertSoftwareFrame(const Frame &frame);
 
 private:
     double frameRate_;  // 检测到的帧率
-    std::optional<std::chrono::steady_clock::time_point>
-        lastFrameTime_;  // 上一帧的时间点
+    std::optional<std::chrono::steady_clock::time_point> lastFrameTime_;
 
     std::shared_ptr<HardwareAccel> hwAccel_;  // 硬件加速器
-    // 当前指定的硬件加速类型
     HWAccelType hwAccelType_ = HWAccelType::AUTO;
-    // 当前指定的加速硬件
     int deviceIndex_ = 0;
-
-    // 软解时的图像格式
     AVPixelFormat softPixelFormat_ = AV_PIX_FMT_YUV420P;
-
-    // 需要解码后的帧位于内存中
     bool requireFrameInMemory_ = false;
+
+    // 复用的转换上下文和帧
+    struct SwsContext *swsCtx_ = nullptr;
+    Frame memoryFrame_;
+    Frame swsFrame_;
 };

@@ -25,9 +25,10 @@ private:
     bool initResampleContext();
 
     // 重采样音频数据
-    AVFrame *resampleFrame(AVFrame *frame);
+    Frame resampleFrame(const Frame &frame);
 
-    double calculateFrameDisplayTime(double pts, double duration);
+    // 检查是否需要重新初始化重采样
+    bool needResampleUpdate(double lastSpeed);
 
 private:
     SwrContext *swrCtx_ = nullptr;  // 用于音频重采样
@@ -35,4 +36,7 @@ private:
 
     std::optional<std::chrono::steady_clock::time_point>
         lastFrameTime_;  // 上一帧的时间点
+
+    // 复用的重采样帧
+    Frame resampleFrame_;
 };

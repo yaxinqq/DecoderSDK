@@ -1,5 +1,3 @@
-#include "VideoDecoder.h"
-
 #include <chrono>
 #include <thread>
 
@@ -10,6 +8,11 @@ extern "C" {
 
 #include "Logger.h"
 #include "Utils.h"
+#include "VideoDecoder.h"
+
+namespace {
+const std::string kVideoDecoderName = "Video Decoder";
+}
 
 VideoDecoder::VideoDecoder(std::shared_ptr<Demuxer> demuxer,
                            std::shared_ptr<SyncController> syncController,
@@ -18,13 +21,16 @@ VideoDecoder::VideoDecoder(std::shared_ptr<Demuxer> demuxer,
       frameRate_(0.0),
       lastFrameTime_(std::nullopt)
 {
-    // 先初始化默认硬件类型
     init();
 }
 
 VideoDecoder::~VideoDecoder()
 {
     close();
+    if (swsCtx_) {
+        sws_freeContext(swsCtx_);
+        swsCtx_ = nullptr;
+    }
 }
 
 void VideoDecoder::init(HWAccelType type, int deviceIndex,
@@ -39,16 +45,13 @@ void VideoDecoder::init(HWAccelType type, int deviceIndex,
 
 bool VideoDecoder::open()
 {
-    bool ret = DecoderBase::open();
-    if (!ret)
+    if (!DecoderBase::open()) {
         return false;
+    }
 
     // 预测帧率
-    AVRational tb = stream_->time_base;
     AVRational frame_rate =
         av_guess_frame_rate(demuxer_->formatContext(), stream_, NULL);
-
-    // 更新视频帧率
     updateFrameRate(frame_rate);
 
     return true;
@@ -56,17 +59,24 @@ bool VideoDecoder::open()
 
 void VideoDecoder::decodeLoop()
 {
-    AVFrame *frame = av_frame_alloc();
-    AVFrame *memoryFrame = nullptr;       // 用于保存内存帧
-    AVFrame *swsFrame = nullptr;          // 用于格式转换的帧
-    struct SwsContext *swsCtx = nullptr;  // 格式转换上下文
-
-    if (!frame)
-        return;
+    // 解码帧
+    Frame frame;
+    frame.ensureAllocated();
+    if (!frame.isValid()) {
+        LOG_ERROR("Video Decoder decodeLoop error: Failed to allocate frame!");
+        handleDecodeError(kVideoDecoderName, MediaType::kMediaTypeVideo,
+                          AVERROR(ENOMEM), "Failed to allocate frame!");
+    }
 
     auto packetQueue = demuxer_->packetQueue(type());
     if (!packetQueue) {
-        av_frame_free(&frame);
+        LOG_ERROR(
+            "Video Decoder decodeLoop error: Can not find packet queue from "
+            "demuxer!");
+        handleDecodeError(kVideoDecoderName, MediaType::kMediaTypeVideo,
+                          AVERROR_UNKNOWN,
+                          "Can not find packet queue from "
+                          "demuxer!");
         return;
     }
 
@@ -77,14 +87,13 @@ void VideoDecoder::decodeLoop()
     bool readFirstFrame = false;
     bool occuredError = false;
 
+    resetStatistics();
     while (isRunning_.load()) {
-        // 检查序列号是否变化
-        if (serial != packetQueue->serial()) {
-            avcodec_flush_buffers(codecCtx_);
-            serial = packetQueue->serial();
-            frameQueue_.setSerial(serial);
+        // 检查序列号变化
+        if (checkAndUpdateSerial(serial, packetQueue.get())) {
+            // 序列号发生变化时，重置下列数据
+            // 重新等待关键帧
             hasKeyFrame = false;
-
             // 重置视频时钟
             syncController_->updateVideoClock(0.0, serial);
             // 重置最后帧时间
@@ -99,7 +108,6 @@ void VideoDecoder::decodeLoop()
         // 从包队列中获取一个包
         Packet packet;
         bool gotPacket = packetQueue->pop(packet, 1);
-
         if (!gotPacket) {
             // 没有包可用，可能是队列为空或已中止
             if (packetQueue->isAborted())
@@ -111,7 +119,7 @@ void VideoDecoder::decodeLoop()
         if (packet.serial() != serial)
             continue;
 
-        // 如果是关键帧，再解
+        // 等待关键帧
         if (!hasKeyFrame && (packet.get()->flags & AV_PKT_FLAG_KEY) == 0) {
             continue;
         }
@@ -119,28 +127,19 @@ void VideoDecoder::decodeLoop()
 
         // 发送包到解码器
         int ret = avcodec_send_packet(codecCtx_, packet.get());
-        if (ret < 0 && ret != AVERROR(EAGAIN) && ret != AVERROR_EOF)
+        if (ret < 0 && ret != AVERROR(EAGAIN) && ret != AVERROR_EOF) {
             continue;
+        }
 
-        // 接收解码后的帧
-        ret = avcodec_receive_frame(codecCtx_, frame);
+        // 接收解码帧
+        ret = avcodec_receive_frame(codecCtx_, frame.get());
         if (ret < 0) {
-            if (ret == AVERROR_EOF || ret == AVERROR(EAGAIN))
-                continue;
-
-            // 解码错误
-            occuredError = true;
-            // 发送解码错误的事件
-            auto event = std::make_shared<DecoderEventArgs>(
-                codecCtx_->codec->name, streamIndex_,
-                MediaType::kMediaTypeVideo, codecCtx_->hw_device_ctx != nullptr,
-                "VideoDecoder", "Decode Error");
-            eventDispatcher_->triggerEvent(EventType::kDecodeError, event);
-            // 重置解码器
-            avcodec_flush_buffers(codecCtx_);
-
-            // 休眠，等待恢复
-            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            // 错误处理失败时，就continue，代表此时是EOF或是EAGAIN
+            if (handleDecodeError(kVideoDecoderName, MediaType::kMediaTypeVideo,
+                                  ret, "Decoder error: ")) {
+                occuredError = true;
+            }
+            continue;
         }
 
         // 计算帧持续时间(单位 s)
@@ -153,150 +152,171 @@ void VideoDecoder::decodeLoop()
             syncController_->updateVideoClock(pts, serial);
         }
 
-        // 如果当前小于seekPos，丢弃帧
-        if (!utils::greaterAndEqual(pts, seekPos_.load())) {
-            av_frame_unref(frame);
+        // 如果当前小于seekPos，丢弃帧，先不加锁了
+        if (!utils::greaterAndEqual(pts, seekPos_)) {
+            frame.unref();
             continue;
         }
 
         // 如果是第一帧，发出事件
         if (!readFirstFrame) {
             readFirstFrame = true;
-            auto event = std::make_shared<DecoderEventArgs>(
-                codecCtx_->codec->name, streamIndex_,
-                MediaType::kMediaTypeVideo, codecCtx_->hw_device_ctx != nullptr,
-                "VideoDecoder", "First Frame Ready");
-            eventDispatcher_->triggerEvent(EventType::kDecodeFirstFrame, event);
+            handleFirstFrame(kVideoDecoderName, MediaType::kMediaTypeVideo);
         }
 
         // 如果恢复，则发出事件
         if (occuredError) {
             occuredError = false;
-            auto event = std::make_shared<DecoderEventArgs>(
-                codecCtx_->codec->name, streamIndex_,
-                MediaType::kMediaTypeVideo, codecCtx_->hw_device_ctx != nullptr,
-                "VideoDecoder", "Decoder Recovery");
-            eventDispatcher_->triggerEvent(EventType::kDecodeRecovery, event);
+            handleDecodeRecovery(kVideoDecoderName, MediaType::kMediaTypeVideo);
         }
 
-        // 软解时进行图像格式转换
-        AVFrame *outputFrame = frame;
-        // 如果是硬件加速解码，且需要将帧转换到主机内存，进行转换
-        if (outputFrame->hw_frames_ctx && requireFrameInMemory_) {
-            if (!memoryFrame) {
-                memoryFrame = av_frame_alloc();
-                if (!memoryFrame) {
-                    av_frame_unref(frame);
-                    continue;
-                }
-            }
-
-            if (!hwAccel_->transferFrameToHost(frame, memoryFrame)) {
-                av_frame_unref(frame);
-                continue;
-            }
-            outputFrame = memoryFrame;
-        }
-
-        // 如果是软解或需要在内存中存储帧，且格式不匹配，进行格式转换
-        if (!outputFrame->hw_frames_ctx &&
-            outputFrame->format != softPixelFormat_) {
-            // 如果是(软解或需要在内存中存储帧）的格式不匹配，进行格式转换
-            if (!swsFrame) {
-                swsFrame = av_frame_alloc();
-                if (!swsFrame) {
-                    av_frame_unref(frame);
-                    continue;
-                }
-            }
-
-            // 初始化转换上下文
-            swsCtx = sws_getCachedContext(
-                swsCtx, outputFrame->width, outputFrame->height,
-                (AVPixelFormat)outputFrame->format, outputFrame->width,
-                outputFrame->height, softPixelFormat_, SWS_BILINEAR, NULL, NULL,
-                NULL);
-
-            if (!swsCtx) {
-                av_frame_unref(frame);
-                continue;
-            }
-            // 每次使用前先 unref，确保 frame 干净
-            av_frame_unref(swsFrame);
-
-            // 设置目标帧参数
-            swsFrame->format = softPixelFormat_;
-            swsFrame->width = outputFrame->width;
-            swsFrame->height = outputFrame->height;
-            swsFrame->pts = outputFrame->pts;
-
-            // 分配缓冲区
-            ret = av_frame_get_buffer(swsFrame, 0);
-            if (ret < 0) {
-                av_frame_unref(frame);
-                continue;
-            }
-
-            // 确保帧可写
-            ret = av_frame_make_writable(swsFrame);
-            if (ret < 0) {
-                av_frame_unref(frame);
-                continue;
-            }
-
-            // 执行格式转换
-            ret = sws_scale(swsCtx, (const uint8_t *const *)outputFrame->data,
-                            outputFrame->linesize, 0, outputFrame->height,
-                            swsFrame->data, swsFrame->linesize);
-
-            if (ret <= 0) {
-                av_frame_unref(frame);
-                continue;
-            }
-
-            // 复制帧属性
-            av_frame_copy_props(swsFrame, outputFrame);
-            // 使用转换后的帧
-            outputFrame = swsFrame;
+        // 处理帧格式转换
+        Frame outputFrame = processFrameConversion(frame);
+        if (!outputFrame.isValid()) {
+            continue;
         }
 
         // 将解码后的帧复制到输出帧
-        *outFrame = Frame(outputFrame);
+        *outFrame = std::move(outputFrame);
         outFrame->setSerial(serial);
         outFrame->setDurationByFps(duration);
         outFrame->setSecPts(pts);
 
-        // 检查是否是硬件加速解码
-        outFrame->setIsInHardware(outputFrame->hw_frames_ctx != NULL);
-
-        // 释放内存
-        av_frame_unref(frame);
-
         // 如果启用了帧率控制，则根据帧率控制推送速度
-        if (frameRateControlEnabled_) {
-            double displayTime =
-                calculateFrameDisplayTime(pts, duration * 1000.0);
+        if (isFrameRateControlEnabled()) {
+            double displayTime = calculateFrameDisplayTime(
+                pts, duration * 1000.0, lastFrameTime_);
             if (utils::greater(displayTime, 0.0)) {
                 std::this_thread::sleep_until(lastFrameTime_.value());
             }
-            // std::this_thread::sleep_until(nextFrameTime_.value());
         }
 
         // 提交帧到队列
         frameQueue_.commitFrame();
+
+        // 更新统计信息
+        statistics_.framesDecoded.fetch_add(1);
+        // 每到100帧，统计一次解码时间
+        if (statistics_.framesDecoded.load() % 100 == 0) {
+            updateTotalDecodeTime();
+        }
+
+        // 清理当前帧，准备下一次解码
+        frame.unref();
     }
 
-    // 清理资源
-    if (swsCtx) {
-        sws_freeContext(swsCtx);
+    // 循环结束时，统计一次解码时间
+    updateTotalDecodeTime();
+}
+
+Frame VideoDecoder::processFrameConversion(const Frame &inputFrame)
+{
+    AVFrame *avFrame = inputFrame.get();
+    if (!avFrame) {
+        return Frame();
     }
-    if (swsFrame) {
-        av_frame_free(&swsFrame);
+
+    bool isHardwareFrame = (avFrame->hw_frames_ctx != nullptr);
+    AVPixelFormat currentFormat = inputFrame.pixelFormat();
+
+    // 早期退出：如果不需要任何转换
+    if (!isHardwareFrame && !requireFrameInMemory_ &&
+        currentFormat == softPixelFormat_) {
+        return inputFrame;  // 直接返回，最高效
     }
-    if (memoryFrame) {
-        av_frame_free(&memoryFrame);
+
+    // 硬件帧处理
+    if (isHardwareFrame && requireFrameInMemory_) {
+        Frame memoryFrame = transferHardwareFrame(inputFrame);
+        if (!memoryFrame.isValid()) {
+            return Frame();
+        }
+
+        // 检查是否还需要格式转换
+        if (memoryFrame.pixelFormat() != softPixelFormat_) {
+            return convertSoftwareFrame(memoryFrame);
+        }
+
+        return memoryFrame;
     }
-    av_frame_free(&frame);
+
+    // 软件帧格式转换
+    if (!isHardwareFrame && currentFormat != softPixelFormat_) {
+        return convertSoftwareFrame(inputFrame);
+    }
+
+    // 默认返回原帧
+    return inputFrame;
+}
+
+Frame VideoDecoder::transferHardwareFrame(const Frame &hwFrame)
+{
+    if (!memoryFrame_.isValid()) {
+        memoryFrame_.ensureAllocated();
+    }
+
+    if (!hwAccel_->transferFrameToHost(hwFrame.get(), memoryFrame_.get())) {
+        handleDecodeError(kVideoDecoderName, MediaType::kMediaTypeVideo,
+                          AVERROR_UNKNOWN, "TransferFrameToHost failed!");
+        return Frame();
+    }
+
+    // 创建新Frame并移动，避免拷贝
+    Frame result = std::move(memoryFrame_);
+    memoryFrame_ = Frame();  // 重置为空，下次会重新分配
+    return result;
+}
+
+Frame VideoDecoder::convertSoftwareFrame(const Frame &frame)
+{
+    if (!swsFrame_.isValid()) {
+        swsFrame_.ensureAllocated();
+    }
+
+    // 初始化转换上下文
+    swsCtx_ = sws_getCachedContext(swsCtx_, frame.width(), frame.height(),
+                                   frame.pixelFormat(), frame.width(),
+                                   frame.height(), softPixelFormat_,
+                                   SWS_BILINEAR, nullptr, nullptr, nullptr);
+
+    if (!swsCtx_) {
+        handleDecodeError(kVideoDecoderName, MediaType::kMediaTypeVideo,
+                          AVERROR_UNKNOWN, "SwsContext alloc failed!");
+        return Frame();
+    }
+
+    // 设置目标帧参数
+    swsFrame_.setPixelFormat(softPixelFormat_);
+    swsFrame_.setWidth(frame.width());
+    swsFrame_.setHeight(frame.height());
+    swsFrame_.setAvPts(frame.avPts());
+
+    // 分配缓冲区
+    int ret = av_frame_get_buffer(swsFrame_.get(), 0);
+    if (ret < 0) {
+        handleDecodeError(kVideoDecoderName, MediaType::kMediaTypeVideo,
+                          AVERROR_UNKNOWN, "Frame buffer alloc failed!");
+        return Frame();
+    }
+
+    // 执行转换
+    ret = sws_scale(swsCtx_, (const uint8_t *const *)frame.get()->data,
+                    frame.get()->linesize, 0, frame.height(),
+                    swsFrame_.get()->data, swsFrame_.get()->linesize);
+
+    if (ret <= 0) {
+        handleDecodeError(kVideoDecoderName, MediaType::kMediaTypeVideo,
+                          AVERROR_UNKNOWN, "SwsContext scale failed!");
+        return Frame();
+    }
+
+    // 复制帧属性
+    av_frame_copy_props(swsFrame_.get(), frame.get());
+
+    // 创建新Frame并移动，避免拷贝
+    Frame result = std::move(swsFrame_);
+    swsFrame_ = Frame();  // 重置为空，下次会重新分配
+    return result;
 }
 
 bool VideoDecoder::setHardwareDecode()
@@ -305,21 +325,22 @@ bool VideoDecoder::setHardwareDecode()
     hwAccel_ = HardwareAccelFactory::getInstance().createHardwareAccel(
         hwAccelType_, deviceIndex_);
     if (!hwAccel_) {
-        LOG_WARN("无法创建硬件加速器，将使用软解码");
+        LOG_WARN("Hardware acceleration not available, using software decode");
         return false;
     }
 
     if (hwAccel_->getType() == HWAccelType::NONE) {
-        LOG_WARN("没有找到可用的硬件加速器，将使用软解码");
+        LOG_WARN("Hardware acceleration not available, using software decode");
         hwAccel_.reset();
         return false;
     } else {
-        LOG_DEBUG("使用硬件加速器: {} ({})", hwAccel_->getDeviceName(),
-                  hwAccel_->getDeviceDescription());
+        LOG_DEBUG("Using hardware accelerator: {} ({})",
+                  hwAccel_->getDeviceName(), hwAccel_->getDeviceDescription());
 
         // 设置解码器上下文使用硬件加速
         if (!hwAccel_->setupDecoder(codecCtx_)) {
-            LOG_WARN("设置硬件加速失败，将回退到软解码");
+            LOG_WARN(
+                "Hardware acceleration setup failed, falling back to software");
             hwAccel_.reset();
             return false;
         }
@@ -341,61 +362,14 @@ bool VideoDecoder::requireFrameInSystemMemory(bool required)
 
 void VideoDecoder::updateFrameRate(AVRational frameRate)
 {
-    if (frameRate.num && frameRate.den) {
-        double newFrameRate = av_q2d(frameRate);
-
-        // 如果帧率发生变化，更新帧率
-        if (frameRate_ == 0.0 || std::fabs(frameRate_ - newFrameRate) > 0.1) {
-            frameRate_ = newFrameRate;
-        }
-    }
-}
-
-double VideoDecoder::calculateFrameDisplayTime(double pts, double duration)
-{
-    if (std::isnan(pts)) {
-        return 0.0;
+    if (frameRate.num == 0 || frameRate.den == 0) {
+        return;
     }
 
-    // 获取当前播放速度
-    float currentSpeed = speed_.load();
-    if (currentSpeed <= 0.0f) {
-        currentSpeed = 1.0f;  // 防止除零错误
+    double newFrameRate = av_q2d(frameRate);
+    if (utils::equal(frameRate_, newFrameRate)) {
+        return;
     }
 
-    // 首次调用，初始化
-    auto currentTime = std::chrono::steady_clock::now();
-    if (!lastFrameTime_.has_value()) {
-        lastFrameTime_ = currentTime;
-        return 0.0;
-    }
-
-    // 基于帧率计算理论帧间隔，并考虑播放速度
-    double frameInterval = duration;
-    frameInterval /= currentSpeed;  // 速度越快，帧间隔越短
-
-    // 计算下一帧应该解码的时间点
-    const auto nextFrameTime =
-        *lastFrameTime_ +
-        std::chrono::microseconds(static_cast<int64_t>(frameInterval * 1000.0));
-
-    // 计算基本延迟时间
-    double baseDelay = std::chrono::duration_cast<std::chrono::microseconds>(
-                           nextFrameTime - currentTime)
-                           .count() /
-                       1000.0;
-
-    // 如果有同步控制器，直接使用同步控制器计算的延迟
-    double finalDelay = baseDelay;
-    if (syncController_->master() != SyncController::MasterClock::Video) {
-        finalDelay = syncController_->computeVideoDelay(
-            pts, duration, baseDelay, currentSpeed);
-    }
-
-    // 更新上一帧时间
-    lastFrameTime_ =
-        currentTime +
-        std::chrono::microseconds(static_cast<int64_t>(finalDelay * 1000.0));
-
-    return finalDelay;
+    frameRate_ = newFrameRate;
 }

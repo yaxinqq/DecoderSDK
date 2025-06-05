@@ -196,6 +196,61 @@ bool FrameQueue::isKeepLast() const
     return keepLast_;
 }
 
+bool FrameQueue::setMaxCount(int maxCount)
+{
+    if (maxCount <= 0) {
+        return false;
+    }
+
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    if (maxCount == maxSize_) {
+        return true;  // 容量没有变化
+    }
+
+    // 保存当前数据
+    std::vector<Frame> tempFrames;
+    tempFrames.reserve(size_);
+
+    // 将当前队列中的帧移动到临时容器
+    for (int i = 0; i < size_; ++i) {
+        int idx = (head_ + i) % maxSize_;
+        tempFrames.emplace_back(std::move(queue_[idx]));
+    }
+
+    // 重新分配队列
+    queue_.clear();
+    queue_.resize(maxCount);
+
+    // 为新队列中的每个位置分配Frame
+    for (int i = 0; i < maxCount; ++i) {
+        queue_[i].ensureAllocated();
+    }
+
+    // 更新容量
+    maxSize_ = maxCount;
+
+    // 重新填充队列
+    head_ = 0;
+    tail_ = 0;
+    size_ = 0;
+    pendingWriteIndex_ = -1;
+
+    // 将保存的帧重新放入队列（如果新容量允许）
+    int framesToRestore =
+        std::min(static_cast<int>(tempFrames.size()), maxCount);
+    for (int i = 0; i < framesToRestore; ++i) {
+        queue_[tail_] = std::move(tempFrames[i]);
+        tail_ = (tail_ + 1) % maxSize_;
+        size_++;
+    }
+
+    // 通知等待的线程
+    notifyWaiters();
+
+    return true;
+}
+
 bool FrameQueue::pushInternal(Frame frame)
 {
     // 如果队列满了，移除最旧的帧

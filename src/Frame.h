@@ -36,8 +36,6 @@ public:
 
     // 是否是硬解码
     bool isInHardware() const;
-    // 设置是否是硬解码
-    void setIsInHardware(bool isInHardware);
 
     // 设置解码时间戳（单位s）
     void setSecPts(double sec);
@@ -106,6 +104,10 @@ public:
     AVChromaLocation chromaLocation() const;
     void setChromaLocation(AVChromaLocation loc);
 
+    // 推测时间戳
+    int64_t bestEffortTimestamp() const;
+    void setBestEffortTimestamp(int64_t ts);
+
     // 音频相关（如果是音频帧）
     int sampleRate() const;
     void setSampleRate(int rate);
@@ -156,7 +158,6 @@ public:
     // 确保帧已分配
     void ensureAllocated();
 
-private:
     void release();
     void unref();
 
@@ -171,11 +172,8 @@ private:
     AVFrame *frame_ = nullptr;
     // 序列号
     int serial_ = 0;
-    // 帧的时长
+    // 帧的时长 单位s
     double duration_ = 0.0;
-    // 是否是硬解码
-    bool isInHardware_ = false;
-
     // pts 单位s
     double pts_ = 0.0;
 };

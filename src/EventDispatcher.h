@@ -11,6 +11,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 
 // 事件类型枚举
@@ -155,7 +156,7 @@ public:
     std::string format;      // 录制格式
 };
 
-// 连接类型
+// 连接类型（保留用于向后兼容，但不再影响监听器注册）
 enum class ConnectionType {
     kDirect,  // 同步调用
     kQueued,  // 异步队列
@@ -180,8 +181,9 @@ using GlobalEventListenerHandle =
     std::unordered_map<EventType, SyncEventDispatcher::Handle>;
 
 /**
- * 简化的事件分发器
+ * 统一的事件分发器
  * 支持同步和异步事件分发，基于eventpp库
+ * 监听器统一注册，事件触发时动态选择分发方式
  */
 class EventDispatcher {
 public:
@@ -194,10 +196,9 @@ public:
     EventDispatcher(EventDispatcher &&) = delete;
     EventDispatcher &operator=(EventDispatcher &&) = delete;
 
-    // 监听器管理
+    // 监听器管理 - 统一注册，不再区分连接类型
     EventListenerHandle addEventListener(
-        EventType eventType, const std::function<EventCallback> &callback,
-        ConnectionType connectionType = ConnectionType::kAuto);
+        EventType eventType, const std::function<EventCallback> &callback);
 
     bool removeEventListener(EventType eventType, EventListenerHandle handle);
 
@@ -207,16 +208,13 @@ public:
     // 移除全局事件监听器
     bool removeGlobalEventListener(const GlobalEventListenerHandle &handle);
 
-    // 事件触发
+    // 事件触发 - 动态选择分发方式
     void triggerEvent(EventType eventType,
-                      std::shared_ptr<EventArgs> args = nullptr);
-    void triggerEventSync(EventType eventType,
-                          std::shared_ptr<EventArgs> args = nullptr);
-    void triggerEventAsync(EventType eventType,
-                           std::shared_ptr<EventArgs> args = nullptr);
+                      std::shared_ptr<EventArgs> args = nullptr,
+                      ConnectionType connectType = ConnectionType::kAuto);
 
     // 异步事件处理
-    void processAsyncEvents();    // 主线程调用poll
+    bool processAsyncEvents();    // 主线程调用poll
     void startAsyncProcessing();  // 启动后台线程
     void stopAsyncProcessing();   // 停止后台线程
 
@@ -235,12 +233,18 @@ private:
     // 内部方法
     void asyncProcessingLoop();
     ConnectionType determineConnectionType(ConnectionType requested) const;
-
     bool isMainThread() const;
 
+    void triggerEventSync(EventType eventType,
+                          std::shared_ptr<EventArgs> args = nullptr);
+    void triggerEventAsync(EventType eventType,
+                           std::shared_ptr<EventArgs> args = nullptr);
+
 private:
-    // 核心组件
-    std::unique_ptr<SyncEventDispatcher> syncDispatcher_;
+    // 统一的监听器存储 - 所有监听器都注册到这里
+    std::unique_ptr<SyncEventDispatcher> unifiedDispatcher_;
+
+    // 异步队列用于跨线程事件传递
     std::unique_ptr<AsyncEventQueue> asyncQueue_;
 
     // 异步处理
@@ -248,6 +252,6 @@ private:
     std::atomic<bool> stopAsyncProcessing_{false};
     std::thread asyncProcessingThread_;
 
-    // 记录是否未主线程
+    // 记录主线程ID
     std::thread::id mainThreadId_;
 };

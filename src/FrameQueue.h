@@ -81,6 +81,9 @@ public:
     void setKeepLast(bool keepLast);
     bool isKeepLast() const;
 
+    // 设置最大容量(昂贵操作)
+    bool setMaxCount(int maxCount);
+
 private:
     // 推入一帧 内部使用
     bool pushInternal(Frame frame);
