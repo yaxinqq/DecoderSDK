@@ -24,5 +24,8 @@ void highPrecisionSleep(double ms,
                             std::chrono::steady_clock::now());
 
 // 判断一个url是否为实时流
-bool isRealtime(const std::string& url);
+bool isRealtime(const std::string &url);
+
+// av error改为string
+std::string avErr2Str(int errnum);
 }  // namespace utils

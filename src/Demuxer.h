@@ -1,5 +1,6 @@
 #pragma once
 #include <atomic>
+#include <condition_variable>
 #include <memory>
 #include <mutex>
 #include <thread>
@@ -9,12 +10,17 @@ extern "C" {
 }
 
 #include "EventDispatcher.h"
+#include "MediaRecorder.h"
 #include "PacketQueue.h"
 
 class Demuxer {
 public:
-    Demuxer(std::shared_ptr<EventDispatcher> eventDispatcher);
+    explicit Demuxer(std::shared_ptr<EventDispatcher> eventDispatcher);
     virtual ~Demuxer();
+
+    // 禁用拷贝构造和拷贝赋值
+    Demuxer(const Demuxer &) = delete;
+    Demuxer &operator=(const Demuxer &) = delete;
 
     bool open(const std::string &url, bool isRealTime, bool isReopen = false);
     bool close();
@@ -43,67 +49,53 @@ public:
     // 当前正在播放的路径
     std::string url() const;
 
-    // 开始录像，暂时将输出文件保存为.mp4格式
+    // 录制相关 - 委托给MediaRecorder
     bool startRecording(const std::string &outputPath);
-    // 停止录像
     bool stopRecording();
-    // 是否正在录像
     bool isRecording() const;
 
 protected:
     // 解复用线程
     void demuxLoop();
-    // 录像线程
-    void recordingLoop();
 
 private:
     void start();
     void stop();
 
-    // 初始化录像队列
-    void initRecordQueue();
-    // 销毁录像队列
-    void destroyRecordQueue();
-    // 获得录像队列
-    std::shared_ptr<PacketQueue> recordPacketQueue(AVMediaType mediaType) const;
+    void handleEndOfFile(AVPacket *pkt);
+    void distributePacket(AVPacket *pkt);
+    void waitForQueueEmpty();
 
 private:
+    // 同步原语
     std::mutex mutex_;
+    std::condition_variable pauseCv_;
+
+    // FFmpeg相关
     AVFormatContext *formatContext_ = nullptr;
 
+    // 数据包队列
     std::shared_ptr<PacketQueue> videoPacketQueue_;
     std::shared_ptr<PacketQueue> audioPacketQueue_;
 
-    int videoStreamIndex_ = -1;  // 视频流索引
-    int audioStreamIndex_ = -1;  // 音频流索引
+    // 流索引
+    int videoStreamIndex_ = -1;
+    int audioStreamIndex_ = -1;
 
+    // 线程管理
     std::thread thread_;
-    std::atomic<bool> isRunning_ = false;
-    std::atomic<bool> isPaused_ = false;
+    std::atomic<bool> isRunning_{false};
+    std::atomic<bool> isPaused_{false};
 
-    // 录制相关
-    AVFormatContext *recordFormatCtx_ = nullptr;
-    std::string recordFilePath_;
-    std::atomic_bool isRecording_ = false;
-    std::thread recordThread_;
-    std::mutex recordMutex_;
-    std::condition_variable recordCv_;
-    std::atomic_bool recordStopFlag_ = false;
-
-    // 录像队列相关
-    std::shared_ptr<PacketQueue> videoRecordPacketQueue_;
-    std::shared_ptr<PacketQueue> audioRecordPacketQueue_;
+    // 录制器
+    std::unique_ptr<MediaRecorder> mediaRecorder_;
 
     // 事件分发器
     std::shared_ptr<EventDispatcher> eventDispatcher_;
 
-    // 当前正在播放的路径
+    // 状态信息
     std::string url_;
-    // 是否是实时流
     bool isRealTime_ = false;
-    // 是否需要关闭
     bool needClose_ = false;
-
-    // 是否为重新打开
     bool isReopen_ = false;
 };

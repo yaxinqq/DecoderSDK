@@ -19,6 +19,7 @@ if (CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
     add_compile_options(/Zc:__cplusplus)
     add_compile_options(/MP)
     add_compile_options(/utf-8)
+    add_compile_options("$<$<CXX_COMPILER_ID:MSVC>:/utf-8>")
     add_definitions(-DUNICODE -D_UNICODE)
 
     set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /Zi")                         # 为Release模式添加调试信息

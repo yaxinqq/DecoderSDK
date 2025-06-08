@@ -4,6 +4,10 @@
 #include <cmath>
 #include <thread>
 
+extern "C" {
+#include <libavutil/error.h>
+}
+
 namespace utils {
 bool equal(double a, double b, double epsilon)
 {
@@ -69,15 +73,15 @@ void highPrecisionSleep(double ms,
     // while ((high_resolution_clock::now() - start).count() / 1e9 < seconds);
 }
 
-bool isRealtime(const std::string& url)
+bool isRealtime(const std::string &url)
 {
     std::string u = url;
     std::transform(u.begin(), u.end(), u.begin(), ::tolower);
 
-    static const char* realtimePrefixes[] = {"rtsp://", "rtmp://", "udp://",
+    static const char *realtimePrefixes[] = {"rtsp://", "rtmp://", "udp://",
                                              "tcp://",  "srt://",  "mms://"};
 
-    for (const char* prefix : realtimePrefixes) {
+    for (const char *prefix : realtimePrefixes) {
         if (u.find(prefix) == 0)
             return true;
     }
@@ -90,5 +94,12 @@ bool isRealtime(const std::string& url)
     }
 
     return false;
+}
+
+std::string avErr2Str(int errnum)
+{
+    char buf[AV_ERROR_MAX_STRING_SIZE] = {0};
+    av_make_error_string(buf, AV_ERROR_MAX_STRING_SIZE, errnum);
+    return std::string(buf);
 }
 }  // namespace utils
