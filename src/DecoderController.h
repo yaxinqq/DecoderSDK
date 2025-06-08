@@ -27,6 +27,20 @@ public:
         bool enableAutoReconnect = true;  // 是否启用自动重连
         int maxReconnectAttempts = -1;    // 最大重连次数
         int reconnectIntervalMs = 1000;   // 重连间隔(毫秒)
+
+        // 预缓冲配置
+        struct PreBufferConfig {
+            // 是否启用预缓冲
+            bool enablePreBuffer = false;
+            // 视频预缓冲帧数
+            int videoPreBufferFrames = 0;
+            // 音频预缓冲包数
+            int audioPreBufferPackets = 0;
+            // 是否需要音视频都达到预缓冲才开始
+            bool requireBothStreams = false;
+            // 预缓冲完成后是否自动开始解码
+            bool autoStartAfterPreBuffer = true;
+        } preBufferConfig;
     };
 
 public:
@@ -106,6 +120,30 @@ public:
     // 检查是否正在重连
     bool isReconnecting() const;
 
+public:
+    // 预缓冲状态
+    enum class PreBufferState {
+        Disabled,       // 未启用预缓冲
+        WaitingBuffer,  // 等待预缓冲完成
+        Ready,          // 预缓冲完成，正在解码
+    };
+
+    // 获取预缓冲状态
+    PreBufferState getPreBufferState() const;
+
+    // 获取预缓冲进度
+    struct PreBufferProgress {
+        int videoBufferedFrames;
+        int audioBufferedPackets;
+        int videoRequiredFrames;
+        int audioRequiredPackets;
+        double progressPercent;  // 0.0-1.0
+        bool isVideoReady;
+        bool isAudioReady;
+        bool isOverallReady;
+    };
+    PreBufferProgress getPreBufferProgress() const;
+
 private:
     // 流读取错误后，重新打开
     bool reopen(const std::string &url);
@@ -114,6 +152,11 @@ private:
 
     bool startDecodeInternal(bool reopen);
     bool stopDecodeInternal(bool reopen);
+
+    // 预缓冲结束后的回调
+    void onPreBufferReady();
+    // 清理预缓冲状态
+    void cleanupPreBufferState();
 
 private:
     // 事件分发
@@ -134,4 +177,7 @@ private:
     std::atomic<int> reconnectAttempts_{0};
     std::atomic_bool isReconnecting_{false};
     std::atomic_bool shouldStopReconnect_{false};  // 添加重连停止标志
+
+    // 预缓冲状态
+    std::atomic<PreBufferState> preBufferState_{PreBufferState::Disabled};
 };

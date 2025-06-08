@@ -30,7 +30,6 @@ DecoderController::DecoderController()
 
 DecoderController::~DecoderController()
 {
-    stopDecode();
     close();
 }
 
@@ -47,6 +46,8 @@ bool DecoderController::open(const std::string &filePath, const Config &config)
     // 重置重连相关状态
     reconnectAttempts_.store(0);
     shouldStopReconnect_.store(false);
+    // 重置预加载状态
+    preBufferState_ = PreBufferState::Disabled;
 
     config_ = config;
 
@@ -67,6 +68,12 @@ bool DecoderController::close()
     while (isReconnecting_.load()) {
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
+
+    // 清理预缓冲状态
+    cleanupPreBufferState();
+
+    // 停止解码
+    stopDecode();
 
     // 重置重连相关状态
     reconnectAttempts_.store(0);
@@ -97,7 +104,41 @@ bool DecoderController::resume()
 
 bool DecoderController::startDecode()
 {
-    return startDecodeInternal(false);
+    if (!demuxer_) {
+        return false;
+    }
+
+    // 启动解码器（非阻塞）
+    bool success = startDecodeInternal(false);
+    if (!success) {
+        return false;
+    }
+
+    // 如果启用了预缓冲，设置等待状态
+    if (config_.preBufferConfig.enablePreBuffer) {
+        preBufferState_ = PreBufferState::WaitingBuffer;
+
+        // 设置解码器等待预缓冲
+        if (videoDecoder_) {
+            videoDecoder_->setWaitingForPreBuffer(true);
+        }
+        if (audioDecoder_) {
+            audioDecoder_->setWaitingForPreBuffer(true);
+        }
+
+        // 设置预缓冲配置和完成回调
+        demuxer_->setPreBufferConfig(
+            config_.preBufferConfig.videoPreBufferFrames,
+            config_.preBufferConfig.audioPreBufferPackets,
+            config_.preBufferConfig.requireBothStreams, [this]() {
+                // 预缓冲完成回调
+                this->onPreBufferReady();
+            });
+
+        LOG_INFO("Decoder started, waiting for pre-buffer to complete...");
+    }
+
+    return true;
 }
 
 bool DecoderController::stopDecode()
@@ -336,9 +377,51 @@ bool DecoderController::isReconnecting() const
     return isReconnecting_.load();
 }
 
+DecoderController::PreBufferState DecoderController::getPreBufferState() const
+{
+    return preBufferState_;
+}
+
+DecoderController::PreBufferProgress DecoderController::getPreBufferProgress()
+    const
+{
+    PreBufferProgress progress{};
+
+    if (demuxer_) {
+        auto demuxProgress = demuxer_->getPreBufferProgress();
+        progress.videoBufferedFrames = demuxProgress.videoBufferedFrames;
+        progress.audioBufferedPackets = demuxProgress.audioBufferedPackets;
+        progress.videoRequiredFrames = demuxProgress.videoRequiredFrames;
+        progress.audioRequiredPackets = demuxProgress.audioRequiredPackets;
+        progress.isVideoReady = demuxProgress.isVideoReady;
+        progress.isAudioReady = demuxProgress.isAudioReady;
+        progress.isOverallReady = demuxProgress.isOverallReady;
+
+        // 计算总体进度
+        double videoProgress =
+            progress.videoRequiredFrames > 0
+                ? std::min(1.0, (double)progress.videoBufferedFrames /
+                                    progress.videoRequiredFrames)
+                : 1.0;
+        double audioProgress =
+            progress.audioRequiredPackets > 0
+                ? std::min(1.0, (double)progress.audioBufferedPackets /
+                                    progress.audioRequiredPackets)
+                : 1.0;
+
+        if (config_.preBufferConfig.requireBothStreams) {
+            progress.progressPercent = std::min(videoProgress, audioProgress);
+        } else {
+            progress.progressPercent = std::max(videoProgress, audioProgress);
+        }
+    }
+
+    return progress;
+}
+
 bool DecoderController::reopen(const std::string &url)
 {
-    LOG_INFO("开始重连流: {}", url);
+    LOG_INFO("Start reconnect stream: {}", url);
     isReconnecting_.store(true);
 
     // 停止当前解码
@@ -362,9 +445,9 @@ bool DecoderController::reopen(const std::string &url)
     }
 
     if (reopenSuccess) {
-        LOG_INFO("重连成功: {}", url);
+        LOG_INFO("reconnect success: {}", url);
     } else {
-        LOG_ERROR("重连失败: {}", url);
+        LOG_ERROR("reconnect failed: {}", url);
     }
 
     isReconnecting_.store(!reopenSuccess);
@@ -377,7 +460,8 @@ void DecoderController::handleReconnect(const std::string &url)
     const auto checkStopReconnection = [this, url]() {
         // 检查是否需要停止重连
         if (shouldStopReconnect_.load()) {
-            LOG_INFO("收到停止重连信号，终止重连任务: {}", url);
+            LOG_INFO("Receive stop reconnect signal, stop reconnect task: {}",
+                     url);
             isReconnecting_.store(false);
             reconnectAttempts_.store(0);
             return true;
@@ -392,7 +476,7 @@ void DecoderController::handleReconnect(const std::string &url)
 
     if (config_.maxReconnectAttempts >= 0 &&
         reconnectAttempts_ >= config_.maxReconnectAttempts) {
-        LOG_ERROR("达到最大重连次数 {}, 停止重连",
+        LOG_ERROR("Reached max reconnect times {}, stop reconnect!",
                   config_.maxReconnectAttempts);
         reconnectAttempts_.store(0);
         isReconnecting_.store(false);
@@ -400,7 +484,7 @@ void DecoderController::handleReconnect(const std::string &url)
     }
 
     reconnectAttempts_++;
-    LOG_INFO("第 {} 次重连尝试: {}", reconnectAttempts_.load(), url);
+    LOG_INFO("Try to {} reconnect: {}", reconnectAttempts_.load(), url);
 
     if (reopen(url)) {
         reconnectAttempts_.store(0);  // 重连成功，重置计数器
@@ -480,6 +564,11 @@ bool DecoderController::startDecodeInternal(bool reopen)
 
 bool DecoderController::stopDecodeInternal(bool reopen)
 {
+    // 清理预缓冲状态（如果不是重新打开）
+    if (!reopen) {
+        cleanupPreBufferState();
+    }
+
     // 停止解码器，并销毁
     if (videoDecoder_) {
         videoDecoder_->stop();
@@ -496,4 +585,40 @@ bool DecoderController::stopDecodeInternal(bool reopen)
     }
 
     return true;
+}
+
+void DecoderController::onPreBufferReady()
+{
+    preBufferState_ = PreBufferState::Ready;
+
+    // 恢复解码器
+    if (videoDecoder_) {
+        videoDecoder_->setWaitingForPreBuffer(false);
+    }
+    if (audioDecoder_) {
+        audioDecoder_->setWaitingForPreBuffer(false);
+    }
+
+    LOG_INFO("Pre-buffer completed, decoders resumed");
+}
+
+void DecoderController::cleanupPreBufferState()
+{
+    // 重置预缓冲状态
+    preBufferState_ = PreBufferState::Disabled;
+
+    // 清理解码器的预缓冲等待状态
+    if (videoDecoder_) {
+        videoDecoder_->setWaitingForPreBuffer(false);
+    }
+    if (audioDecoder_) {
+        audioDecoder_->setWaitingForPreBuffer(false);
+    }
+
+    // 清理Demuxer的预缓冲回调
+    if (demuxer_) {
+        demuxer_->clearPreBufferCallback();
+    }
+
+    LOG_INFO("Pre-buffer state cleaned up");
 }

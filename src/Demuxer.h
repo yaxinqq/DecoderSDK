@@ -54,6 +54,28 @@ public:
     bool stopRecording();
     bool isRecording() const;
 
+    // 设置预缓冲配置和回调
+    void setPreBufferConfig(int videoFrames, int audioPackets, bool requireBoth,
+                            std::function<void()> onPreBufferReady = nullptr);
+
+    // 检查是否达到预缓冲要求
+    bool isPreBufferReady() const;
+
+    // 获取预缓冲进度
+    struct PreBufferProgress {
+        int videoBufferedFrames;
+        int audioBufferedPackets;
+        int videoRequiredFrames;
+        int audioRequiredPackets;
+        bool isVideoReady;
+        bool isAudioReady;
+        bool isOverallReady;
+    };
+    PreBufferProgress getPreBufferProgress() const;
+
+    // 清理预缓冲回调
+    void clearPreBufferCallback();
+
 protected:
     // 解复用线程
     void demuxLoop();
@@ -65,6 +87,9 @@ private:
     void handleEndOfFile(AVPacket *pkt);
     void distributePacket(AVPacket *pkt);
     void waitForQueueEmpty();
+
+    // 检查预缓冲状态
+    void checkPreBufferStatus();
 
 private:
     // 同步原语
@@ -98,4 +123,12 @@ private:
     bool isRealTime_ = false;
     bool needClose_ = false;
     bool isReopen_ = false;
+
+    // 预缓冲配置
+    int preBufferVideoFrames_ = 0;
+    int preBufferAudioPackets_ = 0;
+    bool requireBothStreams_ = false;
+    std::atomic<bool> preBufferEnabled_{false};
+    std::atomic<bool> preBufferReady_{false};
+    std::function<void()> preBufferReadyCallback_;
 };

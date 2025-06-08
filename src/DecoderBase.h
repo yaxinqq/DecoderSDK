@@ -95,6 +95,12 @@ public:
     // 媒体类型
     virtual AVMediaType type() const = 0;
 
+    // 设置预缓冲等待状态
+    void setWaitingForPreBuffer(bool waiting);
+
+    // 检查是否在等待预缓冲
+    bool isWaitingForPreBuffer() const;
+
 protected:
     // 解码循环
     virtual void decodeLoop() = 0;
@@ -166,4 +172,7 @@ protected:
 
     // 事件分发器
     std::shared_ptr<EventDispatcher> eventDispatcher_;
+
+    // 预缓冲状态
+    std::atomic<bool> waitingForPreBuffer_{false};
 };

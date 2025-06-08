@@ -89,6 +89,12 @@ void VideoDecoder::decodeLoop()
 
     resetStatistics();
     while (isRunning_.load()) {
+        // 如果在等待预缓冲，则暂停解码
+        if (waitingForPreBuffer_.load()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            continue;
+        }
+
         // 检查序列号变化
         if (checkAndUpdateSerial(serial, packetQueue.get())) {
             // 序列号发生变化时，重置下列数据

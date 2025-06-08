@@ -284,6 +284,56 @@ bool Demuxer::isRecording() const
     return mediaRecorder_->isRecording();
 }
 
+void Demuxer::setPreBufferConfig(int videoFrames, int audioPackets,
+                                 bool requireBoth,
+                                 std::function<void()> onPreBufferReady)
+{
+    preBufferVideoFrames_ = videoFrames;
+    preBufferAudioPackets_ = audioPackets;
+    requireBothStreams_ = requireBoth;
+    preBufferEnabled_ = (videoFrames > 0 || audioPackets > 0);
+    preBufferReady_ = false;
+    preBufferReadyCallback_ = onPreBufferReady;
+
+    LOG_INFO("PreBuffer config set: video={}, audio={}, requireBoth={}",
+             videoFrames, audioPackets, requireBoth);
+}
+
+bool Demuxer::isPreBufferReady() const
+{
+    return preBufferReady_.load();
+}
+
+Demuxer::PreBufferProgress Demuxer::getPreBufferProgress() const
+{
+    PreBufferProgress progress{};
+
+    progress.videoRequiredFrames = preBufferVideoFrames_;
+    progress.audioRequiredPackets = preBufferAudioPackets_;
+
+    if (videoPacketQueue_) {
+        progress.videoBufferedFrames = videoPacketQueue_->packetCount();
+        progress.isVideoReady =
+            progress.videoBufferedFrames >= preBufferVideoFrames_;
+    }
+
+    if (audioPacketQueue_) {
+        progress.audioBufferedPackets = audioPacketQueue_->packetCount();
+        progress.isAudioReady =
+            progress.audioBufferedPackets >= preBufferAudioPackets_;
+    }
+
+    if (requireBothStreams_) {
+        progress.isOverallReady =
+            progress.isVideoReady && progress.isAudioReady;
+    } else {
+        progress.isOverallReady =
+            progress.isVideoReady || progress.isAudioReady;
+    }
+
+    return progress;
+}
+
 void Demuxer::start()
 {
     if (isRunning_.load()) {
@@ -312,6 +362,9 @@ void Demuxer::stop()
     }
 
     isRunning_.store(false);
+
+    // 清理预缓冲状态
+    clearPreBufferCallback();
 
     // 唤醒暂停的线程
     pauseCv_.notify_all();
@@ -477,4 +530,61 @@ void Demuxer::waitForQueueEmpty()
 
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
+}
+
+void Demuxer::checkPreBufferStatus()
+{
+    if (!preBufferEnabled_ || preBufferReady_) {
+        return;
+    }
+
+    bool videoReady = true;
+    bool audioReady = true;
+
+    // 检查视频缓冲
+    if (videoStreamIndex_ >= 0 && preBufferVideoFrames_ > 0) {
+        videoReady = videoPacketQueue_ &&
+                     videoPacketQueue_->packetCount() >= preBufferVideoFrames_;
+    }
+
+    // 检查音频缓冲
+    if (audioStreamIndex_ >= 0 && preBufferAudioPackets_ > 0) {
+        audioReady = audioPacketQueue_ &&
+                     audioPacketQueue_->packetCount() >= preBufferAudioPackets_;
+    }
+
+    // 判断是否达到预缓冲要求
+    bool ready = false;
+    if (requireBothStreams_) {
+        ready = videoReady && audioReady;
+    } else {
+        ready = videoReady || audioReady;
+    }
+
+    if (ready && !preBufferReady_) {
+        preBufferReady_ = true;
+        LOG_INFO("PreBuffer ready: video={}/{}, audio={}/{}",
+                 videoPacketQueue_ ? videoPacketQueue_->packetCount() : 0,
+                 preBufferVideoFrames_,
+                 audioPacketQueue_ ? audioPacketQueue_->packetCount() : 0,
+                 preBufferAudioPackets_);
+
+        // 触发预缓冲完成回调
+        if (preBufferReadyCallback_) {
+            try {
+                preBufferReadyCallback_();
+            } catch (const std::exception &e) {
+                LOG_ERROR("Exception in pre-buffer callback: {}", e.what());
+            }
+        }
+    }
+}
+
+void Demuxer::clearPreBufferCallback()
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    preBufferReadyCallback_ = nullptr;
+    preBufferEnabled_ = false;
+    preBufferReady_ = false;
+    LOG_INFO("Pre-buffer callback cleared");
 }
