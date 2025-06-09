@@ -29,6 +29,7 @@ BraceWrapping:
 
 # public/private 顶格
 AccessModifierOffset: -4
+SpacesBeforeTrailingComments: 1
 
 # 控制结构中的空格
 SpaceBeforeParens: ControlStatements
