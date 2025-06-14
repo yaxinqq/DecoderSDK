@@ -6,7 +6,9 @@ DecoderController::DecoderController()
     : eventDispatcher_(std::make_shared<EventDispatcher>()),
       demuxer_(std::make_shared<Demuxer>(eventDispatcher_)),
       syncController_(std::make_shared<SyncController>()),
-      reconnectAttempts_(0)  // 添加重连计数器
+      reconnectAttempts_(0),
+      asyncOpenInProgress_(false),
+      shouldCancelAsyncOpen_(false)
 {
     eventDispatcher_->startAsyncProcessing();
 
@@ -30,11 +32,16 @@ DecoderController::DecoderController()
 
 DecoderController::~DecoderController()
 {
+    // 取消任何正在进行的异步操作
+    cancelAsyncOpen();
     close();
 }
 
 bool DecoderController::open(const std::string &filePath, const Config &config)
 {
+    // 取消任何正在进行的异步打开操作
+    cancelAsyncOpen();
+
     // 停止任何正在进行的重连任务
     shouldStopReconnect_.store(true);
 
@@ -59,8 +66,151 @@ bool DecoderController::open(const std::string &filePath, const Config &config)
     return true;
 }
 
+void DecoderController::openAsync(const std::string &filePath,
+                                  const Config &config,
+                                  AsyncOpenCallback callback)
+{
+    // 取消任何正在进行的异步打开操作
+    cancelAsyncOpen();
+
+    // 保存回调函数
+    {
+        std::lock_guard<std::mutex> lock(asyncCallbackMutex_);
+        asyncOpenCallback_ = callback;
+    }
+
+    // 标记异步操作开始
+    asyncOpenInProgress_.store(true);
+    shouldCancelAsyncOpen_.store(false);
+
+    // 创建异步任务
+    asyncOpenFuture_ =
+        std::async(std::launch::async, [this, filePath, config]() {
+            AsyncOpenResult result = AsyncOpenResult::Failed;
+            bool openSuccess = false;
+            std::string errorMessage;
+
+            try {
+                // 检查是否需要取消
+                if (shouldCancelAsyncOpen_.load()) {
+                    result = AsyncOpenResult::Cancelled;
+                    errorMessage = "Operation was cancelled before starting";
+                } else {
+                    // 执行实际的打开操作
+                    openSuccess = openAsyncInternal(filePath, config);
+
+                    if (shouldCancelAsyncOpen_.load()) {
+                        result = AsyncOpenResult::Cancelled;
+                        errorMessage =
+                            "Operation was cancelled during execution";
+                        // 如果打开成功但被取消，需要关闭
+                        if (openSuccess) {
+                            demuxer_->close();
+                            openSuccess = false;
+                        }
+                    } else if (openSuccess) {
+                        result = AsyncOpenResult::Success;
+                    } else {
+                        result = AsyncOpenResult::Failed;
+                        errorMessage = "Failed to open media file";
+                    }
+                }
+            } catch (const std::exception &e) {
+                result = AsyncOpenResult::Failed;
+                openSuccess = false;
+                errorMessage = std::string("Exception occurred: ") + e.what();
+            }
+
+            // 调用回调函数
+            AsyncOpenCallback callback;
+            {
+                std::lock_guard<std::mutex> lock(asyncCallbackMutex_);
+                callback = asyncOpenCallback_;
+                asyncOpenCallback_ = nullptr; // 清空回调
+            }
+
+            if (callback) {
+                callback(result, openSuccess, errorMessage);
+            }
+
+            // 重置状态
+            asyncOpenInProgress_.store(false);
+        });
+}
+
+void DecoderController::cancelAsyncOpen()
+{
+    if (asyncOpenInProgress_.load()) {
+        // 设置取消标志
+        shouldCancelAsyncOpen_.store(true);
+
+        // 等待异步操作完成（这会触发回调）
+        if (asyncOpenFuture_.valid()) {
+            try {
+                asyncOpenFuture_.wait();
+            } catch (const std::exception &e) {
+                LOG_ERROR(
+                    "Exception while waiting for async open to complete: {}",
+                    e.what());
+            }
+        }
+
+        // 重置状态
+        shouldCancelAsyncOpen_.store(false);
+    }
+}
+
+bool DecoderController::isAsyncOpenInProgress() const
+{
+    return asyncOpenInProgress_.load();
+}
+
+bool DecoderController::openAsyncInternal(const std::string &filePath,
+                                          const Config &config)
+{
+    // 检查是否需要取消
+    if (shouldCancelAsyncOpen_.load()) {
+        return false;
+    }
+
+    // 停止任何正在进行的重连任务
+    shouldStopReconnect_.store(true);
+
+    // 等待重连任务结束
+    while (isReconnecting_.load()) {
+        if (shouldCancelAsyncOpen_.load()) {
+            return false;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+
+    // 再次检查是否需要取消
+    if (shouldCancelAsyncOpen_.load()) {
+        return false;
+    }
+
+    // 重置重连相关状态
+    reconnectAttempts_.store(0);
+    shouldStopReconnect_.store(false);
+    // 重置预加载状态
+    preBufferState_ = PreBufferState::Disabled;
+
+    config_ = config;
+
+    // 检查是否需要取消
+    if (shouldCancelAsyncOpen_.load()) {
+        return false;
+    }
+
+    // 打开媒体文件，并启用解复用器
+    return demuxer_->open(filePath, utils::isRealtime(filePath));
+}
+
 bool DecoderController::close()
 {
+    // 取消任何正在进行的异步打开操作
+    cancelAsyncOpen();
+
     // 停止任何正在进行的重连任务
     shouldStopReconnect_.store(true);
 
@@ -487,7 +637,7 @@ void DecoderController::handleReconnect(const std::string &url)
     LOG_INFO("Try to {} reconnect: {}", reconnectAttempts_.load(), url);
 
     if (reopen(url)) {
-        reconnectAttempts_.store(0);  // 重连成功，重置计数器
+        reconnectAttempts_.store(0); // 重连成功，重置计数器
         isReconnecting_.store(false);
     } else {
         // 重连失败，等待后再次尝试

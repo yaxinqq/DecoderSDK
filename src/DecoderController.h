@@ -1,4 +1,6 @@
 #pragma once
+#include <atomic>
+#include <future>
 #include <memory>
 
 #include "AudioDecoder.h"
@@ -24,9 +26,9 @@ public:
         bool requireFrameInSystemMemory = false;
 
         // 重连配置
-        bool enableAutoReconnect = true;  // 是否启用自动重连
-        int maxReconnectAttempts = -1;    // 最大重连次数
-        int reconnectIntervalMs = 1000;   // 重连间隔(毫秒)
+        bool enableAutoReconnect = true; // 是否启用自动重连
+        int maxReconnectAttempts = -1;   // 最大重连次数
+        int reconnectIntervalMs = 1000;  // 重连间隔(毫秒)
 
         // 预缓冲配置
         struct PreBufferConfig {
@@ -43,12 +45,34 @@ public:
         } preBufferConfig;
     };
 
+    // 异步打开操作的结果状态
+    enum class AsyncOpenResult {
+        Success,  // 成功
+        Failed,   // 失败
+        Cancelled // 被取消
+    };
+    // 异步打开完成的回调函数类型
+    using AsyncOpenCallback =
+        std::function<void(AsyncOpenResult result, bool openSuccess,
+                           const std::string &errorMessage)>;
+
 public:
     DecoderController();
     ~DecoderController();
 
-    // 打开媒体文件
+    // 同步打开媒体文件
     bool open(const std::string &filePath, const Config &config = Config());
+
+    // 异步打开媒体文件
+    void openAsync(const std::string &filePath, const Config &config,
+                   AsyncOpenCallback callback);
+
+    // 取消异步打开操作
+    void cancelAsyncOpen();
+
+    // 检查是否有异步打开操作正在进行
+    bool isAsyncOpenInProgress() const;
+
     bool close();
 
     bool pause();
@@ -103,9 +127,9 @@ public:
     bool removeEventListener(EventType eventType, EventListenerHandle handle);
 
     // 异步事件处理
-    void processAsyncEvents();    // 主线程调用poll
-    void startAsyncProcessing();  // 启动后台线程
-    void stopAsyncProcessing();   // 停止后台线程
+    void processAsyncEvents();   // 主线程调用poll
+    void startAsyncProcessing(); // 启动后台线程
+    void stopAsyncProcessing();  // 停止后台线程
 
     // 状态查询
     bool isAsyncProcessingActive() const;
@@ -123,9 +147,9 @@ public:
 public:
     // 预缓冲状态
     enum class PreBufferState {
-        Disabled,       // 未启用预缓冲
-        WaitingBuffer,  // 等待预缓冲完成
-        Ready,          // 预缓冲完成，正在解码
+        Disabled,      // 未启用预缓冲
+        WaitingBuffer, // 等待预缓冲完成
+        Ready,         // 预缓冲完成，正在解码
     };
 
     // 获取预缓冲状态
@@ -137,7 +161,7 @@ public:
         int audioBufferedPackets;
         int videoRequiredFrames;
         int audioRequiredPackets;
-        double progressPercent;  // 0.0-1.0
+        double progressPercent; // 0.0-1.0
         bool isVideoReady;
         bool isAudioReady;
         bool isOverallReady;
@@ -158,6 +182,9 @@ private:
     // 清理预缓冲状态
     void cleanupPreBufferState();
 
+    // 异步打开的内部实现
+    bool openAsyncInternal(const std::string &filePath, const Config &config);
+
 private:
     // 事件分发
     std::shared_ptr<EventDispatcher> eventDispatcher_;
@@ -176,8 +203,15 @@ private:
     // 重连相关
     std::atomic<int> reconnectAttempts_{0};
     std::atomic_bool isReconnecting_{false};
-    std::atomic_bool shouldStopReconnect_{false};  // 添加重连停止标志
+    std::atomic_bool shouldStopReconnect_{false}; // 添加重连停止标志
 
     // 预缓冲状态
     std::atomic<PreBufferState> preBufferState_{PreBufferState::Disabled};
+
+    // 异步操作相关
+    std::atomic<bool> asyncOpenInProgress_{false};
+    std::atomic<bool> shouldCancelAsyncOpen_{false};
+    std::future<void> asyncOpenFuture_;
+    AsyncOpenCallback asyncOpenCallback_;
+    std::mutex asyncCallbackMutex_; // 保护回调函数的线程安全
 };

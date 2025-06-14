@@ -64,7 +64,7 @@ int main(int argc, char *argv[])
 
     LOG_INFO("开始解码测试...");
     std::string videoPath =
-        (argc > 1) ? argv[1] : "C:/Users/win10/Desktop/test_video/output.mp4";
+        (argc > 1) ? argv[1] : "D:/WorkSpace/test_video/test.mp4";
 
     // std::string videoPath =
     //     (argc > 1) ? argv[1]
@@ -90,7 +90,7 @@ int main(int argc, char *argv[])
         return -1;
     }
     LOG_INFO("打开文件成功: {}", videoPath);
-    manager.setFrameRateControl(true);  // 开启内部帧率控制
+    manager.setFrameRateControl(true); // 开启内部帧率控制
     manager.setSpeed(playbackSpeed);
     manager.startRecording("./output.mp4");
     manager.startDecode();
