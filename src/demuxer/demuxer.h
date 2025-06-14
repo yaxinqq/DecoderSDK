@@ -1,0 +1,231 @@
+#ifndef DECODER_SDK_INTERNAL_DEMUXER_H
+#define DECODER_SDK_INTERNAL_DEMUXER_H
+
+#include <atomic>
+#include <condition_variable>
+#include <memory>
+#include <mutex>
+#include <thread>
+
+extern "C" {
+#include <libavformat/avformat.h>
+}
+
+#include "base/base_define.h"
+#include "base/packet.h"
+#include "event_system/event_dispatcher.h"
+#include "recorder/real_time_stream_recorder.h"
+
+DECODER_SDK_NAMESPACE_BEGIN
+INTERNAL_NAMESPACE_BEGIN
+
+class Demuxer {
+public:
+    /**
+     * @brief 构造函数
+     * @param eventDispatcher 事件分发器
+     */
+    explicit Demuxer(std::shared_ptr<EventDispatcher> eventDispatcher);
+    /**
+     * @brief 析构函数
+     */
+    virtual ~Demuxer();
+
+    // 禁用拷贝构造和拷贝赋值
+    Demuxer(const Demuxer &) = delete;
+    Demuxer &operator=(const Demuxer &) = delete;
+
+    /**
+     * @brief 打开媒体文件
+     * @param url 媒体文件路径
+     * @param isRealTime 是否是实时流
+     * @param isReopen 是否重新打开
+     * @return 是否成功打开
+     */
+    bool open(const std::string &url, bool isRealTime, bool isReopen = false);
+    /**
+     * @brief 关闭媒体文件
+     * @return 是否成功关闭
+     */
+    bool close();
+
+    /**
+     * @brief 暂停解复用
+     * @return 是否成功暂停
+     */
+    bool pause();
+    /**
+     * @brief 恢复解复用
+     * @return 是否成功恢复
+     */
+    bool resume();
+
+    /**
+     * @brief 定位到指定位置
+     * @param position 定位时间点（单位：秒）
+     * @return 是否成功定位
+     */
+    bool seek(double position);
+
+    /**
+     * @brief 格式上下文
+     */
+    AVFormatContext *formatContext() const;
+    /**
+     * @brief 流索引
+     */
+    int streamIndex(AVMediaType mediaType) const;
+    /**
+     * @brief 数据包队列
+     */
+    std::shared_ptr<PacketQueue> packetQueue(AVMediaType mediaType) const;
+
+    /**
+     * @brief 检查是否有视频流
+     * @return 是否有视频流
+     */
+    bool hasVideo() const;
+
+    /**
+     * @brief 检查是否有音频流
+     * @return 是否有音频流
+     */
+    bool hasAudio() const;
+
+    /**
+     * @brief 是否暂停
+     * @return 是否暂停
+     */
+    bool isPaused() const;
+
+    /**
+     * @brief 是否是实时流
+     * @return 是否是实时流
+     */
+    bool isRealTime() const;
+
+    /**
+     * @brief 当前正在播放的路径
+     * @return 路径
+     */
+    std::string url() const;
+
+    /**
+     * @brief 开始录制
+     * @param outputPath 输出文件路径
+     * @return 是否成功开始录制
+     */
+    bool startRecording(const std::string &outputPath);
+    /**
+     * @brief 停止录制
+     * @return 是否成功停止录制
+     */
+    bool stopRecording();
+    /**
+     * @brief 是否正在录制
+     * @return 是否正在录制
+     */
+    bool isRecording() const;
+
+    /**
+     * @brief 设置预缓冲配置
+     * @param videoFrames 视频缓冲帧数
+     * @param audioPackets 音频缓冲包数
+     * @param requireBoth 是否需要同时缓冲视频和音频
+     * @param onPreBufferReady 预缓冲就绪回调
+     */
+    void setPreBufferConfig(int videoFrames, int audioPackets, bool requireBoth,
+                            std::function<void()> onPreBufferReady = nullptr);
+
+    /**
+     * @brief 检查预缓冲状态
+     * @return 是否已达到预缓冲要求
+     */
+    bool isPreBufferReady() const;
+
+    // 获取预缓冲进度
+    PreBufferProgress getPreBufferProgress() const;
+
+    // 清理预缓冲回调
+    void clearPreBufferCallback();
+
+protected:
+    /**
+     * @brief 解复用线程
+     */
+    void demuxLoop();
+
+private:
+    /**
+     * @brief 启动解复用线程
+     */
+    void start();
+    /**
+     * @brief 停止解复用线程
+     */
+    void stop();
+
+    /**
+     * @brief 处理文件结束
+     * @param pkt 数据包
+     */
+    void handleEndOfFile(AVPacket *pkt);
+    /**
+     * @brief 分发数据包
+     * @param pkt 数据包
+     */
+    void distributePacket(AVPacket *pkt);
+    /**
+     * @brief 等待队列清空
+     */
+    void waitForQueueEmpty();
+
+    // 检查预缓冲状态
+    void checkPreBufferStatus();
+
+private:
+    // 同步原语
+    std::mutex mutex_;
+    std::condition_variable pauseCv_;
+
+    // FFmpeg相关
+    AVFormatContext *formatContext_ = nullptr;
+
+    // 数据包队列
+    std::shared_ptr<PacketQueue> videoPacketQueue_;
+    std::shared_ptr<PacketQueue> audioPacketQueue_;
+
+    // 流索引
+    int videoStreamIndex_ = -1;
+    int audioStreamIndex_ = -1;
+
+    // 线程管理
+    std::thread thread_;
+    std::atomic<bool> isRunning_{false};
+    std::atomic<bool> isPaused_{false};
+
+    // 录制器
+    std::unique_ptr<RealTimeStreamRecorder> RealTimeStreamRecorder_;
+
+    // 事件分发器
+    std::shared_ptr<EventDispatcher> eventDispatcher_;
+
+    // 状态信息
+    std::string url_;
+    bool isRealTime_ = false;
+    bool needClose_ = false;
+    bool isReopen_ = false;
+
+    // 预缓冲配置
+    int preBufferVideoFrames_ = 0;
+    int preBufferAudioPackets_ = 0;
+    bool requireBothStreams_ = false;
+    std::atomic<bool> preBufferEnabled_{false};
+    std::atomic<bool> preBufferReady_{false};
+    std::function<void()> preBufferReadyCallback_;
+};
+
+INTERNAL_NAMESPACE_END
+DECODER_SDK_NAMESPACE_END
+
+#endif // DECODER_SDK_INTERNAL_DEMUXER_H

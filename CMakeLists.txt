@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.15)
+cmake_minimum_required(VERSION 3.14)
 project(DecoderSDK)
 
 # Only generate Debug and Release configuration types.
@@ -10,9 +10,9 @@ if (NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE "Release")
 endif ()
 
-# 全局设置
-set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
+# 添加选项控制是否编译examples
+option(BUILD_EXAMPLES "Build example programs" ON)
+option(BUILD_SHARED_LIBS "Build shared libraries" ON)
 
 # 设置编译选项
 if (CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
@@ -30,7 +30,9 @@ endif ()
 # set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/cmake/")
 
 # 设置安装路径
-set(CMAKE_INSTALL_PREFIX "${CMAKE_SOURCE_DIR}/install")
+if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
+    set(CMAKE_INSTALL_PREFIX "${CMAKE_SOURCE_DIR}/install" CACHE PATH "Install path" FORCE)
+endif()
 
 # 设置输出目录
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/output)
@@ -109,7 +111,47 @@ endif()
 # 添加子项目
 # src
 add_subdirectory(src)
-# external
-add_subdirectory(external)
-# resources
-add_subdirectory(resources)
+# examples (可选)
+if(BUILD_EXAMPLES)
+    message(STATUS "Building examples")
+    add_subdirectory(examples)
+else()
+    message(STATUS "Skipping examples")
+endif()
+
+# 创建配置文件
+configure_file(
+    "${CMAKE_SOURCE_DIR}/cmake/DecoderSDKConfig.cmake.in"
+    "${CMAKE_BINARY_DIR}/DecoderSDKConfig.cmake"
+    @ONLY
+)
+
+# 安装配置文件
+install(FILES
+    "${CMAKE_BINARY_DIR}/DecoderSDKConfig.cmake"
+    DESTINATION lib/cmake/DecoderSDK
+)
+
+# 安装依赖的DLL文件（Windows）
+if(WIN32)
+    install(DIRECTORY ${FFMPEG_BIN_DIR}/
+        DESTINATION bin
+        FILES_MATCHING PATTERN "*.dll"
+    )
+    install(DIRECTORY ${SPDLOG_BIN_DIR}/
+        DESTINATION bin
+        FILES_MATCHING PATTERN "*.dll"
+    )
+endif()
+
+# 安装配置文件
+install(FILES
+    "${CMAKE_SOURCE_DIR}/resources/decoderSDK.json"
+    DESTINATION etc
+)
+
+# 安装文档
+install(FILES
+    "${CMAKE_SOURCE_DIR}/README.md"
+    DESTINATION .
+)

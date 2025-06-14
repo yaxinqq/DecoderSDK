@@ -7,7 +7,7 @@ TabWidth: 4
 UseTab: Never
 
 # 行宽限制
-ColumnLimit: 80
+ColumnLimit: 100
 
 # 指针风格
 PointerAlignment: Right
