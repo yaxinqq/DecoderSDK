@@ -9,6 +9,3 @@ file(MAKE_DIRECTORY ${EXAMPLES_OUTPUT_DIR})
 
 # 添加示例子目录
 add_subdirectory(console)
-
-# 可以在这里添加更多示例项目
-# add_subdirectory(other_example)
