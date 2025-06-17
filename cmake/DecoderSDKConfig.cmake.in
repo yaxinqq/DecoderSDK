@@ -12,5 +12,6 @@ include("${CMAKE_CURRENT_LIST_DIR}/DecoderSDKTargets.cmake")
 # 设置变量
 set(DecoderSDK_LIBRARIES DecoderSDK::DecoderSDK)
 set(DecoderSDK_INCLUDE_DIRS "${PACKAGE_PREFIX_DIR}/include")
+set(DecoderSDK_BIN_DIRS "${PACKAGE_PREFIX_DIR}/bin")
 
 check_required_components(DecoderSDK)
