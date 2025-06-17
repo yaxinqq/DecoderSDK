@@ -1,7 +1,7 @@
 #include "include/decodersdk/common_define.h"
 
-#include "base/version.h"
 #include "magic_enum/magic_enum.hpp"
+#include "version.h"
 
 namespace decoder_sdk {
 const char *getVersionString()

@@ -3,6 +3,8 @@
 #include <iomanip>
 #include <sstream>
 
+#include "base_define.h"
+
 DECODER_SDK_NAMESPACE_BEGIN
 INTERNAL_NAMESPACE_BEGIN
 
@@ -21,13 +23,13 @@ const char *getBuildInfo()
     static std::string buildInfo;
     if (buildInfo.empty()) {
         std::ostringstream oss;
-        oss << "DecoderSDK " << DECODER_SDK_VERSION_STRING_FULL << " ("
-            << DECODER_SDK_BUILD_CONFIG << ")\n"
-            << "Built on " << DECODER_SDK_BUILD_DATE << " "
-            << DECODER_SDK_BUILD_TIME << "\n"
+        oss << "DecoderSDK " << DECODER_SDK_VERSION_STRING_FULL << " (" << DECODER_SDK_BUILD_CONFIG
+            << ")\n"
+            << "Built on " << DECODER_SDK_BUILD_DATE << " " << DECODER_SDK_BUILD_TIME << "\n"
             << "Platform: " << DECODER_SDK_PLATFORM << "\n"
-            << "Compiler: " << DECODER_SDK_COMPILER << " ("
-            << DECODER_SDK_COMPILER_VERSION << ")";
+            << "Compiler: " << DECODER_SDK_COMPILER << " (" << DECODER_SDK_COMPILER_VERSION << ")"
+            << "\n"
+            << "Git: " << DECODER_SDK_GIT_HASH;
         buildInfo = oss.str();
     }
     return buildInfo.c_str();

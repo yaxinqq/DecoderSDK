@@ -3,6 +3,12 @@
 # 定义工程名称变量
 set(PROJECT_NAME DecoderSDK)
 
+# Windows特定配置
+if(WIN32)
+    # 启用资源编译器
+    enable_language(RC)
+endif()
+
 # 模块目录配置
 set(MODULE_DIRS
     api
@@ -49,7 +55,35 @@ endif()
 add_library(${PROJECT_NAME} ${LIB_TYPE}
     ${ROOT_SRC}
     ${ALL_MODULE_SOURCES}
+    # 添加Windows资源文件
+    $<$<PLATFORM_ID:Windows>:DecoderSDK.rc>
 )
+
+# Windows特定配置
+if(WIN32)
+    # 启用资源编译器
+    enable_language(RC)
+    
+    # 设置资源文件的包含目录
+    set_property(SOURCE DecoderSDK.rc PROPERTY
+        INCLUDE_DIRECTORIES ${CMAKE_CURRENT_SOURCE_DIR}
+    )
+endif()
+
+# 设置库版本属性
+set_target_properties(${PROJECT_NAME} PROPERTIES
+    VERSION "${DECODER_SDK_VERSION_MAJOR}.${DECODER_SDK_VERSION_MINOR}.${DECODER_SDK_VERSION_PATCH}"
+    SOVERSION "${DECODER_SDK_VERSION_MAJOR}"
+    DEBUG_POSTFIX "d"
+)
+
+# Linux特定的版本信息
+if(UNIX AND NOT APPLE)
+    # 设置RPATH
+    set_target_properties(${PROJECT_NAME} PROPERTIES
+        INSTALL_RPATH_USE_LINK_PATH TRUE
+    )
+endif()
 
 # 设置Debug模式下的库文件名后缀
 set_target_properties(${PROJECT_NAME} PROPERTIES
@@ -71,6 +105,7 @@ target_include_directories(${PROJECT_NAME}
     PRIVATE
         ${CMAKE_SOURCE_DIR}/src
         ${CMAKE_SOURCE_DIR}/external
+        ${CMAKE_BINARY_DIR}/generated
         ${FFMPEG_INCLUDE_DIR}
         ${SPDLOG_INCLUDE_DIR}
         ${JSON_INCLUDE_DIR}

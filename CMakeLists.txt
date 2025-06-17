@@ -10,6 +10,37 @@ if (NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE "Release")
 endif ()
 
+# 在项目开始处定义版本信息
+set(DECODER_SDK_VERSION_MAJOR 1)
+set(DECODER_SDK_VERSION_MINOR 0)
+set(DECODER_SDK_VERSION_PATCH 0)
+set(DECODER_SDK_VERSION_BUILD 0)
+
+# 获取构建时间和Git信息
+string(TIMESTAMP BUILD_DATE "%Y-%m-%d")
+string(TIMESTAMP BUILD_TIME "%H:%M:%S")
+
+# 获取Git哈希值（可选）
+find_package(Git QUIET)
+if(GIT_FOUND)
+    execute_process(
+        COMMAND ${GIT_EXECUTABLE} rev-parse --short HEAD
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+        OUTPUT_VARIABLE GIT_HASH
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET
+    )
+else()
+    set(GIT_HASH "unknown")
+endif()
+
+# 配置版本头文件
+configure_file(
+    "${CMAKE_SOURCE_DIR}/src/base/version.h.in"
+    "${CMAKE_BINARY_DIR}/generated/version.h"
+    @ONLY
+)
+
 # 添加选项控制是否编译examples
 option(BUILD_EXAMPLES "Build example programs" ON)
 option(BUILD_SHARED_LIBS "Build shared libraries" ON)
