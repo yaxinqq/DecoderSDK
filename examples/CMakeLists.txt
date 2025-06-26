@@ -7,5 +7,17 @@ set(EXAMPLES_OUTPUT_DIR ${CMAKE_BINARY_DIR}/examples)
 # 创建示例输出目录
 file(MAKE_DIRECTORY ${EXAMPLES_OUTPUT_DIR})
 
-# 添加示例子目录
-add_subdirectory(console)
+# 根据选项添加示例子目录
+if(BUILD_CONSOLE_EXAMPLE)
+    message(STATUS "Building console example")
+    add_subdirectory(console)
+else()
+    message(STATUS "Skipping console example")
+endif()
+
+if(BUILD_QT_GUI_EXAMPLE)
+    message(STATUS "Building Qt GUI example")
+    add_subdirectory(qt_gui)
+else()
+    message(STATUS "Skipping Qt GUI example")
+endif()

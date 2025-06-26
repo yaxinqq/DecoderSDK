@@ -45,6 +45,9 @@ configure_file(
 option(BUILD_EXAMPLES "Build example programs" ON)
 option(BUILD_SHARED_LIBS "Build shared libraries" ON)
 
+# 添加选项控制具体编译哪些例子
+option(BUILD_CONSOLE_EXAMPLE "Build console example" OFF)
+option(BUILD_QT_GUI_EXAMPLE "Build Qt GUI example" ON)
 # 设置编译选项
 if (CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
     add_compile_options(/Zc:__cplusplus)

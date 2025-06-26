@@ -68,6 +68,14 @@ if(WIN32)
         $<TARGET_FILE_DIR:${EXAMPLE_TARGET}>
         COMMENT "Copying DecoderSDK DLL to example output directory"
     )
+
+    # 复制DecoderSDK库PDB到输出目录
+    add_custom_command(TARGET ${EXAMPLE_TARGET} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        $<TARGET_PDB_FILE:DecoderSDK>
+        $<TARGET_FILE_DIR:${EXAMPLE_TARGET}>
+        COMMENT "Copying DecoderSDK PDB to example output directory"
+    )
 endif()
 
 # 创建images输出目录
