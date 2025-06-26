@@ -21,23 +21,23 @@ public:
     ~DecoderController();
 
     /**
-     * @brief 同步打开媒体文件
+     * @brief 同步打开媒体
      *
-     * @param filePath 媒体文件路径
+     * @param url 媒体路径
      * @param config 配置参数
      * @return true 成功
      * @return false 失败
      */
-    bool open(const std::string &filePath, const Config &config = Config());
+    bool open(const std::string &url, const Config &config = Config());
 
     /**
-     * @brief 异步打开媒体文件
+     * @brief 异步打开媒体
      *
-     * @param filePath 媒体文件路径
+     * @param url 媒体路径
      * @param config 配置参数
      * @param callback 回调函数
      */
-    void openAsync(const std::string &filePath, const Config &config, AsyncOpenCallback callback);
+    void openAsync(const std::string &url, const Config &config, AsyncOpenCallback callback);
 
     /**
      * @brief 关闭解码器
@@ -71,6 +71,12 @@ public:
      * @return true 成功; false 失败
      */
     bool stopDecode();
+    /**
+     * @brief 解码是否已停止
+     *
+     * @return true 已停止; false 未停止
+     */
+    bool isDecodeStopped() const;
 
     /**
      * @brief 定位
@@ -174,7 +180,7 @@ public:
      * @param callback 回调函数
      * @return 全局事件监听器句柄
      */
-    GlobalEventListenerHandle addGlobalEventListener(EventCallback callback);
+    GlobalEventListenerHandle addGlobalEventListener(const std::function<EventCallback> &callback);
     /**
      * @brief 移除全局事件监听器
      *
@@ -189,7 +195,8 @@ public:
      * @param callback 回调函数
      * @return 事件监听器句柄
      */
-    EventListenerHandle addEventListener(EventType eventType, EventCallback callback);
+    EventListenerHandle addEventListener(EventType eventType,
+                                         const std::function<EventCallback> &callback);
     /**
      * @brief 移除事件监听器
      *

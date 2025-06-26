@@ -27,23 +27,23 @@ public:
     ~DecoderController();
 
     /**
-     * @brief 同步打开媒体文件
+     * @brief 同步打开媒体
      *
-     * @param filePath 媒体文件路径
+     * @param url 媒体路径
      * @param config 配置参数
      * @return true 成功
      * @return false 失败
      */
-    bool open(const std::string &filePath, const Config &config = Config());
+    bool open(const std::string &url, const Config &config = Config());
 
     /**
-     * @brief 异步打开媒体文件
+     * @brief 异步打开媒体
      *
-     * @param filePath 媒体文件路径
+     * @param url 媒体路径
      * @param config 配置参数
      * @param callback 回调函数
      */
-    void openAsync(const std::string &filePath, const Config &config, AsyncOpenCallback callback);
+    void openAsync(const std::string &url, const Config &config, AsyncOpenCallback callback);
 
     /**
      * @brief 取消异步打开操作
@@ -89,6 +89,12 @@ public:
      * @return true 成功; false 失败
      */
     bool stopDecode();
+    /**
+     * @brief 解码是否已停止
+     *
+     * @return true 已停止; false 未停止
+     */
+    bool isDecodeStopped() const;
 
     /**
      * @brief 定位
@@ -180,7 +186,7 @@ public:
      * @param callback 回调函数
      * @return 全局事件监听器句柄
      */
-    GlobalEventListenerHandle addGlobalEventListener(EventCallback callback);
+    GlobalEventListenerHandle addGlobalEventListener(const std::function<EventCallback> &callback);
     /**
      * @brief 移除全局事件监听器
      *
@@ -195,7 +201,8 @@ public:
      * @param callback 回调函数
      * @return 事件监听器句柄
      */
-    EventListenerHandle addEventListener(EventType eventType, EventCallback callback);
+    EventListenerHandle addEventListener(EventType eventType,
+                                         const std::function<EventCallback> &callback);
     /**
      * @brief 移除事件监听器
      *
@@ -299,7 +306,7 @@ private:
     std::shared_ptr<AudioDecoder> audioDecoder_;        // 音频解码器
     std::shared_ptr<StreamSyncManager> syncController_; // 流同步管理器
 
-    bool isStartDecoding_ = false; // 当前是否正在解码
+    std::atomic_bool isStartDecoding_ = false; // 当前是否正在解码
 
     Config config_; // 解码器配置项
 
@@ -308,7 +315,7 @@ private:
     std::atomic_bool shouldStopReconnect_{false}; // 添加重连停止标志
 
     // 预缓冲状态
-    std::atomic<PreBufferState> preBufferState_{PreBufferState::Disabled};
+    std::atomic<PreBufferState> preBufferState_{PreBufferState::kDisabled};
 
     std::atomic<bool> asyncOpenInProgress_{false};   // 异步打开操作是否进行中
     std::atomic<bool> shouldCancelAsyncOpen_{false}; // 是否应该取消异步打开操作

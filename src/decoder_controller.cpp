@@ -49,7 +49,7 @@ DecoderController::~DecoderController()
     avformat_network_deinit();
 }
 
-bool DecoderController::open(const std::string &filePath, const Config &config)
+bool DecoderController::open(const std::string &url, const Config &config)
 {
     // 取消任何正在进行的异步打开操作
     cancelAsyncOpen();
@@ -66,19 +66,19 @@ bool DecoderController::open(const std::string &filePath, const Config &config)
     reconnectAttempts_.store(0);
     shouldStopReconnect_.store(false);
     // 重置预加载状态
-    preBufferState_ = PreBufferState::Disabled;
+    preBufferState_ = PreBufferState::kDisabled;
 
     config_ = config;
 
     // 打开媒体文件，并启用解复用器
-    if (!demuxer_->open(filePath, utils::isRealtime(filePath))) {
+    if (!demuxer_->open(url, utils::isRealtime(url))) {
         return false;
     }
 
     return true;
 }
 
-void DecoderController::openAsync(const std::string &filePath, const Config &config,
+void DecoderController::openAsync(const std::string &url, const Config &config,
                                   AsyncOpenCallback callback)
 {
     // 取消任何正在进行的异步打开操作
@@ -95,22 +95,22 @@ void DecoderController::openAsync(const std::string &filePath, const Config &con
     shouldCancelAsyncOpen_.store(false);
 
     // 创建异步任务
-    asyncOpenFuture_ = std::async(std::launch::async, [this, filePath, config]() {
-        AsyncOpenResult result = AsyncOpenResult::Failed;
+    asyncOpenFuture_ = std::async(std::launch::async, [this, url, config]() {
+        AsyncOpenResult result = AsyncOpenResult::kFailed;
         bool openSuccess = false;
         std::string errorMessage;
 
         try {
             // 检查是否需要取消
             if (shouldCancelAsyncOpen_.load()) {
-                result = AsyncOpenResult::Cancelled;
+                result = AsyncOpenResult::kCancelled;
                 errorMessage = "Operation was cancelled before starting";
             } else {
                 // 执行实际的打开操作
-                openSuccess = openAsyncInternal(filePath, config);
+                openSuccess = openAsyncInternal(url, config);
 
                 if (shouldCancelAsyncOpen_.load()) {
-                    result = AsyncOpenResult::Cancelled;
+                    result = AsyncOpenResult::kCancelled;
                     errorMessage = "Operation was cancelled during execution";
                     // 如果打开成功但被取消，需要关闭
                     if (openSuccess) {
@@ -118,14 +118,14 @@ void DecoderController::openAsync(const std::string &filePath, const Config &con
                         openSuccess = false;
                     }
                 } else if (openSuccess) {
-                    result = AsyncOpenResult::Success;
+                    result = AsyncOpenResult::kSuccess;
                 } else {
-                    result = AsyncOpenResult::Failed;
+                    result = AsyncOpenResult::kFailed;
                     errorMessage = "Failed to open media file";
                 }
             }
         } catch (const std::exception &e) {
-            result = AsyncOpenResult::Failed;
+            result = AsyncOpenResult::kFailed;
             openSuccess = false;
             errorMessage = std::string("Exception occurred: ") + e.what();
         }
@@ -199,7 +199,7 @@ bool DecoderController::openAsyncInternal(const std::string &filePath, const Con
     reconnectAttempts_.store(0);
     shouldStopReconnect_.store(false);
     // 重置预加载状态
-    preBufferState_ = PreBufferState::Disabled;
+    preBufferState_ = PreBufferState::kDisabled;
 
     config_ = config;
 
@@ -272,7 +272,7 @@ bool DecoderController::startDecode()
 
     // 如果启用了预缓冲，设置等待状态
     if (config_.preBufferConfig.enablePreBuffer) {
-        preBufferState_ = PreBufferState::WaitingBuffer;
+        preBufferState_ = PreBufferState::kWaitingBuffer;
 
         // 设置解码器等待预缓冲
         if (videoDecoder_) {
@@ -299,6 +299,11 @@ bool DecoderController::startDecode()
 bool DecoderController::stopDecode()
 {
     return stopDecodeInternal(false);
+}
+
+bool DecoderController::isDecodeStopped() const
+{
+    return !isStartDecoding_.load();
 }
 
 bool DecoderController::seek(double position)
@@ -456,7 +461,8 @@ bool DecoderController::isRecording() const
     return demuxer_ && demuxer_->isRecording();
 }
 
-GlobalEventListenerHandle DecoderController::addGlobalEventListener(EventCallback callback)
+GlobalEventListenerHandle DecoderController::addGlobalEventListener(
+    const std::function<EventCallback> &callback)
 {
     return eventDispatcher_->addGlobalEventListener(callback);
 }
@@ -466,7 +472,8 @@ bool DecoderController::removeGlobalEventListener(const GlobalEventListenerHandl
     return eventDispatcher_->removeGlobalEventListener(handle);
 }
 
-EventListenerHandle DecoderController::addEventListener(EventType eventType, EventCallback callback)
+EventListenerHandle DecoderController::addEventListener(
+    EventType eventType, const std::function<EventCallback> &callback)
 {
     return eventDispatcher_->addEventListener(eventType, callback);
 }
@@ -531,7 +538,7 @@ bool DecoderController::reopen(const std::string &url)
     isReconnecting_.store(true);
 
     // 停止当前解码
-    bool wasDecoding = isStartDecoding_;
+    bool wasDecoding = isStartDecoding_.load();
     if (wasDecoding) {
         stopDecodeInternal(true);
     }
@@ -611,7 +618,7 @@ void DecoderController::handleReconnect(const std::string &url)
 bool DecoderController::startDecodeInternal(bool reopen)
 {
     // 如果当前已开始解码，则先停止
-    if (isStartDecoding_) {
+    if (isStartDecoding_.load()) {
         stopDecodeInternal(reopen);
     }
 
@@ -657,7 +664,7 @@ bool DecoderController::startDecodeInternal(bool reopen)
     }
 
     if (!reopen) {
-        isStartDecoding_ = true;
+        isStartDecoding_.store(true);
     }
 
     return true;
@@ -682,7 +689,7 @@ bool DecoderController::stopDecodeInternal(bool reopen)
     }
 
     if (!reopen) {
-        isStartDecoding_ = false;
+        isStartDecoding_.store(false);
     }
 
     return true;
@@ -690,7 +697,7 @@ bool DecoderController::stopDecodeInternal(bool reopen)
 
 void DecoderController::onPreBufferReady()
 {
-    preBufferState_ = PreBufferState::Ready;
+    preBufferState_ = PreBufferState::kReady;
 
     // 恢复解码器
     if (videoDecoder_) {
@@ -706,7 +713,7 @@ void DecoderController::onPreBufferReady()
 void DecoderController::cleanupPreBufferState()
 {
     // 重置预缓冲状态
-    preBufferState_ = PreBufferState::Disabled;
+    preBufferState_ = PreBufferState::kDisabled;
 
     // 清理解码器的预缓冲等待状态
     if (videoDecoder_) {

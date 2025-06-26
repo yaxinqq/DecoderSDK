@@ -52,7 +52,8 @@ bool EventDispatcher::removeEventListener(EventType eventType, EventListenerHand
     return unifiedDispatcher_->removeListener(eventType, realHandle);
 }
 
-GlobalEventListenerHandle EventDispatcher::addGlobalEventListener(EventCallback callback)
+GlobalEventListenerHandle EventDispatcher::addGlobalEventListener(
+    const std::function<EventCallback> &callback)
 {
     GlobalEventListenerHandle handle;
     for (const auto &eventType : allEventTypes()) {

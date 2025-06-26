@@ -384,9 +384,9 @@ struct Config {
 
 // 预缓冲状态
 enum class PreBufferState {
-    Disabled,      // 未启用预缓冲
-    WaitingBuffer, // 等待预缓冲完成
-    Ready,         // 预缓冲完成，正在解码
+    kDisabled,      // 未启用预缓冲
+    kWaitingBuffer, // 等待预缓冲完成
+    kReady,         // 预缓冲完成，正在解码
 };
 
 // 预缓冲进度结构
@@ -404,9 +404,9 @@ struct PreBufferProgress {
 
 // 异步打开操作的结果状态
 enum class AsyncOpenResult {
-    Success,  // 成功
-    Failed,   // 失败
-    Cancelled // 被取消
+    kSuccess,  // 成功
+    kFailed,   // 失败
+    kCancelled // 被取消
 };
 // 异步打开完成的回调函数类型
 using AsyncOpenCallback =

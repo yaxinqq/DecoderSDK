@@ -73,7 +73,7 @@ public:
      * @param callback 回调函数
      * @return GlobalEventListenerHandle 监听器句柄
      */
-    GlobalEventListenerHandle addGlobalEventListener(EventCallback callback);
+    GlobalEventListenerHandle addGlobalEventListener(const std::function<EventCallback> &callback);
 
     /**
      * @brief 移除全局事件监听器

@@ -11,18 +11,18 @@ DecoderController::~DecoderController()
 {
 }
 
-bool DecoderController::open(const std::string &filePath, const Config &config)
+bool DecoderController::open(const std::string &url, const Config &config)
 {
-    return impl_ ? impl_->open(filePath, config) : false;
+    return impl_ ? impl_->open(url, config) : false;
 }
 
-void DecoderController::openAsync(const std::string &filePath, const Config &config,
+void DecoderController::openAsync(const std::string &url, const Config &config,
                                   AsyncOpenCallback callback)
 {
     if (!impl_)
         return;
 
-    impl_->openAsync(filePath, config, callback);
+    impl_->openAsync(url, config, callback);
 }
 
 bool DecoderController::close()
@@ -48,6 +48,11 @@ bool DecoderController::startDecode()
 bool DecoderController::stopDecode()
 {
     return impl_ ? impl_->stopDecode() : false;
+}
+
+bool DecoderController::isDecodeStopped() const
+{
+    return impl_ ? impl_->isDecodeStopped() : false;
 }
 
 bool DecoderController::seek(double position)
@@ -135,7 +140,8 @@ bool DecoderController::isAsyncOpenInProgress() const
     return impl_ ? impl_->isAsyncOpenInProgress() : false;
 }
 
-GlobalEventListenerHandle DecoderController::addGlobalEventListener(EventCallback callback)
+GlobalEventListenerHandle DecoderController::addGlobalEventListener(
+    const std::function<EventCallback> &callback)
 {
     if (!impl_)
         return GlobalEventListenerHandle();
@@ -151,7 +157,8 @@ bool DecoderController::removeGlobalEventListener(const GlobalEventListenerHandl
     return impl_->removeGlobalEventListener(handle);
 }
 
-EventListenerHandle DecoderController::addEventListener(EventType eventType, EventCallback callback)
+EventListenerHandle DecoderController::addEventListener(
+    EventType eventType, const std::function<EventCallback> &callback)
 {
     if (!impl_)
         return EventListenerHandle();
@@ -174,7 +181,7 @@ bool DecoderController::isReconnecting() const
 
 PreBufferState DecoderController::getPreBufferState() const
 {
-    return impl_ ? impl_->getPreBufferState() : PreBufferState::Disabled;
+    return impl_ ? impl_->getPreBufferState() : PreBufferState::kDisabled;
 }
 
 PreBufferProgress DecoderController::getPreBufferProgress() const
