@@ -25,7 +25,7 @@ FrameQueue::~FrameQueue()
     clear();
 }
 
-bool FrameQueue::push(Frame frame, int timeout)
+bool FrameQueue::push(const Frame &frame, int timeout)
 {
     std::unique_lock<std::mutex> lock(mutex_);
 
@@ -37,8 +37,7 @@ bool FrameQueue::push(Frame frame, int timeout)
             return false;
         }
     } else if (timeout > 0) {
-        if (!cond_.wait_for(lock, std::chrono::milliseconds(timeout),
-                            hasSpace)) {
+        if (!cond_.wait_for(lock, std::chrono::milliseconds(timeout), hasSpace)) {
             return false;
         }
     } else {
@@ -90,8 +89,7 @@ Frame *FrameQueue::getWritableFrame(int timeout)
             return nullptr;
         }
     } else if (timeout > 0) {
-        if (!cond_.wait_for(lock, std::chrono::milliseconds(timeout),
-                            hasSpace)) {
+        if (!cond_.wait_for(lock, std::chrono::milliseconds(timeout), hasSpace)) {
             return nullptr;
         }
     } else {
@@ -240,8 +238,7 @@ bool FrameQueue::setMaxCount(int maxCount)
     pendingWriteIndex_ = -1;
 
     // 将保存的帧重新放入队列（如果新容量允许）
-    int framesToRestore =
-        std::min(static_cast<int>(tempFrames.size()), maxCount);
+    int framesToRestore = std::min(static_cast<int>(tempFrames.size()), maxCount);
     for (int i = 0; i < framesToRestore; ++i) {
         queue_[tail_] = std::move(tempFrames[i]);
         tail_ = (tail_ + 1) % maxSize_;
@@ -254,7 +251,7 @@ bool FrameQueue::setMaxCount(int maxCount)
     return true;
 }
 
-bool FrameQueue::pushInternal(Frame frame)
+bool FrameQueue::pushInternal(const Frame &frame)
 {
     // 如果队列满了，移除最旧的帧
     if (size_ == maxSize_) {
@@ -316,8 +313,7 @@ bool FrameQueue::waitForData(std::unique_lock<std::mutex> &lock, int timeout)
     if (timeout == 0) {
         return hasData();
     } else if (timeout > 0) {
-        return cond_.wait_for(lock, std::chrono::milliseconds(timeout),
-                              hasData);
+        return cond_.wait_for(lock, std::chrono::milliseconds(timeout), hasData);
     } else {
         cond_.wait(lock, hasData);
         return true;

@@ -12,7 +12,27 @@ Frame::Frame(std::unique_ptr<internal::Frame> frame) : impl_(std::move(frame))
 {
 }
 
+Frame::Frame(const Frame &other)
+{
+    if (other.impl_) {
+        // 深拷贝internal::Frame
+        impl_ = std::make_unique<internal::Frame>(*other.impl_);
+    }
+}
+
 Frame::~Frame() = default;
+
+Frame &Frame::operator=(const Frame &other)
+{
+    if (this != &other) {
+        if (other.impl_) {
+            impl_ = std::make_unique<internal::Frame>(*other.impl_);
+        } else {
+            impl_.reset();
+        }
+    }
+    return *this;
+}
 
 Frame::Frame(Frame &&other) noexcept = default;
 

@@ -41,7 +41,7 @@ public:
      * >0表示等待指定时间
      * @return 成功返回true，失败返回false
      */
-    bool push(Frame frame, int timeout = -1);
+    bool push(const Frame &frame, int timeout = -1);
 
     /**
      * @brief 弹出一帧
@@ -138,7 +138,7 @@ private:
      * @param frame 要推入的帧
      * @return 成功返回true，失败返回false
      */
-    bool pushInternal(Frame frame);
+    bool pushInternal(const Frame &frame);
     /**
      * @brief 弹出一帧 内部使用
      * @param frame 输出参数，存储弹出的帧

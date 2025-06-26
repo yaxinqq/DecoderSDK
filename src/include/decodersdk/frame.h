@@ -22,10 +22,21 @@ public:
      */
     explicit Frame(std::unique_ptr<internal::Frame> frame);
     /**
+     * @brief 拷贝构造函数
+     * @param other 要拷贝的Frame对象
+     */
+    Frame(const Frame &other);
+    /**
      * @brief 析构函数
      */
     ~Frame();
 
+    /**
+     * @brief 拷贝赋值函数
+     * @param other 要拷贝的Frame对象
+     * @return Frame& 拷贝后的Frame对象
+     */
+    Frame &operator=(const Frame &other);
     /**
      * @brief 移动构造函数
      * @param other 要移动的Frame对象
