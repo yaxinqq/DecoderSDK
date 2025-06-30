@@ -1,7 +1,7 @@
 #pragma once
+
 #include "VideoRender.h"
 
-#include <QMutex>
 #include <QOpenGLBuffer>
 #include <QOpenGLFramebufferObject>
 #include <QOpenGLFunctions>
@@ -10,7 +10,11 @@
 #ifdef _WIN32
 #include <GL/gl.h>
 #include <Windows.h>
+#define D3D11_INTERFACE_DEFINED
+#define D3D11_1_INTERFACE_DEFINED
 #include <d3d11.h>
+#include <d3d11_3.h> // 添加D3D 11.1支持
+#include <dxgi.h>
 
 // 手动定义 WGL 扩展，避免依赖 wglext.h
 #ifndef WGL_NV_DX_interop
@@ -44,58 +48,61 @@ public:
     QOpenGLFramebufferObject *getFrameBuffer(const QSize &size) override;
 
 private:
-    void clearGL();
     bool initializeD3D11();
-    bool initializeWGL();
-    void cleanupD3D11();
-    void cleanupWGL();
+    bool initializeWGLInterop();
+    void cleanup();
+    bool loadWGLExtensions();
+    bool createNV12SharedTextures(ID3D11Texture2D *sourceTexture);
+    bool createPlaneShaderResourceViews(ID3D11Texture2D *nv12Texture);
+    bool registerPlanesWithOpenGL();
+    bool validateOpenGLContext();
+    void clearGL();
+
+    // YUV到RGB转换函数
+    static const char *getYUVToRGBShaderCode();
 
 private:
-    // 纹理同步锁
-    QMutex mtx_;
-
-    // D3D11 相关对象
-    ID3D11Device *d3d11Device_ = nullptr;
-    ID3D11DeviceContext *d3d11Context_ = nullptr;
-
-    // 直接使用源NV12纹理
-    ID3D11Texture2D *sourceTexture_ = nullptr;
-    UINT sourceTextureIndex_ = 0;
-
-    // WGL 互操作相关
-    HANDLE wglD3DDevice_ = nullptr;
-    HANDLE wglD3DTextureHandle_ = nullptr;
-
-    // OpenGL纹理（直接绑定到NV12纹理）
-    GLuint nv12Texture_ = 0;
-
-    // OpenGL 相关对象
-    QOpenGLShaderProgram program_;
-    QOpenGLBuffer vbo_;
-
-    // 视频尺寸
-    int videoWidth_ = 0;
-    int videoHeight_ = 0;
-
-    // 是否需要释放D3D设备
+    // D3D11设备和上下文
+    ID3D11Device *d3d11Device_;
+    ID3D11Device3 *d3d11Device3_; // 添加D3D11.1设备接口
+    ID3D11DeviceContext *d3d11Context_;
     bool ownD3DDevice_ = false;
 
-    // 资源注册失败标志
-    bool resourceRegisteredFailed_ = false;
-
-    // WGL 扩展函数指针
+    // WGL互操作扩展函数指针
     PFNWGLDXOPENDEVICENVPROC wglDXOpenDeviceNV = nullptr;
     PFNWGLDXCLOSEDEVICENVPROC wglDXCloseDeviceNV = nullptr;
     PFNWGLDXREGISTEROBJECTNVPROC wglDXRegisterObjectNV = nullptr;
     PFNWGLDXUNREGISTEROBJECTNVPROC wglDXUnregisterObjectNV = nullptr;
     PFNWGLDXLOCKOBJECTSNVPROC wglDXLockObjectsNV = nullptr;
     PFNWGLDXUNLOCKOBJECTSNVPROC wglDXUnlockObjectsNV = nullptr;
-    
-    // 目标纹理（用于复制纹理数组中的特定索引）
-    ID3D11Texture2D *targetTexture_ = nullptr;
-    UINT targetTextureWidth_ = 0;
-    UINT targetTextureHeight_ = 0;
-    
-    // 新增方法声明
-    bool copyTextureData(ID3D11Texture2D *sourceTexture, UINT textureIndex);
+
+    // NV12双平面纹理资源
+    HANDLE wglD3DDevice_ = nullptr;
+
+    // D3D11 NV12纹理和SRV
+    ID3D11Texture2D *nv12Texture_ = nullptr;
+    ID3D11Texture2D *yTexture_ = nullptr;        // 添加Y平面纹理
+    ID3D11Texture2D *uvTexture_ = nullptr;       // 添加UV平面纹理
+    ID3D11ShaderResourceView1 *ySRV_ = nullptr;  // Y平面SRV
+    ID3D11ShaderResourceView1 *uvSRV_ = nullptr; // UV平面SRV
+
+    // OpenGL纹理
+    GLuint glTextureY_ = 0;  // Y平面OpenGL纹理
+    GLuint glTextureUV_ = 0; // UV平面OpenGL纹理
+
+    // WGL句柄
+    HANDLE wglTextureHandleY_ = nullptr;  // Y平面WGL句柄
+    HANDLE wglTextureHandleUV_ = nullptr; // UV平面WGL句柄
+
+    // 基本参数
+    int videoWidth_ = 0;
+    int videoHeight_ = 0;
+    int currentWidth_ = 0;
+    int currentHeight_ = 0;
+    bool flipHorizontal_ = false;
+    bool flipVertical_ = false;
+
+    // OpenGL资源
+    QOpenGLShaderProgram program_;
+    QOpenGLBuffer vbo_;
 };
