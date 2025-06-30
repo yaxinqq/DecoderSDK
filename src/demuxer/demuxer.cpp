@@ -42,13 +42,15 @@ bool Demuxer::open(const std::string &url, bool isRealTime, bool isReopen)
 
     // 设置FFmpeg选项
     AVDictionary *options = nullptr;
-    av_dict_set(&options, "timeout", "3000000", 0); // 3秒超时
-    av_dict_set(&options, "rtsp_transport", "tcp", 0);
-    av_dict_set(&options, "max_delay", "0.0", 0);
+    av_dict_set(&options, "timeout", "2000000", 0); // 2秒超时
+    av_dict_set(&options, "max_delay", "200000", 0);
     av_dict_set(&options, "buffer_size", "10000000", 0); // 1MB缓冲
+    av_dict_set(&options, "analyzeduration", "1000000", 0);
 
     if (isRealTime) {
+        av_dict_set(&options, "rtsp_transport", "tcp", 0);
         av_dict_set(&options, "fflags", "nobuffer", 0);
+        av_dict_set(&options, "stimeout", "2000000", 0);
     }
 
     // 打开输入
