@@ -349,6 +349,14 @@ struct SyncQualityStats {
 
 // 解码器配置
 struct Config {
+    // 解码的媒体类型
+    enum DecodeMediaType : uint8_t {
+        kVideo = 1, // 视频
+        kAudio = 2, // 音频
+
+        kAll = kVideo | kAudio, // 所有
+    };
+
     // 是否开启帧率控制
     bool enableFrameRateControl = true;
     // 播放速度
@@ -358,9 +366,13 @@ struct Config {
     // 硬件解码器设备索引
     int hwDeviceIndex = 0;
     // 软解时的视频输出格式
-    ImageFormat videoOutFormat = ImageFormat::kYUV420P;
+    ImageFormat swVideoOutFormat = ImageFormat::kYUV420P;
     // 需要解码后的帧位于内存中
     bool requireFrameInSystemMemory = false;
+
+    // 需要解码的媒体类型（如果有视频+音频，但只想解某一类型的媒体数据，建议设置该参数）
+    // 否则可能会因为另外类型媒体数据的PackQueue满队，导致程序阻塞
+    DecodeMediaType decodeMediaType = DecodeMediaType::kAll;
 
     // 重连配置
     bool enableAutoReconnect = true; // 是否启用自动重连

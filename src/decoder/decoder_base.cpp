@@ -293,10 +293,6 @@ void DecoderBase::updateTotalDecodeTime()
 void DecoderBase::setWaitingForPreBuffer(bool waiting)
 {
     waitingForPreBuffer_.store(waiting);
-    if (!waiting) {
-        // 预缓冲完成，唤醒解码线程
-        LOG_INFO("Video decoder: pre-buffer completed, resuming decode.");
-    }
 }
 
 bool DecoderBase::isWaitingForPreBuffer() const

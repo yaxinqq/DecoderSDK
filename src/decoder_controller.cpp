@@ -71,7 +71,7 @@ bool DecoderController::open(const std::string &url, const Config &config)
     config_ = config;
 
     // 打开媒体文件，并启用解复用器
-    if (!demuxer_->open(url, utils::isRealtime(url))) {
+    if (!demuxer_->open(url, utils::isRealtime(url), config.decodeMediaType)) {
         return false;
     }
 
@@ -209,7 +209,7 @@ bool DecoderController::openAsyncInternal(const std::string &filePath, const Con
     }
 
     // 打开媒体文件，并启用解复用器
-    return demuxer_->open(filePath, utils::isRealtime(filePath));
+    return demuxer_->open(filePath, utils::isRealtime(filePath), config.decodeMediaType);
 }
 
 bool DecoderController::close()
@@ -550,7 +550,7 @@ bool DecoderController::reopen(const std::string &url)
     std::this_thread::sleep_for(std::chrono::milliseconds(1000));
 
     // 重新打开流，标记为重连
-    bool reopenSuccess = demuxer_->open(url, utils::isRealtime(url), true);
+    bool reopenSuccess = demuxer_->open(url, utils::isRealtime(url), config_.decodeMediaType, true);
 
     if (reopenSuccess && wasDecoding) {
         // 如果重连成功且之前在解码，则重新开始解码
@@ -626,10 +626,10 @@ bool DecoderController::startDecodeInternal(bool reopen)
     syncController_->resetClocks();
 
     // 创建视频解码器
-    if (demuxer_->hasVideo()) {
+    if (demuxer_->hasVideo() && (config_.decodeMediaType & Config::DecodeMediaType::kVideo)) {
         videoDecoder_ = std::make_shared<VideoDecoder>(demuxer_, syncController_, eventDispatcher_);
         videoDecoder_->init(config_.hwAccelType, config_.hwDeviceIndex,
-                            utils::imageFormat2AVPixelFormat(config_.videoOutFormat),
+                            utils::imageFormat2AVPixelFormat(config_.swVideoOutFormat),
                             config_.requireFrameInSystemMemory);
         videoDecoder_->setFrameRateControl(config_.enableFrameRateControl);
         videoDecoder_->setSpeed(config_.speed);
@@ -639,7 +639,7 @@ bool DecoderController::startDecodeInternal(bool reopen)
     }
 
     // 创建音频解码器
-    if (demuxer_->hasAudio()) {
+    if (demuxer_->hasAudio() && (config_.decodeMediaType & Config::DecodeMediaType::kAudio)) {
         audioDecoder_ = std::make_shared<AudioDecoder>(demuxer_, syncController_, eventDispatcher_);
         audioDecoder_->setSpeed(config_.speed);
         if (!audioDecoder_->open()) {
@@ -648,9 +648,9 @@ bool DecoderController::startDecodeInternal(bool reopen)
     }
 
     // 默认使用音频作为主时钟
-    if (demuxer_->hasAudio()) {
+    if (demuxer_->hasAudio() && audioDecoder_) {
         syncController_->setMaster(MasterClock::kAudio);
-    } else if (demuxer_->hasVideo()) {
+    } else if (demuxer_->hasVideo() && videoDecoder_) {
         syncController_->setMaster(MasterClock::kVideo);
     }
 
@@ -699,15 +699,21 @@ void DecoderController::onPreBufferReady()
 {
     preBufferState_ = PreBufferState::kReady;
 
-    // 恢复解码器
-    if (videoDecoder_) {
-        videoDecoder_->setWaitingForPreBuffer(false);
-    }
-    if (audioDecoder_) {
-        audioDecoder_->setWaitingForPreBuffer(false);
-    }
+    // 检查是否需要自动开启解码
+    if (config_.preBufferConfig.autoStartAfterPreBuffer) {
+        // 恢复解码器
+        if (videoDecoder_) {
+            videoDecoder_->setWaitingForPreBuffer(false);
+        }
+        if (audioDecoder_) {
+            audioDecoder_->setWaitingForPreBuffer(false);
+        }
 
-    LOG_INFO("Pre-buffer completed, decoders resumed");
+        LOG_INFO("Pre-buffer completed, decoders auto-started");
+    } else {
+        // 如果不自动开启，保持等待状态，需要手动调用恢复
+        LOG_INFO("Pre-buffer completed, waiting for manual start");
+    }
 }
 
 void DecoderController::cleanupPreBufferState()
@@ -727,8 +733,6 @@ void DecoderController::cleanupPreBufferState()
     if (demuxer_) {
         demuxer_->clearPreBufferCallback();
     }
-
-    LOG_INFO("Pre-buffer state cleaned up");
 }
 
 INTERNAL_NAMESPACE_END

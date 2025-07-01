@@ -39,10 +39,12 @@ public:
      * @brief 打开媒体文件
      * @param url 媒体文件路径
      * @param isRealTime 是否是实时流
+     * @param decodeMediaType 解码的媒体类型
      * @param isReopen 是否重新打开
      * @return 是否成功打开
      */
-    bool open(const std::string &url, bool isRealTime, bool isReopen = false);
+    bool open(const std::string &url, bool isRealTime, Config::DecodeMediaType decodeMediaType,
+              bool isReopen = false);
     /**
      * @brief 关闭媒体文件
      * @return 是否成功关闭

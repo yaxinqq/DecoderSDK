@@ -27,7 +27,8 @@ Demuxer::~Demuxer()
     close();
 }
 
-bool Demuxer::open(const std::string &url, bool isRealTime, bool isReopen)
+bool Demuxer::open(const std::string &url, bool isRealTime, Config::DecodeMediaType decodeMediaType,
+                   bool isReopen)
 {
     std::lock_guard<std::mutex> lock(mutex_);
 
@@ -82,10 +83,10 @@ bool Demuxer::open(const std::string &url, bool isRealTime, bool isReopen)
     audioStreamIndex_ = av_find_best_stream(formatContext_, AVMEDIA_TYPE_AUDIO, -1, -1, nullptr, 0);
 
     // 创建数据包队列
-    if (videoStreamIndex_ >= 0) {
+    if (videoStreamIndex_ >= 0 && (decodeMediaType & Config::DecodeMediaType::kVideo)) {
         videoPacketQueue_ = std::make_shared<PacketQueue>(1000);
     }
-    if (audioStreamIndex_ >= 0) {
+    if (audioStreamIndex_ >= 0 && (decodeMediaType & Config::DecodeMediaType::kAudio)) {
         audioPacketQueue_ = std::make_shared<PacketQueue>(1000);
     }
 
@@ -582,7 +583,6 @@ void Demuxer::clearPreBufferCallback()
     preBufferReadyCallback_ = nullptr;
     preBufferEnabled_ = false;
     preBufferReady_ = false;
-    LOG_INFO("Pre-buffer callback cleared");
 }
 
 INTERNAL_NAMESPACE_END
