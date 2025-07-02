@@ -31,14 +31,9 @@ public:
 
     /**
      * @brief 初始化视频解码器
-     * @param type 硬件加速类型
-     * @param deviceIndex 设备索引
-     * @param softPixelFormat 软件像素格式
-     * @param requireFrameInMemory 是否需要将解码后的帧存储在内存中
+     * @param config 配置参数项
      */
-    void init(HWAccelType type = HWAccelType::kAuto, int deviceIndex = 0,
-              AVPixelFormat softPixelFormat = AV_PIX_FMT_YUV420P,
-              bool requireFrameInMemory = false);
+    void init(const Config &config);
 
     /**
      * @brief 打开视频解码器
@@ -112,6 +107,8 @@ private:
     AVPixelFormat softPixelFormat_ = AV_PIX_FMT_YUV420P;
     // 是否需要在内存
     bool requireFrameInMemory_ = false;
+    // 硬件上下文创建回调
+    CreateHWContextCallback hwContextCallbeck_ = nullptr;
 
     // 复用的转换上下文和帧
     SwsContext *swsCtx_ = nullptr;

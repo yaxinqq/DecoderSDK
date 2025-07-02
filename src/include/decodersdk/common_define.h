@@ -348,6 +348,7 @@ struct SyncQualityStats {
 #pragma region Controller
 
 // 解码器配置
+using CreateHWContextCallback = std::function<void *(HWAccelType type)>;
 struct Config {
     // 解码的媒体类型
     enum DecodeMediaType : uint8_t {
@@ -373,6 +374,13 @@ struct Config {
     // 需要解码的媒体类型（如果有视频+音频，但只想解某一类型的媒体数据，建议设置该参数）
     // 否则可能会因为另外类型媒体数据的PackQueue满队，导致程序阻塞
     DecodeMediaType decodeMediaType = DecodeMediaType::kAll;
+
+    // 硬件上下文创建回调。
+    // 每次创建解码器时，会调用一次回调，用于获取当前所选解码类型对应的硬件上下文。
+    // 若希望多个解码器共用同一个上下文，请自行缓存并复用上下文指针。上下文指针由上层管理。
+    // 如果未传入回调或是回调返回空指针，则由解码库自行创建。
+    // 目前只建议D3D11和DXVA2的硬件上下文由用户自己管理。其它情况由库内部接管
+    CreateHWContextCallback createHwContextCallback = nullptr;
 
     // 重连配置
     bool enableAutoReconnect = true; // 是否启用自动重连

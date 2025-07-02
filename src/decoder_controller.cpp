@@ -628,9 +628,7 @@ bool DecoderController::startDecodeInternal(bool reopen)
     // 创建视频解码器
     if (demuxer_->hasVideo() && (config_.decodeMediaType & Config::DecodeMediaType::kVideo)) {
         videoDecoder_ = std::make_shared<VideoDecoder>(demuxer_, syncController_, eventDispatcher_);
-        videoDecoder_->init(config_.hwAccelType, config_.hwDeviceIndex,
-                            utils::imageFormat2AVPixelFormat(config_.swVideoOutFormat),
-                            config_.requireFrameInSystemMemory);
+        videoDecoder_->init(config_);
         videoDecoder_->setFrameRateControl(config_.enableFrameRateControl);
         videoDecoder_->setSpeed(config_.speed);
         if (!videoDecoder_->open()) {

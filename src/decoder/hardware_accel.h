@@ -41,9 +41,11 @@ public:
      * @brief 初始化硬件加速
      * @param type 硬件加速类型
      * @param deviceIndex 设备索引
+     * @param callback 创建硬件上下文的回调
      * @return 是否初始化成功
      */
-    bool init(HWAccelType type = HWAccelType::kAuto, int deviceIndex = 0);
+    bool init(HWAccelType type = HWAccelType::kAuto, int deviceIndex = 0,
+              const CreateHWContextCallback &callback = nullptr);
 
     /**
      * @brief 设置解码器上下文
@@ -128,7 +130,7 @@ public:
      * @brief 获取支持的硬件加速类型列表
      * @return 硬件加速类型列表
      */
-    static std::vector<HWAccelInfo> getSupportedHWAccelTypes();
+    static const std::vector<HWAccelInfo> &getSupportedHWAccelTypes();
 
     /**
      * @brief 获取硬件加速类型名称
@@ -171,15 +173,40 @@ private:
      * @brief 初始化硬件设备
      * @param deviceType 设备类型
      * @param deviceIndex 设备索引
+     * @param callback 创建硬件上下文的回调
      * @return 是否初始化成功
      */
-    bool initHWDevice(AVHWDeviceType deviceType, int deviceIndex);
+    bool initHWDevice(AVHWDeviceType deviceType, int deviceIndex,
+                      const CreateHWContextCallback &callback = nullptr);
 
     /**
      * @brief 查找最佳硬件加速类型
      * @return 最佳硬件加速类型
      */
     AVHWDeviceType findBestHWAccelType();
+
+    /**
+     * @brief 判断硬件加速类型是否可用
+     * @param type 硬件加速类型
+     * @return 是否可用
+     */
+    bool isAvailableHWAccelType(HWAccelType type) const;
+
+    /**
+     * @brief 验证用户提供的硬件上下文类型
+     * @param userContext 用户提供的硬件上下文
+     * @param expectedType 期望的硬件设备类型
+     * @return 是否类型匹配且有效
+     */
+    bool validateUserHWContext(void *userContext, AVHWDeviceType expectedType);
+
+    /**
+     * @brief 从用户上下文创建FFmpeg的hwdevice_ctx
+     * @param userContext 用户提供的硬件上下文
+     * @param deviceType 硬件设备类型
+     * @return 创建结果，0表示成功，负值表示错误
+     */
+    int createHWDeviceFromUserContext(void *userContext, AVHWDeviceType deviceType);
 
     /**
      * @brief 获取硬件像素格式
@@ -217,10 +244,12 @@ public:
      * @brief 创建硬件加速上下文
      * @param type 硬件加速类型
      * @param deviceIndex 设备索引
+     * @param callback 创建硬件上下文的回调
      * @return 硬件加速上下文指针
      */
-    std::shared_ptr<HardwareAccel> createHardwareAccel(HWAccelType type = HWAccelType::kAuto,
-                                                       int deviceIndex = 0);
+    std::shared_ptr<HardwareAccel> createHardwareAccel(
+        HWAccelType type = HWAccelType::kAuto, int deviceIndex = 0,
+        const CreateHWContextCallback &callback = nullptr);
 
     /**
      * @brief 获取支持的硬件加速类型列表

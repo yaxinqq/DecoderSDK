@@ -6,10 +6,26 @@
 #include "utils/common_utils.h"
 #include "version.h"
 
-#ifdef PLATFORM_IS_WINDOWS
+#ifdef D3D11VA_AVAILABLE
 #include <d3d11.h>
+#include <wrl/client.h>
+using Microsoft::WRL::ComPtr;
 extern "C" {
 #include <libavutil/hwcontext_d3d11va.h>
+}
+#endif
+
+#ifdef DXVA2_AVAILABLE
+#include <d3d9.h>
+#include <dxva2api.h>
+extern "C" {
+#include <libavutil/hwcontext_dxva2.h>
+}
+#endif
+
+#ifdef CUDA_AVAILABLE
+extern "C" {
+#include <libavutil/hwcontext_cuda.h>
 }
 #endif
 
@@ -58,7 +74,8 @@ HardwareAccel::~HardwareAccel()
     initialized_ = false;
 }
 
-bool HardwareAccel::init(HWAccelType type, int deviceIndex)
+bool HardwareAccel::init(HWAccelType type, int deviceIndex, const CreateHWContextCallback &callback)
+
 {
     std::lock_guard<std::mutex> lock(mutex_);
 
@@ -88,12 +105,7 @@ bool HardwareAccel::init(HWAccelType type, int deviceIndex)
         type_ = fromAVHWDeviceType(deviceType);
     } else {
         deviceType = toAVHWDeviceType(type_);
-
-        // 检查指定的硬件加速类型是否可用
-        AVBufferRef *testDeviceCtx = nullptr;
-        int ret = av_hwdevice_ctx_create(&testDeviceCtx, deviceType, nullptr, nullptr, 0);
-        if (ret < 0) {
-            // Todo: 输出软解退化提示信息
+        if (!isAvailableHWAccelType(type)) {
             // 回退到软解
             type_ = HWAccelType::kNone;
             return true;
@@ -101,7 +113,7 @@ bool HardwareAccel::init(HWAccelType type, int deviceIndex)
     }
 
     // 初始化硬件设备
-    if (!initHWDevice(deviceType, deviceIndex_)) {
+    if (!initHWDevice(deviceType, deviceIndex_, callback)) {
         LOG_WARN("Failed to initialize hardware device: {}", getHWAccelTypeName(type_));
         return false;
     }
@@ -249,66 +261,73 @@ std::string HardwareAccel::getDeviceDescription() const
     return getHWAccelTypeDescription(type_);
 }
 
-std::vector<HWAccelInfo> HardwareAccel::getSupportedHWAccelTypes()
+const std::vector<HWAccelInfo> &HardwareAccel::getSupportedHWAccelTypes()
 {
-    std::vector<HWAccelInfo> result;
+    static std::vector<HWAccelInfo> result;
+    static std::once_flag initialized;
 
-    // 遍历所有硬件设备类型
-    AVHWDeviceType type = AV_HWDEVICE_TYPE_NONE;
-    while ((type = av_hwdevice_iterate_types(type)) != AV_HWDEVICE_TYPE_NONE) {
-        const auto sdkHwType = fromAVHWDeviceType(type);
-        if (sdkHwType == HWAccelType::kNone)
-            continue;
+    std::call_once(initialized, []() {
+        LOG_INFO("Start detecting currently supported device types...");
 
-        HWAccelInfo info;
-        info.type = sdkHwType;
-        info.name = av_hwdevice_get_type_name(type);
-        info.description = getHWAccelTypeDescription(fromAVHWDeviceType(type));
+        // 遍历所有硬件设备类型
+        AVHWDeviceType type = AV_HWDEVICE_TYPE_NONE;
+        while ((type = av_hwdevice_iterate_types(type)) != AV_HWDEVICE_TYPE_NONE) {
+            const auto sdkHwType = fromAVHWDeviceType(type);
+            if (sdkHwType == HWAccelType::kNone)
+                continue;
 
-        // 检查是否可用
-        AVBufferRef *hwDeviceCtx = nullptr;
-        int ret = av_hwdevice_ctx_create(&hwDeviceCtx, type, nullptr, nullptr, 0);
-        info.available = (ret >= 0);
-        if (info.available) {
-            // 获取硬件像素格式
-            const auto hwPixelFormat = getHWPixelFormatForDevice(type);
-            info.hwFormat = utils::avPixelFormat2ImageFormat(hwPixelFormat);
+            HWAccelInfo info;
+            info.type = sdkHwType;
+            info.name = av_hwdevice_get_type_name(type);
+            info.description = getHWAccelTypeDescription(fromAVHWDeviceType(type));
 
-            // 获取支持的软件像素格式
-            if (hwPixelFormat != AV_PIX_FMT_NONE) {
-                AVBufferRef *hwFramesCtx = nullptr;
-                AVHWFramesContext *hwFramesCtxData = nullptr;
+            // 检查是否可用
+            AVBufferRef *hwDeviceCtx = nullptr;
+            int ret = av_hwdevice_ctx_create(&hwDeviceCtx, type, nullptr, nullptr, 0);
+            info.available = (ret >= 0);
+            if (info.available) {
+                // 获取硬件像素格式
+                const auto hwPixelFormat = getHWPixelFormatForDevice(type);
+                info.hwFormat = utils::avPixelFormat2ImageFormat(hwPixelFormat);
 
-                hwFramesCtx = av_hwframe_ctx_alloc(hwDeviceCtx);
-                if (hwFramesCtx) {
-                    hwFramesCtxData = (AVHWFramesContext *)hwFramesCtx->data;
-                    hwFramesCtxData->format = hwPixelFormat;
-                    hwFramesCtxData->sw_format = AV_PIX_FMT_NV12;
-                    hwFramesCtxData->width = 1920;
-                    hwFramesCtxData->height = 1080;
+                // 获取支持的软件像素格式
+                if (hwPixelFormat != AV_PIX_FMT_NONE) {
+                    AVBufferRef *hwFramesCtx = nullptr;
+                    AVHWFramesContext *hwFramesCtxData = nullptr;
 
-                    ret = av_hwframe_ctx_init(hwFramesCtx);
-                    if (ret >= 0) {
-                        AVHWFramesConstraints *constraints =
-                            av_hwdevice_get_hwframe_constraints(hwDeviceCtx, nullptr);
-                        if (constraints) {
-                            for (const AVPixelFormat *p = constraints->valid_sw_formats;
-                                 p && *p != AV_PIX_FMT_NONE; p++) {
-                                info.swFormats.push_back(utils::avPixelFormat2ImageFormat(*p));
+                    hwFramesCtx = av_hwframe_ctx_alloc(hwDeviceCtx);
+                    if (hwFramesCtx) {
+                        hwFramesCtxData = (AVHWFramesContext *)hwFramesCtx->data;
+                        hwFramesCtxData->format = hwPixelFormat;
+                        hwFramesCtxData->sw_format = AV_PIX_FMT_NV12;
+                        hwFramesCtxData->width = 1920;
+                        hwFramesCtxData->height = 1080;
+
+                        ret = av_hwframe_ctx_init(hwFramesCtx);
+                        if (ret >= 0) {
+                            AVHWFramesConstraints *constraints =
+                                av_hwdevice_get_hwframe_constraints(hwDeviceCtx, nullptr);
+                            if (constraints) {
+                                for (const AVPixelFormat *p = constraints->valid_sw_formats;
+                                     p && *p != AV_PIX_FMT_NONE; p++) {
+                                    info.swFormats.push_back(utils::avPixelFormat2ImageFormat(*p));
+                                }
+                                av_hwframe_constraints_free(&constraints);
                             }
-                            av_hwframe_constraints_free(&constraints);
                         }
-                    }
 
-                    av_buffer_unref(&hwFramesCtx);
+                        av_buffer_unref(&hwFramesCtx);
+                    }
                 }
+
+                av_buffer_unref(&hwDeviceCtx);
             }
 
-            av_buffer_unref(&hwDeviceCtx);
+            result.push_back(info);
         }
 
-        result.push_back(info);
-    }
+        LOG_INFO("End detecting currently supported device types! ");
+    });
 
     return result;
 }
@@ -468,7 +487,8 @@ AVPixelFormat HardwareAccel::getHWPixelFormat(AVCodecContext *codecCtx,
     return AV_PIX_FMT_NONE;
 }
 
-bool HardwareAccel::initHWDevice(AVHWDeviceType deviceType, int deviceIndex)
+bool HardwareAccel::initHWDevice(AVHWDeviceType deviceType, int deviceIndex,
+                                 const CreateHWContextCallback &callback)
 {
     if (deviceType == AV_HWDEVICE_TYPE_NONE) {
         return false;
@@ -480,7 +500,46 @@ bool HardwareAccel::initHWDevice(AVHWDeviceType deviceType, int deviceIndex)
         snprintf(deviceName, sizeof(deviceName), "%d", deviceIndex);
     }
 
-    // 创建硬件设备上下文
+    // 尝试通过用户回调获取硬件设备上下文
+    if (callback) {
+        try {
+            // 将AVHWDeviceType转换为HWAccelType用于回调
+            HWAccelType sdkType = fromAVHWDeviceType(deviceType);
+            void *userHwContext = callback(sdkType);
+
+            if (userHwContext) {
+                // 验证用户提供的硬件上下文类型是否匹配
+                if (validateUserHWContext(userHwContext, deviceType)) {
+                    // 从用户提供的硬件上下文创建FFmpeg的hwdevice_ctx
+                    int ret = createHWDeviceFromUserContext(userHwContext, deviceType);
+                    if (ret >= 0) {
+                        LOG_INFO(
+                            "Successfully created hardware device context from user callback!");
+                        return true;
+                    } else {
+                        LOG_WARN(
+                            "Failed to create FFmpeg hwdevice_ctx from user context, falling back "
+                            "to default creation!");
+                    }
+                } else {
+                    LOG_WARN(
+                        "User provided hardware context type mismatch for {}, falling back to "
+                        "default creation!",
+                        av_hwdevice_get_type_name(deviceType));
+                }
+            } else {
+                LOG_DEBUG("User callback returned null context, falling back to default creation!");
+            }
+        } catch (const std::exception &e) {
+            LOG_WARN("Exception caught from user callback: {}, falling back to default creation!",
+                     e.what());
+        } catch (...) {
+            LOG_WARN(
+                "Unknown exception caught from user callback, falling back to default creation!");
+        }
+    }
+
+    // Fallback: 使用FFmpeg的默认创建流程
     int ret = av_hwdevice_ctx_create(&hwDeviceCtx_, deviceType, deviceName, nullptr, 0);
     if (ret < 0) {
         char errBuf[AV_ERROR_MAX_STRING_SIZE];
@@ -489,7 +548,150 @@ bool HardwareAccel::initHWDevice(AVHWDeviceType deviceType, int deviceIndex)
         return false;
     }
 
+    LOG_INFO("Successfully created hardware device context using FFmpeg default creation");
     return true;
+}
+
+bool HardwareAccel::validateUserHWContext(void *userContext, AVHWDeviceType expectedType)
+{
+    if (!userContext) {
+        return false;
+    }
+
+    switch (expectedType) {
+#ifdef D3D11VA_AVAILABLE
+        case AV_HWDEVICE_TYPE_D3D11VA: {
+            // 检查是否为有效的ID3D11Device指针
+            try {
+                ID3D11Device *d3dDevice = static_cast<ID3D11Device *>(userContext);
+                if (d3dDevice) {
+                    ComPtr<IUnknown> test;
+                    const HRESULT hr = d3dDevice->QueryInterface(
+                        __uuidof(IUnknown), reinterpret_cast<void **>(test.GetAddressOf()));
+                    return SUCCEEDED(hr);
+                }
+            } catch (...) {
+                return false;
+            }
+            break;
+        }
+#endif
+#ifdef DXVA2_AVAILABLE
+        case AV_HWDEVICE_TYPE_DXVA2: {
+            // 检查是否为有效的IDirect3DDeviceManager9指针
+            // 检查是否为有效的ID3D11Device指针
+            try {
+                IDirect3DDeviceManager9 *mgr = static_cast<IDirect3DDeviceManager9 *>(userContext);
+                if (mgr) {
+                    ComPtr<IUnknown> test;
+                    const HRESULT hr = mgr->QueryInterface(
+                        __uuidof(IUnknown), reinterpret_cast<void **>(test.GetAddressOf()));
+                    return SUCCEEDED(hr);
+                }
+            } catch (...) {
+                return false;
+            }
+            break;
+        }
+#endif
+#ifdef CUDA_AVAILABLE
+        case AV_HWDEVICE_TYPE_CUDA: {
+            // 检查是否为有效的CUcontext，CUDA上下文验证需要CUDA运行时API
+            // 暂时不建议上层接管，线程管理很复杂
+            CUcontext cuContext = static_cast<CUcontext>(userContext);
+            return cuContext != nullptr;
+        }
+#endif
+#ifdef VAAPI_AVAILABLE
+        case AV_HWDEVICE_TYPE_VAAPI: {
+            // 检查是否为有效的VADisplay
+            VADisplay vaDisplay = static_cast<VADisplay>(userContext);
+            return vaDisplay != nullptr;
+        }
+#endif
+        default:
+            // 对于其他类型，进行基本的非空检查
+            return userContext != nullptr;
+    }
+
+    return false;
+}
+
+int HardwareAccel::createHWDeviceFromUserContext(void *userContext, AVHWDeviceType deviceType)
+{
+    if (!userContext) {
+        return AVERROR(EINVAL);
+    }
+
+    // 创建硬件设备上下文
+    hwDeviceCtx_ = av_hwdevice_ctx_alloc(deviceType);
+    if (!hwDeviceCtx_) {
+        return AVERROR(ENOMEM);
+    }
+
+    AVHWDeviceContext *deviceContext = (AVHWDeviceContext *)hwDeviceCtx_->data;
+
+    switch (deviceType) {
+#ifdef D3D11VA_AVAILABLE
+        case AV_HWDEVICE_TYPE_D3D11VA: {
+            AVD3D11VADeviceContext *d3d11Context = (AVD3D11VADeviceContext *)deviceContext->hwctx;
+            ID3D11Device *d3dDevice = static_cast<ID3D11Device *>(userContext);
+
+            // 增加引用计数，因为FFmpeg会管理这个引用
+            d3dDevice->AddRef();
+            d3d11Context->device = d3dDevice;
+
+            break;
+        }
+#endif
+#ifdef DXVA2_AVAILABLE
+        case AV_HWDEVICE_TYPE_DXVA2: {
+            AVDXVA2DeviceContext *dxva2Context = (AVDXVA2DeviceContext *)deviceContext->hwctx;
+            IDirect3DDeviceManager9 *deviceManager =
+                static_cast<IDirect3DDeviceManager9 *>(userContext);
+
+            // 增加引用计数
+            deviceManager->AddRef();
+            dxva2Context->devmgr = deviceManager;
+
+            break;
+        }
+#endif
+#ifdef CUDA_AVAILABLE
+        case AV_HWDEVICE_TYPE_CUDA: {
+            AVCUDADeviceContext *cudaContext = (AVCUDADeviceContext *)deviceContext->hwctx;
+            CUcontext cuContext = static_cast<CUcontext>(userContext);
+
+            cudaContext->cuda_ctx = cuContext;
+            // 注意：CUDA上下文的生命周期由用户管理，这里不需要额外的引用计数
+
+            break;
+        }
+#endif
+#ifdef VAAPI_AVAILABLE
+        case AV_HWDEVICE_TYPE_VAAPI: {
+            AVVAAPIDeviceContext *vaapiContext = (AVVAAPIDeviceContext *)deviceContext->hwctx;
+            VADisplay vaDisplay = static_cast<VADisplay>(userContext);
+
+            vaapiContext->display = vaDisplay;
+            // VAAPI显示的生命周期由用户管理
+
+            break;
+        }
+#endif
+        default:
+            av_buffer_unref(&hwDeviceCtx_);
+            return AVERROR(ENOSYS);
+    }
+
+    // 初始化硬件设备上下文
+    int ret = av_hwdevice_ctx_init(hwDeviceCtx_);
+    if (ret < 0) {
+        av_buffer_unref(&hwDeviceCtx_);
+        return ret;
+    }
+
+    return 0;
 }
 
 AVHWDeviceType HardwareAccel::findBestHWAccelType()
@@ -500,16 +702,23 @@ AVHWDeviceType HardwareAccel::findBestHWAccelType()
         AV_HWDEVICE_TYPE_QSV,         AV_HWDEVICE_TYPE_VAAPI, AV_HWDEVICE_TYPE_VDPAU,
         AV_HWDEVICE_TYPE_VIDEOTOOLBOX};
 
-    for (AVHWDeviceType type : priorityList) {
-        AVBufferRef *hwDeviceCtx = nullptr;
-        int ret = av_hwdevice_ctx_create(&hwDeviceCtx, type, nullptr, nullptr, 0);
-        if (ret >= 0) {
-            av_buffer_unref(&hwDeviceCtx);
+    for (const AVHWDeviceType &type : priorityList) {
+        if (isAvailableHWAccelType(fromAVHWDeviceType(type))) {
             return type;
         }
     }
 
     return AV_HWDEVICE_TYPE_NONE;
+}
+
+bool HardwareAccel::isAvailableHWAccelType(HWAccelType type) const
+{
+    const auto &supportedType = getSupportedHWAccelTypes();
+    const auto findIter = std::find_if(
+        supportedType.begin(), supportedType.end(),
+        [type](const HWAccelInfo &info) { return info.available && info.type == type; });
+
+    return findIter != supportedType.end();
 }
 
 AVPixelFormat HardwareAccel::getHWPixelFormatForDevice(AVHWDeviceType deviceType)
@@ -544,11 +753,11 @@ HardwareAccelFactory &HardwareAccelFactory::getInstance()
     return instance;
 }
 
-std::shared_ptr<HardwareAccel> HardwareAccelFactory::createHardwareAccel(HWAccelType type,
-                                                                         int deviceIndex)
+std::shared_ptr<HardwareAccel> HardwareAccelFactory::createHardwareAccel(
+    HWAccelType type, int deviceIndex, const CreateHWContextCallback &callback)
 {
     auto hwAccel = std::make_shared<HardwareAccel>();
-    if (hwAccel->init(type, deviceIndex)) {
+    if (hwAccel->init(type, deviceIndex, callback)) {
         return hwAccel;
     }
     return nullptr;

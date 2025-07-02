@@ -117,6 +117,27 @@ target_include_directories(${PROJECT_NAME}
         $<INSTALL_INTERFACE:include>
 )
 
+# 如果CUDA可用，添加CUDA包含目录
+if(CUDA_FOUND)
+    target_include_directories(${PROJECT_NAME} PRIVATE ${CUDA_INCLUDE_DIR})
+endif()
+
+# 如果QSV可用，添加QSV包含目录
+if (QSV_FOUND)
+    target_include_directories(${PROJECT_NAME} PRIVATE ${QSV_INCLUDE_DIR})
+endif()
+
+# 如果VAAPI可用，添加VAAPI包含目录
+if(VAAPI_FOUND)
+    target_include_directories(${PROJECT_NAME} PRIVATE ${LIBVA_INCLUDE_DIR})
+endif()
+
+# 如果VDPAU可用，添加VDPAU包含目录
+if(VDPAU_FOUND)
+    target_include_directories(${PROJECT_NAME} PRIVATE ${VDPAU_INCLUDE_DIR})
+endif()
+
+
 # 添加库文件路径
 target_link_directories(${PROJECT_NAME}
     PRIVATE
@@ -124,6 +145,27 @@ target_link_directories(${PROJECT_NAME}
         ${SPDLOG_LIB_DIR}
         ${FMT_LIB_DIR}
 )
+
+# 如果CUDA可用，添加CUDA库目录
+if(CUDA_FOUND)
+    target_link_directories(${PROJECT_NAME} PRIVATE ${CUDA_LIB_DIR})
+endif()
+
+# 如果QSV可用，添加QSV库目录
+if (QSV_FOUND)
+    target_link_directories(${PROJECT_NAME} PRIVATE ${QSV_LIB_DIR})
+endif()
+
+# 如果VAAPI可用，添加VAAPI库目录
+if(VAAPI_FOUND)
+    target_link_directories(${PROJECT_NAME} PRIVATE ${LIBVA_LIB_DIR})
+endif()
+
+# 如果VDPAU可用，添加VDPAU库目录
+if(VDPAU_FOUND)
+    target_link_directories(${PROJECT_NAME} PRIVATE ${VDPAU_LIB_DIR})
+endif()
+
 
 # ffmpeg不区分debug和release
 set(FFMPEG_LIB
@@ -144,13 +186,79 @@ endif ()
 set(SPDLOG_LIB spdlog)
 set(FMT_LIB spdlog)
 
+# 硬件加速相关库
+set(HARDWARE_ACCEL_LIBS)
+
+# CUDA库
+if(CUDA_FOUND)
+    list(APPEND HARDWARE_ACCEL_LIBS
+        cuda
+    )
+endif()
+
+# Windows平台硬件加速库
+if(WIN32)
+    list(APPEND HARDWARE_ACCEL_LIBS
+        # D3D11相关
+        d3d11
+        dxgi
+        # DXVA2相关
+        dxva2
+    )
+    
+    # Intel Media SDK库（QSV）
+    if(QSV_FOUND)
+        list(APPEND HARDWARE_ACCEL_LIBS
+            libmfx
+        )
+    endif()
+    
+elseif(UNIX AND NOT APPLE)
+    # Linux平台硬件加速库
+    
+    # VAAPI库
+    if(VAAPI_FOUND)
+        list(APPEND HARDWARE_ACCEL_LIBS
+            ${LIBVA_LIBRARIES}
+        )
+        if(LIBVA_DRM_FOUND)
+            list(APPEND HARDWARE_ACCEL_LIBS ${LIBVA_DRM_LIBRARIES})
+        endif()
+        if(LIBVA_X11_FOUND)
+            list(APPEND HARDWARE_ACCEL_LIBS ${LIBVA_X11_LIBRARIES})
+        endif()
+    endif()
+    
+    # VDPAU库
+    if(VDPAU_FOUND)
+        list(APPEND HARDWARE_ACCEL_LIBS ${VDPAU_LIBRARIES})
+    endif()
+    
+    # Intel Media SDK库（QSV）
+    if(QSV_FOUND)
+        list(APPEND HARDWARE_ACCEL_LIBS mfx)
+    endif()
+    
+elseif(APPLE)
+    # macOS平台硬件加速库
+    list(APPEND HARDWARE_ACCEL_LIBS
+        # VideoToolbox框架
+        "-framework VideoToolbox"
+        "-framework CoreMedia"
+        "-framework CoreVideo"
+        "-framework CoreFoundation"
+    )
+endif()
+
 # 链接库
 target_link_libraries(${PROJECT_NAME}
     PRIVATE
         ${FFMPEG_LIB}
         ${SPDLOG_LIB}
         ${FMT_LIB}
+        ${HARDWARE_ACCEL_LIBS}
 )
+
 
 # 编译定义
 target_compile_definitions(${PROJECT_NAME}

@@ -26,7 +26,7 @@ VideoDecoder::VideoDecoder(std::shared_ptr<Demuxer> demuxer,
                            std::shared_ptr<EventDispatcher> eventDispatcher)
     : DecoderBase(demuxer, StreamSyncManager, eventDispatcher), frameRate_(0.0)
 {
-    init();
+    init({});
 }
 
 VideoDecoder::~VideoDecoder()
@@ -38,13 +38,13 @@ VideoDecoder::~VideoDecoder()
     }
 }
 
-void VideoDecoder::init(HWAccelType type, int deviceIndex, AVPixelFormat softPixelFormat,
-                        bool requireFrameInMemory)
+void VideoDecoder::init(const Config &config)
 {
-    hwAccelType_ = type;
-    deviceIndex_ = deviceIndex;
-    softPixelFormat_ = softPixelFormat;
-    requireFrameInMemory_ = requireFrameInMemory;
+    hwAccelType_ = config.hwAccelType;
+    deviceIndex_ = config.hwDeviceIndex;
+    softPixelFormat_ = utils::imageFormat2AVPixelFormat(config.swVideoOutFormat);
+    requireFrameInMemory_ = config.requireFrameInSystemMemory;
+    hwContextCallbeck_ = config.createHwContextCallback;
 }
 
 bool VideoDecoder::open()
@@ -326,7 +326,7 @@ Frame VideoDecoder::convertSoftwareFrame(const Frame &frame)
 bool VideoDecoder::setupHardwareDecode()
 {
     // 创建硬件加速器（默认尝试自动选择最佳硬件加速方式）
-    hwAccel_ = HardwareAccelFactory::getInstance().createHardwareAccel(hwAccelType_, deviceIndex_);
+    hwAccel_ = HardwareAccelFactory::getInstance().createHardwareAccel(hwAccelType_, deviceIndex_, hwContextCallbeck_);
     if (!hwAccel_) {
         LOG_WARN("Hardware acceleration not available, using software decode");
         return false;
