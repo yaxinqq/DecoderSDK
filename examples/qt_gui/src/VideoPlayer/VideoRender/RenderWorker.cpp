@@ -30,8 +30,10 @@ RenderWorker::~RenderWorker()
 QSharedPointer<VideoRender> RenderWorker::createRenderer(decoder_sdk::ImageFormat format)
 {
     switch (format) {
+#ifdef CUDA_AVAILABLE
         case decoder_sdk::ImageFormat::kCuda:
             return QSharedPointer<VideoRender>(new Nv12Render_Cuda);
+#endif
 
         case decoder_sdk::ImageFormat::kD3d11va:
             return QSharedPointer<VideoRender>(new Nv12Render_D3d11va);
@@ -46,12 +48,12 @@ QSharedPointer<VideoRender> RenderWorker::createRenderer(decoder_sdk::ImageForma
         case decoder_sdk::ImageFormat::kYUV422P:
         case decoder_sdk::ImageFormat::kYUV444P:
             // 对于软解格式，使用CUDA渲染器作为默认选择
-            return QSharedPointer<VideoRender>(new Nv12Render_Cuda);
+            return QSharedPointer<VideoRender>(new Nv12Render_D3d11va);
 
         default:
             qWarning() << "Unsupported pixel format:" << static_cast<int>(format)
                        << ", using CUDA renderer as fallback";
-            return QSharedPointer<VideoRender>(new Nv12Render_Cuda);
+            return QSharedPointer<VideoRender>(new Nv12Render_D3d11va);
     }
 }
 

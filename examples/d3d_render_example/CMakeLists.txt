@@ -5,9 +5,6 @@ project(d3d_render_example)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# 查找所需的包
-find_package(PkgConfig REQUIRED)
-
 # 设置源文件
 set(SOURCES
     main.cpp

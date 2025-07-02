@@ -1,9 +1,11 @@
-﻿#ifdef _WIN32
+﻿#include "Nv12Render_Cuda.h"
+
+#ifdef CUDA_AVAILABLE
+#ifdef _WIN32
 #include <Windows.h>
 #endif // WIN32
 
 #include "../Commonutils.h"
-#include "Nv12Render_Cuda.h"
 
 namespace {
 const char *vsrc = R"(
@@ -465,3 +467,5 @@ VideoRender *createRender(void *ctx)
 {
     return new Nv12Render_Cuda((CUcontext)ctx);
 }
+
+#endif
