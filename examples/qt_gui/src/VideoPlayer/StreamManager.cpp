@@ -1,4 +1,5 @@
 ﻿#include "StreamManager.h"
+#include "Commonutils.h"
 #include "StreamDecodeWorker.h"
 #include "VideoPlayerImpl.h"
 
@@ -29,6 +30,9 @@ QString StreamManager::openStream(VideoPlayerImpl *player, QString url, QString 
     // 开启解码
     decoder_sdk::Config config;
     config.hwAccelType = decoder_sdk::HWAccelType::kD3d11va;
+    config.decodeMediaType = decoder_sdk::Config::DecodeMediaType::kVideo;
+    config.createHwContextCallback =
+        std::bind(&StreamManager::createHwContextCallback, this, std::placeholders::_1);
     worker->open(url, config);
 
     return key;
@@ -197,6 +201,9 @@ QString StreamManager::createStream(const QString &url, Stream::OpenMode openMod
     // 开启解码
     decoder_sdk::Config config;
     config.hwAccelType = decoder_sdk::HWAccelType::kD3d11va;
+    config.decodeMediaType = decoder_sdk::Config::DecodeMediaType::kVideo;
+    config.createHwContextCallback =
+        std::bind(&StreamManager::createHwContextCallback, this, std::placeholders::_1);
     worker->open(url, config);
 
     // 开启后暂停
@@ -259,6 +266,20 @@ StreamDecoderWorker *StreamManager::getOrCreateDecoder(const QString &url,
     }
 
     return worker;
+}
+
+void *StreamManager::createHwContextCallback(decoder_sdk::HWAccelType type)
+{
+    switch (type) {
+        case decoder_sdk::HWAccelType::kD3d11va:
+            return D3D11Utils::getD3D11Device().Get();
+        case decoder_sdk::HWAccelType::kDxva2:
+            return DXVA2Utils::getDXVA2DeviceManager().Get();
+        default:
+            break;
+    }
+
+    return nullptr;
 }
 
 StreamManager::StreamManager(QObject *parent /*= nullptr*/) : QObject(parent)

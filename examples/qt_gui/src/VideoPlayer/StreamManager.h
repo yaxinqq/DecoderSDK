@@ -1,6 +1,8 @@
 ﻿#pragma once
 #include "CommonDef.h"
 
+#include "decodersdk/common_define.h"
+
 #include <QMap>
 #include <QMutex>
 #include <QObject>
@@ -149,6 +151,13 @@ private:
      */
     StreamDecoderWorker *getOrCreateDecoder(const QString &url, Stream::OpenMode openMode,
                                             QString &key);
+
+    /*
+     * @brief 创建硬件上下文的回调
+     *
+     * @param type 硬件类型
+     */
+    void *createHwContextCallback(decoder_sdk::HWAccelType type);
 
 private:
     explicit StreamManager(QObject *parent = nullptr);

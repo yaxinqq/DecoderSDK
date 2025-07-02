@@ -68,7 +68,7 @@ if(WIN32)
     # 控制台窗口配置（仅Windows）
     target_link_options(${EXAMPLE_TARGET} PRIVATE
         $<$<CONFIG:Debug>:/SUBSYSTEM:CONSOLE>
-        $<$<CONFIG:Release>:/SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup>
+        $<$<CONFIG:Release>:/SUBSYSTEM:CONSOLE>
         $<$<CONFIG:RelWithDebInfo>:/SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup>
     )
 

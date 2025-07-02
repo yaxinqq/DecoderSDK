@@ -1,4 +1,5 @@
 #include "Nv12Render_D3d11va.h"
+#include "Commonutils.h"
 
 #ifdef _WIN32
 #include <Windows.h>
@@ -24,7 +25,6 @@ void main(void)
 
 // NV12 YUV到RGB转换的片段着色器
 const char *fsrc = R"(
-        precision mediump float;
         uniform sampler2D textureY;
         uniform sampler2D textureUV;
 
@@ -76,7 +76,8 @@ const char *calsrc = R"(
     )";
 } // namespace
 
-Nv12Render_D3d11va::Nv12Render_D3d11va(ID3D11Device *d3d11Device) : d3d11Device_(d3d11Device)
+Nv12Render_D3d11va::Nv12Render_D3d11va(ID3D11Device *d3d11Device)
+    : d3d11Device_(d3d11Device ? d3d11Device : D3D11Utils::getD3D11Device())
 {
     qDebug() << "Constructor called";
 
@@ -189,13 +190,15 @@ void Nv12Render_D3d11va::render(const decoder_sdk::Frame &frame)
         return;
     }
 
+    // 从frame中获得D3D设备
+
     // 创建NV12共享纹理
     if (!createNV12SharedTextures(frame)) {
         qDebug() << "Failed to create NV12 shared textures";
         return;
     }
 
-    qDebug() << "Frame rendered successfully";
+    // qDebug() << "Frame rendered successfully";
 }
 
 void Nv12Render_D3d11va::draw()
@@ -212,7 +215,7 @@ void Nv12Render_D3d11va::draw()
         return;
     }
 
-    qDebug() << "Drawing with Y texture:" << glTextureY_ << "UV texture:" << glTextureUV_;
+    // qDebug() << "Drawing with Y texture:" << glTextureY_ << "UV texture:" << glTextureUV_;
 
     HANDLE handles[] = {wglTextureHandleY_, wglTextureHandleUV_};
     if (!wglDXLockObjectsNV(wglD3DDevice_, 2, handles)) {
@@ -264,7 +267,7 @@ void Nv12Render_D3d11va::draw()
         qDebug() << "Failed to unlock WGL objects";
     }
 
-    qDebug() << "Draw completed";
+    // qDebug() << "Draw completed";
 }
 
 QOpenGLFramebufferObject *Nv12Render_D3d11va::getFrameBuffer(const QSize &size)
@@ -363,8 +366,7 @@ void Nv12Render_D3d11va::cleanup()
     // 清理D3D11纹理
     if (nv12Texture_) {
         qDebug() << "Releasing D3D11 NV12 texture";
-        nv12Texture_->Release();
-        nv12Texture_ = nullptr;
+        nv12Texture_.Reset();
     }
 
     currentWidth_ = 0;
@@ -501,7 +503,7 @@ bool Nv12Render_D3d11va::createNV12SharedTextures(const decoder_sdk::Frame &fram
     }
 
     // 使用共享纹理进行复制
-    qDebug() << "Copying shared texture - frameIndex:" << frameIndex;
+    // qDebug() << "Copying shared texture - frameIndex:" << frameIndex;
     d3d11Context_->CopySubresourceRegion(nv12Texture_.Get(), 0, 0, 0, 0, sharedSourceTexture.Get(),
                                          frameIndex, nullptr);
 
@@ -518,7 +520,7 @@ bool Nv12Render_D3d11va::createNV12SharedTextures(const decoder_sdk::Frame &fram
         return false;
     }
 
-    qDebug() << "NV12 shared textures created and updated successfully";
+    // qDebug() << "NV12 shared textures created and updated successfully";
     return true;
 }
 
