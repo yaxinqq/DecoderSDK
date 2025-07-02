@@ -2,6 +2,8 @@
 
 #ifdef _WIN32
 #include <Windows.h>
+#include <d3d11_3.h>
+#include <d3dcompiler.h>
 #endif
 
 #include <QDebug>
@@ -47,10 +49,34 @@ const char *fsrc = R"(
             gl_FragColor = vec4(rgb, 1.0);
         }
     )";
+
+const char *calsrc = R"(
+        Texture2D<float> texY : register(t0);         // Y plane
+        Texture2D<float2> texUV : register(t1);       // UV plane
+
+        RWTexture2D<float> outY : register(u0);       // Output Y
+        RWTexture2D<float4> outUV : register(u1);     // Output UV
+
+        [numthreads(16, 16, 1)]
+        void CSMain(uint3 id : SV_DispatchThreadID)
+        {
+            uint2 coord = id.xy;
+
+            // Write Y (full size)
+            outY[coord] = texY.Load(int3(coord, 0));
+
+            // UV is subsampled 2x2
+            if ((coord.x % 2 == 0) && (coord.y % 2 == 0))
+            {
+                uint2 uvCoord = coord / uint2(2, 2);
+                float2 uv = texUV.Load(int3(uvCoord, 0));
+                outUV[uvCoord] = float4(uv.x, uv.y, 0.0, 0.0);
+            }
+}
+    )";
 } // namespace
 
-Nv12Render_D3d11va::Nv12Render_D3d11va(ID3D11Device *d3d11Device)
-    : d3d11Device_(d3d11Device), d3d11Device3_(nullptr)
+Nv12Render_D3d11va::Nv12Render_D3d11va(ID3D11Device *d3d11Device) : d3d11Device_(d3d11Device)
 {
     qDebug() << "Constructor called";
 
@@ -63,14 +89,6 @@ Nv12Render_D3d11va::Nv12Render_D3d11va(ID3D11Device *d3d11Device)
     if (d3d11Device_) {
         d3d11Device_->GetImmediateContext(&d3d11Context_);
 
-        // 查询D3D11.1接口
-        HRESULT hr = d3d11Device_->QueryInterface(__uuidof(ID3D11Device1), (void **)&d3d11Device3_);
-        if (FAILED(hr)) {
-            qDebug() << "Failed to get D3D11.1 interface, HRESULT:" << hr;
-        } else {
-            qDebug() << "D3D11.1 interface obtained successfully";
-        }
-
         qDebug() << "D3D11 context obtained";
     }
 }
@@ -81,12 +99,6 @@ Nv12Render_D3d11va::~Nv12Render_D3d11va()
 
     // 清理所有资源
     cleanup();
-
-    // 释放D3D11.1接口
-    if (d3d11Device3_) {
-        d3d11Device3_->Release();
-        d3d11Device3_ = nullptr;
-    }
 
     // 清理WGL设备
     if (wglD3DDevice_) {
@@ -100,14 +112,12 @@ Nv12Render_D3d11va::~Nv12Render_D3d11va()
 
     // 清理D3D11上下文
     if (d3d11Context_) {
-        d3d11Context_->Release();
-        d3d11Context_ = nullptr;
+        d3d11Context_.Reset();
     }
 
     // 如果拥有D3D设备，则释放它
     if (ownD3DDevice_ && d3d11Device_) {
-        d3d11Device_->Release();
-        d3d11Device_ = nullptr;
+        d3d11Device_.Reset();
     }
 }
 
@@ -179,15 +189,8 @@ void Nv12Render_D3d11va::render(const decoder_sdk::Frame &frame)
         return;
     }
 
-    // 从Frame中提取D3D11纹理
-    ID3D11Texture2D *d3d11Texture = reinterpret_cast<ID3D11Texture2D *>(frame.data(0));
-    if (!d3d11Texture) {
-        qDebug() << "D3D11 texture pointer is null";
-        return;
-    }
-
     // 创建NV12共享纹理
-    if (!createNV12SharedTextures(d3d11Texture)) {
+    if (!createNV12SharedTextures(frame)) {
         qDebug() << "Failed to create NV12 shared textures";
         return;
     }
@@ -230,9 +233,6 @@ void Nv12Render_D3d11va::draw()
     glActiveTexture(GL_TEXTURE1);
     glBindTexture(GL_TEXTURE_2D, glTextureUV_);
     program_.setUniformValue("textureUV", 1);
-
-    program_.setUniformValue("textureY", 1);
-    program_.setUniformValue("textureUV", 0);
 
     // 检查OpenGL错误
     GLenum error = glGetError();
@@ -319,7 +319,7 @@ bool Nv12Render_D3d11va::initializeWGLInterop()
     qDebug() << "D3D11 device is valid";
 
     // 打开D3D设备用于互操作
-    wglD3DDevice_ = wglDXOpenDeviceNV(d3d11Device_);
+    wglD3DDevice_ = wglDXOpenDeviceNV(d3d11Device_.Get());
     if (!wglD3DDevice_) {
         DWORD error = GetLastError();
         qDebug() << "Failed to open D3D device for WGL interop, error:" << error;
@@ -360,19 +360,6 @@ void Nv12Render_D3d11va::cleanup()
         glTextureUV_ = 0;
     }
 
-    // 清理D3D11 SRV
-    if (ySRV_) {
-        qDebug() << "Releasing Y SRV";
-        ySRV_->Release();
-        ySRV_ = nullptr;
-    }
-
-    if (uvSRV_) {
-        qDebug() << "Releasing UV SRV";
-        uvSRV_->Release();
-        uvSRV_ = nullptr;
-    }
-
     // 清理D3D11纹理
     if (nv12Texture_) {
         qDebug() << "Releasing D3D11 NV12 texture";
@@ -399,8 +386,10 @@ bool Nv12Render_D3d11va::loadWGLExtensions()
            wglDXUnregisterObjectNV && wglDXLockObjectsNV && wglDXUnlockObjectsNV;
 }
 
-bool Nv12Render_D3d11va::createNV12SharedTextures(ID3D11Texture2D *sourceTexture)
+bool Nv12Render_D3d11va::createNV12SharedTextures(const decoder_sdk::Frame &frame)
 {
+    // 从Frame中提取D3D11纹理
+    ID3D11Texture2D *sourceTexture = reinterpret_cast<ID3D11Texture2D *>(frame.data(0));
     if (!sourceTexture || !d3d11Context_ || !wglD3DDevice_) {
         qDebug() << "Missing required resources";
         return false;
@@ -409,48 +398,98 @@ bool Nv12Render_D3d11va::createNV12SharedTextures(ID3D11Texture2D *sourceTexture
     D3D11_TEXTURE2D_DESC srcDesc;
     sourceTexture->GetDesc(&srcDesc);
 
-    qDebug() << "Source texture size:" << srcDesc.Width << "x" << srcDesc.Height
-             << "Format:" << srcDesc.Format;
-
     // 检查是否需要重新创建纹理
-    if (!nv12Texture_ || currentWidth_ != srcDesc.Width || currentHeight_ != srcDesc.Height) {
-        qDebug() << "Creating new NV12 shared texture";
+    if (!yTexture_ || !uvTexture_ || currentWidth_ != srcDesc.Width ||
+        currentHeight_ != srcDesc.Height) {
+        qDebug() << "Creating new separated textures";
 
-        // 清理旧资源
         cleanup();
-
-        // 创建新的NV12共享纹理
-        D3D11_TEXTURE2D_DESC nv12Desc = {};
-        nv12Desc.Width = srcDesc.Width;
-        nv12Desc.Height = srcDesc.Height;
-        nv12Desc.MipLevels = 1;
-        nv12Desc.ArraySize = 1;
-        nv12Desc.Format = DXGI_FORMAT_NV12;
-        nv12Desc.SampleDesc.Count = 1;
-        nv12Desc.Usage = D3D11_USAGE_DEFAULT;
-        nv12Desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
-        nv12Desc.MiscFlags = D3D11_RESOURCE_MISC_SHARED;
-
-        HRESULT hr = d3d11Device_->CreateTexture2D(&nv12Desc, nullptr, &nv12Texture_);
-        if (FAILED(hr)) {
-            qDebug() << "Failed to create NV12 texture, HRESULT:" << hr;
-            return false;
-        }
 
         currentWidth_ = srcDesc.Width;
         currentHeight_ = srcDesc.Height;
 
-        // 创建Y和UV平面的SRV
-        if (!createPlaneShaderResourceViews(nv12Texture_)) {
-            qDebug() << "Failed to create plane SRVs";
+        // 创建共享的NV12纹理
+        D3D11_TEXTURE2D_DESC nv12Desc{};
+        nv12Desc.Width = srcDesc.Width;
+        nv12Desc.Height = srcDesc.Height;
+        nv12Desc.Format = srcDesc.Format;
+        nv12Desc.ArraySize = 1;
+        nv12Desc.MipLevels = 1;
+        nv12Desc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
+        nv12Desc.MiscFlags = D3D11_RESOURCE_MISC_SHARED;
+        nv12Desc.Usage = D3D11_USAGE_DEFAULT;
+        nv12Desc.SampleDesc = {1, 0};
+
+        HRESULT hr = d3d11Device_->CreateTexture2D(&nv12Desc, nullptr, &nv12Texture_);
+        if (FAILED(hr)) {
+            qDebug() << "Failed to create NV12 texture";
             return false;
         }
 
-        // 注册平面到OpenGL
-        if (!registerPlanesWithOpenGL()) {
-            qDebug() << "Failed to register planes with OpenGL";
+        // 创建分离的Y和UV纹理
+        if (!createSeparatedTextures(currentWidth_, currentHeight_)) {
             return false;
         }
+
+        // 创建NV12 SRV
+        if (!createNV12SRVs()) {
+            return false;
+        }
+
+        // 创建计算着色器
+        if (!createPlaneSeparationShader()) {
+            return false;
+        }
+
+        // 注册到OpenGL
+        if (!registerPlanesWithOpenGL()) {
+            return false;
+        }
+    }
+
+    // 使用共享资源机制复制纹理
+    UINT frameIndex = static_cast<UINT>(reinterpret_cast<intptr_t>(frame.data(1)));
+
+    // 获取源纹理的共享句柄
+    ComPtr<IDXGIResource> dxgiResource;
+    HRESULT hr = sourceTexture->QueryInterface(
+        __uuidof(IDXGIResource), reinterpret_cast<void **>(dxgiResource.GetAddressOf()));
+    if (FAILED(hr)) {
+        qDebug() << "Failed to query DXGI resource interface, HRESULT:" << QString::number(hr, 16);
+        return false;
+    }
+
+    HANDLE sharedHandle = nullptr;
+    hr = dxgiResource->GetSharedHandle(&sharedHandle);
+    if (FAILED(hr)) {
+        qDebug() << "Failed to get shared handle, HRESULT:" << QString::number(hr, 16);
+        return false;
+    }
+
+    // 在当前设备上打开共享纹理
+    ComPtr<ID3D11Texture2D> sharedSourceTexture;
+    hr = d3d11Device_->OpenSharedResource(
+        sharedHandle, __uuidof(ID3D11Texture2D),
+        reinterpret_cast<void **>(sharedSourceTexture.GetAddressOf()));
+    if (FAILED(hr)) {
+        qDebug() << "Failed to open shared resource, HRESULT:" << QString::number(hr, 16);
+        return false;
+    }
+
+    // 验证共享纹理
+    if (!sharedSourceTexture) {
+        qDebug() << "Shared source texture is null";
+        return false;
+    }
+
+    // 获取共享纹理描述
+    D3D11_TEXTURE2D_DESC sharedDesc;
+    sharedSourceTexture->GetDesc(&sharedDesc);
+
+    // 验证 frameIndex 是否有效
+    if (frameIndex >= sharedDesc.ArraySize) {
+        qDebug() << "Invalid frame index:" << frameIndex << "Array size:" << sharedDesc.ArraySize;
+        return false;
     }
 
     // 锁定WGL对象
@@ -461,9 +500,16 @@ bool Nv12Render_D3d11va::createNV12SharedTextures(ID3D11Texture2D *sourceTexture
         return false;
     }
 
-    // 复制源纹理到NV12纹理
-    d3d11Context_->CopyResource(nv12Texture_, sourceTexture);
-    d3d11Context_->Flush();
+    // 使用共享纹理进行复制
+    qDebug() << "Copying shared texture - frameIndex:" << frameIndex;
+    d3d11Context_->CopySubresourceRegion(nv12Texture_.Get(), 0, 0, 0, 0, sharedSourceTexture.Get(),
+                                         frameIndex, nullptr);
+
+    // 执行平面分离
+    if (!separatePlanes()) {
+        qDebug() << "Failed to separate planes";
+        return false;
+    }
 
     // 解锁WGL对象
     if (!wglDXUnlockObjectsNV(wglD3DDevice_, 2, handles)) {
@@ -476,68 +522,194 @@ bool Nv12Render_D3d11va::createNV12SharedTextures(ID3D11Texture2D *sourceTexture
     return true;
 }
 
-bool Nv12Render_D3d11va::createPlaneShaderResourceViews(ID3D11Texture2D *nv12Texture)
+bool Nv12Render_D3d11va::createSeparatedTextures(int width, int height)
 {
-    if (!nv12Texture || !d3d11Device3_) {
-        qDebug() << "Invalid texture or D3D11.1 device not available";
-        return false;
-    }
+    // 创建Y平面纹理
+    D3D11_TEXTURE2D_DESC descY = {};
+    descY.Width = width;
+    descY.Height = height;
+    descY.MipLevels = 1;
+    descY.ArraySize = 1;
+    descY.Format = DXGI_FORMAT_R8_UNORM;
+    descY.SampleDesc.Count = 1;
+    descY.SampleDesc.Quality = 0;
+    descY.Usage = D3D11_USAGE_DEFAULT;
+    descY.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
+    descY.CPUAccessFlags = 0;
+    descY.MiscFlags = D3D11_RESOURCE_MISC_SHARED;
 
-    // 清理之前的资源
-    if (ySRV_) {
-        ySRV_->Release();
-        ySRV_ = nullptr;
-    }
-    if (uvSRV_) {
-        uvSRV_->Release();
-        uvSRV_ = nullptr;
-    }
-
-    // 创建Y平面SRV (使用PlaneSlice = 0)
-    D3D11_SHADER_RESOURCE_VIEW_DESC1 ySrvDesc = {};
-    ySrvDesc.Format = DXGI_FORMAT_R8_UNORM;
-    ySrvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
-    ySrvDesc.Texture2D.MostDetailedMip = 0;
-    ySrvDesc.Texture2D.MipLevels = 1;
-    ySrvDesc.Texture2D.PlaneSlice = 0; // Y平面
-
-    HRESULT hr = d3d11Device3_->CreateShaderResourceView1(nv12Texture, &ySrvDesc, &ySRV_);
+    HRESULT hr = d3d11Device_->CreateTexture2D(&descY, nullptr, &yTexture_);
     if (FAILED(hr)) {
-        qDebug() << "Failed to create Y plane SRV, HRESULT:" << hr;
+        qDebug() << "Failed to create Y texture, HRESULT:" << hr;
         return false;
     }
 
-    // 创建UV平面SRV (使用PlaneSlice = 1)
-    D3D11_SHADER_RESOURCE_VIEW_DESC1 uvSrvDesc = {};
-    uvSrvDesc.Format = DXGI_FORMAT_R8G8_UNORM;
-    uvSrvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
-    uvSrvDesc.Texture2D.MostDetailedMip = 0;
-    uvSrvDesc.Texture2D.MipLevels = 1;
-    uvSrvDesc.Texture2D.PlaneSlice = 1; // UV平面
+    // 创建UV平面纹理 - 使用BGRA格式而不是RG
+    D3D11_TEXTURE2D_DESC descUV = {};
+    descUV.Width = width / 2;
+    descUV.Height = height / 2;
+    descUV.MipLevels = 1;
+    descUV.ArraySize = 1;
+    descUV.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    descUV.SampleDesc.Count = 1;
+    descUV.SampleDesc.Quality = 0;
+    descUV.Usage = D3D11_USAGE_DEFAULT;
+    descUV.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
+    descUV.CPUAccessFlags = 0;
+    descUV.MiscFlags = D3D11_RESOURCE_MISC_SHARED;
 
-    hr = d3d11Device3_->CreateShaderResourceView1(nv12Texture, &uvSrvDesc, &uvSRV_);
+    hr = d3d11Device_->CreateTexture2D(&descUV, nullptr, &uvTexture_);
     if (FAILED(hr)) {
-        qDebug() << "Failed to create UV plane SRV, HRESULT:" << hr;
-        ySRV_->Release();
-        ySRV_ = nullptr;
+        qDebug() << "Failed to create UV texture, HRESULT:" << hr;
         return false;
     }
 
-    // 保存原始NV12纹理的引用用于WGL注册
-    if (yTexture_) {
-        yTexture_->Release();
+    // 获取共享句柄
+    ComPtr<IDXGIResource> yDxgiResource;
+    hr = yTexture_->QueryInterface(__uuidof(IDXGIResource), (void **)&yDxgiResource);
+    if (FAILED(hr)) {
+        qDebug() << "Failed to query Y texture DXGI resource";
+        return false;
     }
-    if (uvTexture_) {
-        uvTexture_->Release();
+    hr = yDxgiResource->GetSharedHandle(&ySharedHandle_);
+    if (FAILED(hr)) {
+        qDebug() << "Failed to get Y texture shared handle";
+        return false;
     }
 
-    // 直接使用原始NV12纹理
-    yTexture_ = nv12Texture;
-    uvTexture_ = nv12Texture;
-    yTexture_->AddRef();
-    uvTexture_->AddRef();
+    ComPtr<IDXGIResource> uvDxgiResource;
+    hr = uvTexture_->QueryInterface(__uuidof(IDXGIResource), (void **)&uvDxgiResource);
+    if (FAILED(hr)) {
+        qDebug() << "Failed to query UV texture DXGI resource";
+        return false;
+    }
+    hr = uvDxgiResource->GetSharedHandle(&uvSharedHandle_);
+    if (FAILED(hr)) {
+        qDebug() << "Failed to get UV texture shared handle";
+        return false;
+    }
 
-    qDebug() << "Successfully created Y and UV plane SRVs using D3D11.1";
+    // 创建UAV
+    hr = d3d11Device_->CreateUnorderedAccessView(yTexture_.Get(), nullptr, &yUav_);
+    if (FAILED(hr)) {
+        qDebug() << "Failed to create Y UAV";
+        return false;
+    }
+
+    hr = d3d11Device_->CreateUnorderedAccessView(uvTexture_.Get(), nullptr, &uvUav_);
+    if (FAILED(hr)) {
+        qDebug() << "Failed to create UV UAV";
+        return false;
+    }
+
+    qDebug() << "Successfully created separated Y and UV textures";
+    return true;
+}
+
+bool Nv12Render_D3d11va::createPlaneSeparationShader()
+{
+    ComPtr<ID3DBlob> shaderBlob;
+    ComPtr<ID3DBlob> errorBlob;
+
+    HRESULT hr = D3DCompile(calsrc, strlen(calsrc), nullptr, nullptr, nullptr, "CSMain", "cs_5_0",
+                            D3DCOMPILE_ENABLE_STRICTNESS, 0, &shaderBlob, &errorBlob);
+
+    if (FAILED(hr)) {
+        if (errorBlob) {
+            qDebug() << "Shader compilation error:" << (char *)errorBlob->GetBufferPointer();
+        }
+        return false;
+    }
+
+    hr = d3d11Device_->CreateComputeShader(shaderBlob->GetBufferPointer(),
+                                           shaderBlob->GetBufferSize(), nullptr,
+                                           planeSeparationCS_.GetAddressOf());
+
+    if (FAILED(hr)) {
+        qDebug() << "Failed to create compute shader";
+        return false;
+    }
+
+    // d3d11Context_->CSSetShader(planeSeparationCS_.Get(), nullptr, 0);
+    return true;
+}
+
+bool Nv12Render_D3d11va::separatePlanes()
+{
+    if (!planeSeparationCS_ || !nv12YSrv_ || !nv12UvSrv_ || !yUav_ || !uvUav_) {
+        qDebug() << "Missing resources for plane separation";
+        return false;
+    }
+
+    // 设置计算着色器
+    d3d11Context_->CSSetShader(planeSeparationCS_.Get(), nullptr, 0);
+
+    // 设置SRV
+    ID3D11ShaderResourceView *srvs[] = {nv12YSrv_.Get(), nv12UvSrv_.Get()};
+    d3d11Context_->CSSetShaderResources(0, 2, srvs);
+
+    // 设置UAV
+    ID3D11UnorderedAccessView *uavs[] = {yUav_.Get(), uvUav_.Get()};
+    d3d11Context_->CSSetUnorderedAccessViews(0, 2, uavs, nullptr);
+
+    // 执行计算着色器
+    d3d11Context_->Dispatch((currentWidth_ + 15) / 16, (currentHeight_ + 15) / 16, 1);
+
+    // 清理绑定
+    ID3D11ShaderResourceView *nullSRVs[2] = {nullptr, nullptr};
+    d3d11Context_->CSSetShaderResources(0, 2, nullSRVs);
+    ID3D11UnorderedAccessView *nullUAVs[2] = {nullptr, nullptr};
+    d3d11Context_->CSSetUnorderedAccessViews(0, 2, nullUAVs, nullptr);
+    d3d11Context_->CSSetShader(nullptr, nullptr, 0);
+
+    d3d11Context_->Flush();
+
+    return true;
+}
+
+bool Nv12Render_D3d11va::createNV12SRVs()
+{
+    if (!nv12Texture_) {
+        qDebug() << "NV12 texture is null";
+        return false;
+    }
+
+    // 创建Y平面SRV
+    D3D11_SHADER_RESOURCE_VIEW_DESC srvDescY = {};
+    srvDescY.Format = DXGI_FORMAT_R8_UNORM;
+    srvDescY.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+    srvDescY.Texture2D.MostDetailedMip = 0;
+    srvDescY.Texture2D.MipLevels = 1;
+
+    HRESULT hr = d3d11Device_->CreateShaderResourceView(nv12Texture_.Get(), &srvDescY, &nv12YSrv_);
+    if (FAILED(hr)) {
+        qDebug() << "Failed to create NV12 Y SRV";
+        return false;
+    }
+
+    // 创建UV平面SRV（使用PlaneSlice）
+    ComPtr<ID3D11Device3> device3;
+    hr = d3d11Device_->QueryInterface(__uuidof(ID3D11Device3), (void **)&device3);
+    if (SUCCEEDED(hr)) {
+        D3D11_SHADER_RESOURCE_VIEW_DESC1 srvDescUV = {};
+        srvDescUV.Format = DXGI_FORMAT_R8G8_UNORM;
+        srvDescUV.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+        srvDescUV.Texture2D.MostDetailedMip = 0;
+        srvDescUV.Texture2D.MipLevels = 1;
+        srvDescUV.Texture2D.PlaneSlice = 1; // UV平面
+
+        ComPtr<ID3D11ShaderResourceView1> srvUV1;
+        hr = device3->CreateShaderResourceView1(nv12Texture_.Get(), &srvDescUV, &srvUV1);
+        if (SUCCEEDED(hr)) {
+            hr = srvUV1->QueryInterface(__uuidof(ID3D11ShaderResourceView), (void **)&nv12UvSrv_);
+        }
+    }
+
+    if (FAILED(hr)) {
+        qDebug() << "Failed to create NV12 UV SRV";
+        return false;
+    }
+
     return true;
 }
 
@@ -558,8 +730,8 @@ bool Nv12Render_D3d11va::registerPlanesWithOpenGL()
 
     // 设置UV平面纹理参数 - 使用 GL_RG8 格式
     glBindTexture(GL_TEXTURE_2D, glTextureUV_);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RG8, currentWidth_, currentHeight_, 0, GL_RG, GL_UNSIGNED_BYTE,
-                 nullptr);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RG8, currentWidth_, currentHeight_, 0, GL_RG,
+                 GL_UNSIGNED_BYTE, nullptr);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
@@ -573,8 +745,8 @@ bool Nv12Render_D3d11va::registerPlanesWithOpenGL()
     }
 
     // 注册Y平面到WGL - 使用原始纹理
-    wglTextureHandleY_ = wglDXRegisterObjectNV(wglD3DDevice_, yTexture_, glTextureY_, GL_TEXTURE_2D,
-                                               WGL_ACCESS_READ_ONLY_NV);
+    wglTextureHandleY_ = wglDXRegisterObjectNV(wglD3DDevice_, yTexture_.Get(), glTextureY_,
+                                               GL_TEXTURE_2D, WGL_ACCESS_READ_ONLY_NV);
     if (!wglTextureHandleY_) {
         DWORD error = GetLastError();
         qDebug() << "Failed to register Y plane with WGL, error:" << error;
@@ -582,7 +754,7 @@ bool Nv12Render_D3d11va::registerPlanesWithOpenGL()
     }
 
     // 注册UV平面到WGL - 使用原始纹理
-    wglTextureHandleUV_ = wglDXRegisterObjectNV(wglD3DDevice_, uvTexture_, glTextureUV_,
+    wglTextureHandleUV_ = wglDXRegisterObjectNV(wglD3DDevice_, uvTexture_.Get(), glTextureUV_,
                                                 GL_TEXTURE_2D, WGL_ACCESS_READ_ONLY_NV);
     if (!wglTextureHandleUV_) {
         DWORD error = GetLastError();

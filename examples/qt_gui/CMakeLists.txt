@@ -260,6 +260,7 @@ if(WIN32)
         d3d9
         d3d11
         dxgi
+        d3dcompiler
     )
     
     # Windows下的CUDA库

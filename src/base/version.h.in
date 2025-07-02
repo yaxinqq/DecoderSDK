@@ -58,12 +58,14 @@ namespace internal {
 #else
 #define DECODER_SDK_PLATFORM "Windows x86"
 #endif
+#define PLATFORM_IS_WINDOWS 1
 #elif defined(__linux__)
 #ifdef __x86_64__
 #define DECODER_SDK_PLATFORM "Linux x64"
 #else
 #define DECODER_SDK_PLATFORM "Linux x86"
 #endif
+#define PLATFORM_IS_LINUX 1
 #elif defined(__APPLE__)
 #ifdef __x86_64__
 #define DECODER_SDK_PLATFORM "macOS x64"
@@ -72,6 +74,7 @@ namespace internal {
 #else
 #define DECODER_SDK_PLATFORM "macOS"
 #endif
+#define PLATFORM_IS_MACOS 1
 #else
 #define DECODER_SDK_PLATFORM "Unknown"
 #endif

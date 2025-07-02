@@ -4,6 +4,14 @@
 
 #include "logger/Logger.h"
 #include "utils/common_utils.h"
+#include "version.h"
+
+#ifdef PLATFORM_IS_WINDOWS
+#include <d3d11.h>
+extern "C" {
+#include <libavutil/hwcontext_d3d11va.h>
+}
+#endif
 
 DECODER_SDK_NAMESPACE_BEGIN
 INTERNAL_NAMESPACE_BEGIN
@@ -427,6 +435,32 @@ AVPixelFormat HardwareAccel::getHWPixelFormat(AVCodecContext *codecCtx,
     AVPixelFormat hwPixFmt = hwAccel->getHWPixelFormat();
     for (int i = 0; pix_fmts[i] != AV_PIX_FMT_NONE; i++) {
         if (pix_fmts[i] == hwPixFmt) {
+#ifdef PLATFORM_IS_WINDOWS
+            // 对于D3D11VA，需要设置硬件帧上下文参数
+            if (hwPixFmt == AV_PIX_FMT_D3D11) {
+                int ret = avcodec_get_hw_frames_parameters(
+                    codecCtx, codecCtx->hw_device_ctx, AV_PIX_FMT_D3D11, &codecCtx->hw_frames_ctx);
+                if (ret < 0) {
+                    LOG_WARN("Failed to allocate HW frames context: {}", utils::avErr2Str(ret));
+                    return hwPixFmt;
+                }
+
+                auto frames_ctx = (AVHWFramesContext *)codecCtx->hw_frames_ctx->data;
+                auto hwctx = (AVD3D11VAFramesContext *)frames_ctx->hwctx;
+
+                // 设置D3D11资源标志，启用共享和着色器资源绑定
+                hwctx->MiscFlags = D3D11_RESOURCE_MISC_SHARED;
+                hwctx->BindFlags = D3D11_BIND_DECODER | D3D11_BIND_SHADER_RESOURCE;
+
+                ret = av_hwframe_ctx_init(codecCtx->hw_frames_ctx);
+                if (ret < 0) {
+                    LOG_WARN("Failed to initialize HW frames context: {}", utils::avErr2Str(ret));
+                    av_buffer_unref(&codecCtx->hw_frames_ctx);
+                    return hwPixFmt;
+                }
+            }
+#endif
+
             return hwPixFmt;
         }
     }
