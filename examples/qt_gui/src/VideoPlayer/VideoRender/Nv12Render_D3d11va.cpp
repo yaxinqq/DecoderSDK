@@ -546,7 +546,7 @@ bool Nv12Render_D3d11va::createSeparatedTextures(int width, int height)
         return false;
     }
 
-    // 创建UV平面纹理 - 使用BGRA格式而不是RG
+    // 创建UV平面纹理
     D3D11_TEXTURE2D_DESC descUV = {};
     descUV.Width = width / 2;
     descUV.Height = height / 2;
@@ -664,7 +664,7 @@ bool Nv12Render_D3d11va::separatePlanes()
     d3d11Context_->CSSetUnorderedAccessViews(0, 2, nullUAVs, nullptr);
     d3d11Context_->CSSetShader(nullptr, nullptr, 0);
 
-    d3d11Context_->Flush();
+    // d3d11Context_->Flush();
 
     return true;
 }
