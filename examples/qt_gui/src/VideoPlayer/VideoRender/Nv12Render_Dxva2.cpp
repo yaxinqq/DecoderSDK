@@ -1,167 +1,93 @@
+#include "Nv12Render_Dxva2.h"
+#include "Commonutils.h"
+
 #ifdef _WIN32
 #include <Windows.h>
+#include <d3d9.h>
+#include <dxva2api.h>
 #endif
 
-#include "Nv12Render_Dxva2.h"
 #include <QDebug>
+#include <iostream>
 
-namespace
+namespace {
+// 顶点着色器源码
+const char *vsrc = R"(
+attribute vec4 vertexIn;
+attribute vec2 textureIn;
+varying vec2 textureOut;
+void main(void)
 {
-    const char *vsrc = R"(
-        attribute vec4 vertexIn;
-        attribute vec2 textureIn;
-        varying vec2 textureOut;
-        void main(void)
-        {
-            gl_Position = vertexIn;
-            textureOut = textureIn;
-        }
-    )";
-
-    const char *fsrc = R"(
-        precision mediump float;
-        uniform sampler2D textureY;
-        uniform sampler2D textureUV;
-        varying vec2 textureOut;
-        
-        void main(void)
-        {
-            float y = texture2D(textureY, textureOut).r;
-            vec2 uv = texture2D(textureUV, textureOut).rg;
-            
-            const vec3 yuv2rgb_ofs = vec3(0.0625, 0.5, 0.5);
-            const mat3 yuv2rgb_mat = mat3(
-                1.16438356,  0.0,           1.79274107,
-                1.16438356, -0.21324861, -0.53290932,
-                1.16438356,  2.11240178,  0.0
-            );
-            
-            vec3 rgb = (vec3(y, uv.r, uv.g) - yuv2rgb_ofs) * yuv2rgb_mat;
-            gl_FragColor = vec4(rgb, 1.0);
-        }
-    )";
+    gl_Position = vertexIn;
+    textureOut = textureIn;
 }
+)";
 
-Nv12Render_Dxva2::Nv12Render_Dxva2(IDirect3DDevice9 *d3dDevice)
-    : d3dDevice_(d3dDevice)
+// RGB纹理渲染的片段着色器
+const char *fsrc = R"(
+        uniform sampler2D texture0;
+        varying vec2 textureOut;
+
+        void main(void)
+        {
+            gl_FragColor = texture2D(texture0, textureOut);
+        }
+    )";
+} // namespace
+
+Nv12Render_Dxva2::Nv12Render_Dxva2(IDirect3DDevice9Ex *d3d9Device)
+    : d3d9Device_(d3d9Device ? d3d9Device : DXVA2Utils::getDXVA2Device())
 {
-    if (!d3dDevice_)
-    {
+    qDebug() << "DXVA2 Constructor called";
+
+    if (!d3d9Device_) {
+        qDebug() << "No D3D9 device provided, creating own";
         initializeD3D9();
         ownD3DDevice_ = true;
     }
-    initializeWGL();
 }
 
 Nv12Render_Dxva2::~Nv12Render_Dxva2()
 {
-    cleanupWGL();
-    if (ownD3DDevice_)
-    {
-        cleanupD3D9();
+    qDebug() << "DXVA2 Destructor called";
+
+    cleanup();
+
+    // 清理WGL设备
+    if (wglD3DDevice_) {
+        qDebug() << "Closing WGL D3D device";
+        wglDXCloseDeviceNV(wglD3DDevice_);
+        wglD3DDevice_ = nullptr;
     }
 
     vbo_.destroy();
 
-    // 清理双缓冲纹理
-    if (textureCurrentY_)
-        glDeleteTextures(1, &textureCurrentY_);
-    if (textureCurrentUV_)
-        glDeleteTextures(1, &textureCurrentUV_);
-    if (textureNextY_)
-        glDeleteTextures(1, &textureNextY_);
-    if (textureNextUV_)
-        glDeleteTextures(1, &textureNextUV_);
-
-    // 清理D3D表面
-    if (d3dSurfaceCurrentY_)
-    {
-        d3dSurfaceCurrentY_->Release();
-        d3dSurfaceCurrentY_ = nullptr;
-    }
-    if (d3dSurfaceCurrentUV_)
-    {
-        d3dSurfaceCurrentUV_->Release();
-        d3dSurfaceCurrentUV_ = nullptr;
-    }
-    if (d3dSurfaceNextY_)
-    {
-        d3dSurfaceNextY_->Release();
-        d3dSurfaceNextY_ = nullptr;
-    }
-    if (d3dSurfaceNextUV_)
-    {
-        d3dSurfaceNextUV_->Release();
-        d3dSurfaceNextUV_ = nullptr;
+    if (ownD3DDevice_ && d3d9Device_) {
+        d3d9Device_.Reset();
     }
 }
 
-bool Nv12Render_Dxva2::initializeD3D9()
+void Nv12Render_Dxva2::initialize(const int width, const int height, const bool horizontal,
+                                  const bool vertical)
 {
-    d3d9_ = Direct3DCreate9(D3D_SDK_VERSION);
-    if (!d3d9_)
-    {
-        qDebug() << "Failed to create D3D9 object";
-        return false;
-    }
+    qDebug() << "DXVA2 Initialize called with size:" << width << "x" << height;
 
-    D3DPRESENT_PARAMETERS pp = {};
-    pp.Windowed = TRUE;
-    pp.SwapEffect = D3DSWAPEFFECT_DISCARD;
-    pp.BackBufferFormat = D3DFMT_UNKNOWN;
-    pp.hDeviceWindow = GetDesktopWindow();
-
-    HRESULT hr = d3d9_->CreateDevice(
-        D3DADAPTER_DEFAULT,
-        D3DDEVTYPE_HAL,
-        GetDesktopWindow(),
-        D3DCREATE_HARDWARE_VERTEXPROCESSING,
-        &pp,
-        &d3dDevice_);
-
-    if (FAILED(hr))
-    {
-        qDebug() << "Failed to create D3D9 device";
-        return false;
-    }
-
-    return true;
-}
-
-bool Nv12Render_Dxva2::initializeWGL()
-{
-    // 获取WGL扩展函数指针
-    wglDXOpenDeviceNV = (PFNWGLDXOPENDEVICENVPROC)wglGetProcAddress("wglDXOpenDeviceNV");
-    wglDXCloseDeviceNV = (PFNWGLDXCLOSEDEVICENVPROC)wglGetProcAddress("wglDXCloseDeviceNV");
-    wglDXRegisterObjectNV = (PFNWGLDXREGISTEROBJECTNVPROC)wglGetProcAddress("wglDXRegisterObjectNV");
-    wglDXUnregisterObjectNV = (PFNWGLDXUNREGISTEROBJECTNVPROC)wglGetProcAddress("wglDXUnregisterObjectNV");
-    wglDXLockObjectsNV = (PFNWGLDXLOCKOBJECTSNVPROC)wglGetProcAddress("wglDXLockObjectsNV");
-    wglDXUnlockObjectsNV = (PFNWGLDXUNLOCKOBJECTSNVPROC)wglGetProcAddress("wglDXUnlockObjectsNV");
-
-    if (!wglDXOpenDeviceNV || !wglDXCloseDeviceNV || !wglDXRegisterObjectNV ||
-        !wglDXUnregisterObjectNV || !wglDXLockObjectsNV || !wglDXUnlockObjectsNV)
-    {
-        qDebug() << "WGL_NV_DX_interop extension not available";
-        return false;
-    }
-
-    // 打开D3D设备用于互操作
-    wglD3DDevice_ = wglDXOpenDeviceNV(d3dDevice_);
-    if (!wglD3DDevice_)
-    {
-        qDebug() << "Failed to open D3D device for WGL interop";
-        return false;
-    }
-
-    return true;
-}
-
-void Nv12Render_Dxva2::initialize(const int width, const int height, const bool horizontal, const bool vertical)
-{
     initializeOpenGLFunctions();
 
     videoWidth_ = width;
     videoHeight_ = height;
+    flipHorizontal_ = horizontal;
+    flipVertical_ = vertical;
+
+    if (!validateOpenGLContext()) {
+        qDebug() << "Invalid OpenGL context";
+        return;
+    }
+
+    if (!initializeWGLInterop()) {
+        qDebug() << "Failed to initialize WGL interop";
+        return;
+    }
 
     // 编译着色器
     program_.addCacheableShaderFromSourceCode(QOpenGLShader::Vertex, vsrc);
@@ -180,264 +106,439 @@ void Nv12Render_Dxva2::initialize(const int width, const int height, const bool 
         1.0f,
         -1.0f,
         // 纹理坐标
-        horizontal ? 1.0f : 0.0f,
-        vertical ? 1.0f : 0.0f,
-        horizontal ? 0.0f : 1.0f,
-        vertical ? 1.0f : 0.0f,
-        horizontal ? 1.0f : 0.0f,
-        vertical ? 0.0f : 1.0f,
-        horizontal ? 0.0f : 1.0f,
-        vertical ? 0.0f : 1.0f,
+        flipHorizontal_ ? 1.0f : 0.0f,
+        flipVertical_ ? 1.0f : 0.0f,
+        flipHorizontal_ ? 0.0f : 1.0f,
+        flipVertical_ ? 1.0f : 0.0f,
+        flipHorizontal_ ? 1.0f : 0.0f,
+        flipVertical_ ? 0.0f : 1.0f,
+        flipHorizontal_ ? 0.0f : 1.0f,
+        flipVertical_ ? 0.0f : 1.0f,
     };
 
     vbo_.create();
     vbo_.bind();
     vbo_.allocate(points, sizeof(points));
 
-    // 创建双缓冲OpenGL纹理
-    glGenTextures(1, &textureCurrentY_);
-    glGenTextures(1, &textureCurrentUV_);
-    glGenTextures(1, &textureNextY_);
-    glGenTextures(1, &textureNextUV_);
-
-    // 创建双缓冲D3D表面 - Y平面
-    HRESULT hr = d3dDevice_->CreateOffscreenPlainSurface(
-        width, height,
-        D3DFMT_L8, // Y平面使用L8格式
-        D3DPOOL_DEFAULT,
-        &d3dSurfaceCurrentY_,
-        nullptr);
-
-    hr = d3dDevice_->CreateOffscreenPlainSurface(
-        width, height,
-        D3DFMT_L8,
-        D3DPOOL_DEFAULT,
-        &d3dSurfaceNextY_,
-        nullptr);
-
-    // 创建双缓冲D3D表面 - UV平面
-    hr = d3dDevice_->CreateOffscreenPlainSurface(
-        width / 2, height / 2,
-        D3DFMT_A8L8, // UV平面使用A8L8格式
-        D3DPOOL_DEFAULT,
-        &d3dSurfaceCurrentUV_,
-        nullptr);
-
-    hr = d3dDevice_->CreateOffscreenPlainSurface(
-        width / 2, height / 2,
-        D3DFMT_A8L8,
-        D3DPOOL_DEFAULT,
-        &d3dSurfaceNextUV_,
-        nullptr);
-
-    // 注册D3D表面到OpenGL
-    if (d3dSurfaceCurrentY_)
-    {
-        wglD3DSurfaceCurrentY_ = wglDXRegisterObjectNV(
-            wglD3DDevice_, d3dSurfaceCurrentY_, textureCurrentY_,
-            GL_TEXTURE_2D, WGL_ACCESS_READ_ONLY_NV);
-        resourceCurrentYRegisteredFailed_ = (wglD3DSurfaceCurrentY_ == nullptr);
-    }
-
-    if (d3dSurfaceCurrentUV_)
-    {
-        wglD3DSurfaceCurrentUV_ = wglDXRegisterObjectNV(
-            wglD3DDevice_, d3dSurfaceCurrentUV_, textureCurrentUV_,
-            GL_TEXTURE_2D, WGL_ACCESS_READ_ONLY_NV);
-        resourceCurrentUVRegisteredFailed_ = (wglD3DSurfaceCurrentUV_ == nullptr);
-    }
-
-    if (d3dSurfaceNextY_)
-    {
-        wglD3DSurfaceNextY_ = wglDXRegisterObjectNV(
-            wglD3DDevice_, d3dSurfaceNextY_, textureNextY_,
-            GL_TEXTURE_2D, WGL_ACCESS_READ_ONLY_NV);
-        resourceNextYRegisteredFailed_ = (wglD3DSurfaceNextY_ == nullptr);
-    }
-
-    if (d3dSurfaceNextUV_)
-    {
-        wglD3DSurfaceNextUV_ = wglDXRegisterObjectNV(
-            wglD3DDevice_, d3dSurfaceNextUV_, textureNextUV_,
-            GL_TEXTURE_2D, WGL_ACCESS_READ_ONLY_NV);
-        resourceNextUVRegisteredFailed_ = (wglD3DSurfaceNextUV_ == nullptr);
-    }
-
     clearGL();
+    qDebug() << "DXVA2 Initialize completed successfully";
 }
 
 void Nv12Render_Dxva2::render(const decoder_sdk::Frame &frame)
 {
-    if (!frame.isValid() || frame.pixelFormat() != decoder_sdk::ImageFormat::kDxva2)
-    {
+    if (!frame.isValid() || frame.pixelFormat() != decoder_sdk::ImageFormat::kDxva2) {
+        qDebug() << "Invalid frame or wrong pixel format";
         clearGL();
         return;
     }
 
-    // 获取DXVA2表面数据
-    IDirect3DSurface9 *surface = reinterpret_cast<IDirect3DSurface9 *>(frame.data(0));
-    if (!surface)
-    {
+    // 从Frame中提取DXVA2表面指针
+    LPDIRECT3DSURFACE9 sourceSurface = reinterpret_cast<LPDIRECT3DSURFACE9>(frame.data(3));
+    if (!sourceSurface) {
+        qDebug() << "Invalid DXVA2 surface";
         return;
     }
 
-    // 在锁外进行数据复制操作
-    HRESULT hr = S_OK;
+    D3DSURFACE_DESC surfaceDesc;
+    HRESULT hr = sourceSurface->GetDesc(&surfaceDesc);
+    if (FAILED(hr)) {
+        qDebug() << "Failed to get surface description";
+        return;
+    }
 
-    // 对于NV12格式，需要正确处理Y和UV平面
-    // NV12格式：Y平面在前，UV交错在后
+    // 检查是否需要重新创建RGB渲染目标
+    if (!rgbRenderTarget_ || currentWidth_ != surfaceDesc.Width ||
+        currentHeight_ != surfaceDesc.Height) {
+        qDebug() << "Creating new RGB render target";
 
-    // 复制Y平面数据到next表面
-    if (d3dSurfaceNextY_)
-    {
-        // 创建源矩形，只复制Y平面部分
-        RECT srcRectY = {0, 0, videoWidth_, videoHeight_};
-        hr = d3dDevice_->StretchRect(surface, &srcRectY, d3dSurfaceNextY_, nullptr, D3DTEXF_NONE);
-        if (FAILED(hr))
-        {
-            qDebug() << "Failed to copy DXVA2 Y surface";
+        cleanup();
+
+        currentWidth_ = surfaceDesc.Width;
+        currentHeight_ = surfaceDesc.Height;
+
+        if (!createRgbRenderTarget(currentWidth_, currentHeight_)) {
+            qDebug() << "Failed to create RGB render target";
+            return;
+        }
+
+        if (!registerTextureWithOpenGL()) {
+            qDebug() << "Failed to register texture with OpenGL";
             return;
         }
     }
 
-    // 复制UV平面数据到next表面
-    if (d3dSurfaceNextUV_)
-    {
-        // NV12格式的UV数据从Y平面高度开始
-        RECT srcRectUV = {0, videoHeight_, videoWidth_, videoHeight_ + videoHeight_ / 2};
-        hr = d3dDevice_->StretchRect(surface, &srcRectUV, d3dSurfaceNextUV_, nullptr, D3DTEXF_NONE);
-        if (FAILED(hr))
-        {
-            qDebug() << "Failed to copy DXVA2 UV surface";
-            return;
-        }
-    }
-
-    // 锁定next对象进行OpenGL访问
-    if (wglD3DSurfaceNextY_ && !resourceNextYRegisteredFailed_)
-    {
-        wglDXLockObjectsNV(wglD3DDevice_, 1, &wglD3DSurfaceNextY_);
-    }
-    if (wglD3DSurfaceNextUV_ && !resourceNextUVRegisteredFailed_)
-    {
-        wglDXLockObjectsNV(wglD3DDevice_, 1, &wglD3DSurfaceNextUV_);
-    }
-
-    // 最小锁粒度：只在交换缓冲区时加锁
-    {
-        QMutexLocker lock(&mtx_);
-        std::swap(textureCurrentY_, textureNextY_);
-        std::swap(textureCurrentUV_, textureNextUV_);
-
-        std::swap(d3dSurfaceCurrentY_, d3dSurfaceNextY_);
-        std::swap(d3dSurfaceCurrentUV_, d3dSurfaceNextUV_);
-
-        std::swap(wglD3DSurfaceCurrentY_, wglD3DSurfaceNextY_);
-        std::swap(wglD3DSurfaceCurrentUV_, wglD3DSurfaceNextUV_);
-
-        std::swap(resourceCurrentYRegisteredFailed_, resourceNextYRegisteredFailed_);
-        std::swap(resourceCurrentUVRegisteredFailed_, resourceNextUVRegisteredFailed_);
+    // 使用StretchRect转换NV12到RGB
+    if (!convertNv12ToRgbStretchRect(sourceSurface)) {
+        qDebug() << "Failed to convert NV12 to RGB";
+        return;
     }
 }
 
 void Nv12Render_Dxva2::draw()
 {
-    QMutexLocker lock(&mtx_);
+    if (!sharedTexture_ || !program_.isLinked() || !wglTextureHandle_) {
+        qDebug() << "Not ready for drawing";
+        clearGL();
+        return;
+    }
 
+    // 锁定WGL对象
+    if (!wglDXLockObjectsNV(wglD3DDevice_, 1, &wglTextureHandle_)) {
+        qDebug() << "Failed to lock WGL objects";
+        clearGL();
+        return;
+    }
+
+    // 使用着色器程序
     program_.bind();
-    vbo_.bind();
 
+    // 绑定纹理
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, sharedTexture_);
+    program_.setUniformValue("texture0", 0);
+
+    // 绑定顶点缓冲区
+    vbo_.bind();
     program_.enableAttributeArray("vertexIn");
     program_.enableAttributeArray("textureIn");
     program_.setAttributeBuffer("vertexIn", GL_FLOAT, 0, 2, 0);
-    program_.setAttributeBuffer("textureIn", GL_FLOAT, 2 * 4 * sizeof(GLfloat), 2, 0);
+    program_.setAttributeBuffer("textureIn", GL_FLOAT, 8 * sizeof(GLfloat), 2, 0);
 
-    // 绑定当前纹理
-    glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, textureCurrentY_);
-    glActiveTexture(GL_TEXTURE1);
-    glBindTexture(GL_TEXTURE_2D, textureCurrentUV_);
-
-    program_.setUniformValue("textureY", 0);
-    program_.setUniformValue("textureUV", 1);
-
+    // 绘制
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 
+    // 清理
     program_.disableAttributeArray("vertexIn");
     program_.disableAttributeArray("textureIn");
     vbo_.release();
+    glBindTexture(GL_TEXTURE_2D, 0);
     program_.release();
 
-    // 解锁当前对象
-    if (wglD3DSurfaceCurrentY_ && !resourceCurrentYRegisteredFailed_)
-    {
-        wglDXUnlockObjectsNV(wglD3DDevice_, 1, &wglD3DSurfaceCurrentY_);
-    }
-    if (wglD3DSurfaceCurrentUV_ && !resourceCurrentUVRegisteredFailed_)
-    {
-        wglDXUnlockObjectsNV(wglD3DDevice_, 1, &wglD3DSurfaceCurrentUV_);
+    // 解锁WGL对象
+    if (!wglDXUnlockObjectsNV(wglD3DDevice_, 1, &wglTextureHandle_)) {
+        qDebug() << "Failed to unlock WGL objects";
     }
 }
 
-QOpenGLFramebufferObject *Nv12Render_Dxva2::getFrameBuffer(const QSize &size)
+bool Nv12Render_Dxva2::initializeD3D9()
 {
-    QMutexLocker lock(&mtx_);
+    qDebug() << "Initializing D3D9";
 
-    QOpenGLFramebufferObject *frameBuffer = new QOpenGLFramebufferObject(size);
-    frameBuffer->bind();
+    ComPtr<IDirect3D9Ex> d3d9Ex;
+    HRESULT hr = Direct3DCreate9Ex(D3D_SDK_VERSION, &d3d9Ex);
+    if (FAILED(hr)) {
+        qDebug() << "Failed to create D3D9Ex";
+        return false;
+    }
 
-    draw();
+    // 参考mpv的设备创建参数
+    D3DPRESENT_PARAMETERS presentParams = {};
+    presentParams.BackBufferWidth = 1;
+    presentParams.BackBufferHeight = 1;
+    presentParams.BackBufferFormat = D3DFMT_UNKNOWN; // 改为UNKNOWN
+    presentParams.BackBufferCount = 1;
+    presentParams.SwapEffect = D3DSWAPEFFECT_DISCARD;
+    presentParams.hDeviceWindow = NULL; // 改为NULL
+    presentParams.Windowed = TRUE;
+    presentParams.Flags = D3DPRESENTFLAG_VIDEO;
+    presentParams.FullScreen_RefreshRateInHz = 0;
+    presentParams.PresentationInterval = 0;
 
-    return frameBuffer;
+    // 使用mpv相同的创建标志
+    hr = d3d9Ex->CreateDeviceEx(D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL,
+                                NULL, // 改为NULL
+                                D3DCREATE_HARDWARE_VERTEXPROCESSING | D3DCREATE_MULTITHREADED |
+                                    D3DCREATE_FPU_PRESERVE |
+                                    D3DCREATE_DISABLE_DRIVER_MANAGEMENT, // 添加这个标志
+                                &presentParams, nullptr, &d3d9Device_);
+
+    if (FAILED(hr)) {
+        qDebug() << "Failed to create D3D9 device, HRESULT:" << QString::number(hr, 16);
+        return false;
+    }
+
+    qDebug() << "D3D9 device created successfully";
+    return true;
+}
+
+bool Nv12Render_Dxva2::initializeWGLInterop()
+{
+    qDebug() << "Initializing WGL interop";
+
+    if (!loadWGLExtensions()) {
+        qDebug() << "Failed to load WGL extensions";
+        return false;
+    }
+
+    if (!d3d9Device_) {
+        qDebug() << "D3D9 device is null";
+        return false;
+    }
+
+    HRESULT hr = d3d9Device_->TestCooperativeLevel();
+    if (FAILED(hr)) {
+        qDebug() << "D3D9 device is in error state, HRESULT:" << hr;
+        return false;
+    }
+
+    wglD3DDevice_ = wglDXOpenDeviceNV(d3d9Device_.Get());
+    if (!wglD3DDevice_) {
+        DWORD error = GetLastError();
+        qDebug() << "Failed to open D3D device for WGL interop, error:" << error;
+        return false;
+    }
+
+    qDebug() << "WGL interop initialized successfully";
+    return true;
+}
+
+void Nv12Render_Dxva2::cleanup()
+{
+    qDebug() << "Cleaning up DXVA2 resources";
+
+    if (wglTextureHandle_ && wglD3DDevice_) {
+        wglDXUnregisterObjectNV(wglD3DDevice_, wglTextureHandle_);
+        wglTextureHandle_ = nullptr;
+    }
+
+    if (sharedTexture_) {
+        glDeleteTextures(1, &sharedTexture_);
+        sharedTexture_ = 0;
+    }
+
+    if (rgbRenderTarget_) {
+        rgbRenderTarget_.Reset();
+    }
+
+    currentWidth_ = 0;
+    currentHeight_ = 0;
+}
+
+bool Nv12Render_Dxva2::loadWGLExtensions()
+{
+    // 检查WGL_NV_DX_interop扩展
+    const char *extensions = nullptr;
+
+    // 尝试获取WGL扩展字符串
+    typedef const char *(WINAPI * PFNWGLGETEXTENSIONSSTRINGARBPROC)(HDC hdc);
+    PFNWGLGETEXTENSIONSSTRINGARBPROC wglGetExtensionsStringARB =
+        (PFNWGLGETEXTENSIONSSTRINGARBPROC)wglGetProcAddress("wglGetExtensionsStringARB");
+
+    if (wglGetExtensionsStringARB) {
+        HDC hdc = wglGetCurrentDC();
+        if (hdc) {
+            extensions = wglGetExtensionsStringARB(hdc);
+        }
+    }
+
+    if (!extensions || !strstr(extensions, "WGL_NV_DX_interop")) {
+        qDebug() << "WGL_NV_DX_interop extension not supported";
+        qDebug() << "Available extensions:" << (extensions ? extensions : "none");
+        return false;
+    }
+
+    qDebug() << "WGL_NV_DX_interop extension found";
+
+    // 加载函数指针
+    wglDXOpenDeviceNV = (PFNWGLDXOPENDEVICENVPROC)wglGetProcAddress("wglDXOpenDeviceNV");
+    wglDXCloseDeviceNV = (PFNWGLDXCLOSEDEVICENVPROC)wglGetProcAddress("wglDXCloseDeviceNV");
+    wglDXSetResourceShareHandleNV = (PFNWGLDXSETRESOURCESHAREHANDLENVPROC)wglGetProcAddress(
+        "wglDXSetResourceShareHandleNV"); // 添加这行
+    wglDXRegisterObjectNV =
+        (PFNWGLDXREGISTEROBJECTNVPROC)wglGetProcAddress("wglDXRegisterObjectNV");
+    wglDXUnregisterObjectNV =
+        (PFNWGLDXUNREGISTEROBJECTNVPROC)wglGetProcAddress("wglDXUnregisterObjectNV");
+    wglDXLockObjectsNV = (PFNWGLDXLOCKOBJECTSNVPROC)wglGetProcAddress("wglDXLockObjectsNV");
+    wglDXUnlockObjectsNV = (PFNWGLDXUNLOCKOBJECTSNVPROC)wglGetProcAddress("wglDXUnlockObjectsNV");
+
+    bool success = wglDXOpenDeviceNV && wglDXCloseDeviceNV &&
+                   wglDXSetResourceShareHandleNV && // 更新检查条件
+                   wglDXRegisterObjectNV && wglDXUnregisterObjectNV && wglDXLockObjectsNV &&
+                   wglDXUnlockObjectsNV;
+
+    if (!success) {
+        qDebug() << "Failed to load WGL function pointers:";
+        qDebug() << "wglDXOpenDeviceNV:" << (wglDXOpenDeviceNV ? "OK" : "FAIL");
+        qDebug() << "wglDXCloseDeviceNV:" << (wglDXCloseDeviceNV ? "OK" : "FAIL");
+        qDebug() << "wglDXSetResourceShareHandleNV:"
+                 << (wglDXSetResourceShareHandleNV ? "OK" : "FAIL"); // 添加检查
+        qDebug() << "wglDXRegisterObjectNV:" << (wglDXRegisterObjectNV ? "OK" : "FAIL");
+        qDebug() << "wglDXUnregisterObjectNV:" << (wglDXUnregisterObjectNV ? "OK" : "FAIL");
+        qDebug() << "wglDXLockObjectsNV:" << (wglDXLockObjectsNV ? "OK" : "FAIL");
+        qDebug() << "wglDXUnlockObjectsNV:" << (wglDXUnlockObjectsNV ? "OK" : "FAIL");
+    }
+
+    return success;
+}
+
+bool Nv12Render_Dxva2::createRgbRenderTarget(int width, int height)
+{
+    if (!d3d9Device_) {
+        qDebug() << "D3D9 device is null";
+        return false;
+    }
+
+    // 清理之前的资源
+    if (rgbRenderTarget_) {
+        rgbRenderTarget_.Reset();
+        sharedHandle_ = nullptr;
+    }
+
+    // 参考mpv的实现：直接创建渲染目标表面而不是纹理
+    HRESULT hr = d3d9Device_->CreateRenderTarget(width, height,
+                                                 D3DFMT_X8R8G8B8,     // 使用mpv相同的格式
+                                                 D3DMULTISAMPLE_NONE, // 无多重采样
+                                                 0,                   // 多重采样质量
+                                                 FALSE,               // 不可锁定
+                                                 &rgbRenderTarget_,
+                                                 &sharedHandle_ // 获取共享句柄
+    );
+
+    if (FAILED(hr)) {
+        qDebug() << "Failed to create RGB render target, HRESULT:" << QString::number(hr, 16);
+        return false;
+    }
+
+    if (!sharedHandle_) {
+        qDebug() << "Warning: Shared handle is null";
+    }
+
+    qDebug() << "Created RGB render target successfully, handle:" << sharedHandle_;
+    return true;
+}
+
+bool Nv12Render_Dxva2::convertNv12ToRgbStretchRect(LPDIRECT3DSURFACE9 nv12Surface)
+{
+    if (!nv12Surface || !rgbRenderTarget_) {
+        qDebug() << "Missing surfaces for StretchRect conversion";
+        return false;
+    }
+
+    // 锁定WGL对象
+    if (!wglDXLockObjectsNV(wglD3DDevice_, 1, &wglTextureHandle_)) {
+        qDebug() << "Failed to lock WGL objects";
+        return false;
+    }
+
+    // 使用StretchRect进行格式转换和拷贝
+    // 注意：这个方法依赖于D3D9驱动程序的内部转换能力
+    // 某些驱动程序可能不支持从NV12直接转换到RGB
+    HRESULT hr = d3d9Device_->StretchRect(nv12Surface, nullptr, rgbRenderTarget_.Get(), nullptr,
+                                          D3DTEXF_LINEAR);
+
+    if (FAILED(hr)) {
+        qDebug() << "StretchRect conversion failed, HRESULT:" << QString::number(hr, 16);
+
+        // 如果StretchRect失败，尝试使用软件转换
+        return false;
+    }
+
+    if (!wglDXUnlockObjectsNV(wglD3DDevice_, 1, &wglTextureHandle_)) {
+        qDebug() << "Failed to unlock WGL objects";
+    }
+
+    qDebug() << "StretchRect conversion successful";
+    return true;
+}
+
+bool Nv12Render_Dxva2::registerTextureWithOpenGL()
+{
+    if (!wglD3DDevice_ || !rgbRenderTarget_) {
+        qDebug() << "Missing resources for OpenGL registration";
+        qDebug() << "wglD3DDevice_:" << (wglD3DDevice_ ? "valid" : "null");
+        qDebug() << "rgbRenderTarget_:" << (rgbRenderTarget_ ? "valid" : "null");
+        return false;
+    }
+
+    // 确保OpenGL上下文是当前的
+    if (!wglGetCurrentContext()) {
+        qDebug() << "No current OpenGL context";
+        return false;
+    }
+
+    // 清理之前的纹理
+    if (sharedTexture_ != 0) {
+        glDeleteTextures(1, &sharedTexture_);
+        sharedTexture_ = 0;
+    }
+
+    // 生成OpenGL纹理
+    glGenTextures(1, &sharedTexture_);
+    if (sharedTexture_ == 0) {
+        qDebug() << "Failed to generate OpenGL texture";
+        return false;
+    }
+
+    // 绑定纹理并设置参数
+    glBindTexture(GL_TEXTURE_2D, sharedTexture_);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glBindTexture(GL_TEXTURE_2D, 0);
+
+    // 关键步骤：设置共享句柄（参考mpv实现）
+    if (sharedHandle_ && !wglDXSetResourceShareHandleNV(rgbRenderTarget_.Get(), sharedHandle_)) {
+        DWORD error = GetLastError();
+        qDebug() << "Failed setting Direct3D/OpenGL share handle for surface, error:"
+                 << QString::number(error, 16);
+
+        // 清理失败的纹理
+        glDeleteTextures(1, &sharedTexture_);
+        sharedTexture_ = 0;
+        return false;
+    }
+
+    // 注册RGB渲染目标表面
+    wglTextureHandle_ =
+        wglDXRegisterObjectNV(wglD3DDevice_,
+                              rgbRenderTarget_.Get(), // 直接使用渲染目标表面
+                              sharedTexture_, GL_TEXTURE_2D, WGL_ACCESS_READ_ONLY_NV);
+
+    if (!wglTextureHandle_) {
+        DWORD error = GetLastError();
+        qDebug() << "Failed to register RGB surface with WGL, error:" << QString::number(error, 16);
+        qDebug() << "Trying read-write access...";
+
+        // 尝试读写访问模式
+        wglTextureHandle_ =
+            wglDXRegisterObjectNV(wglD3DDevice_, rgbRenderTarget_.Get(), sharedTexture_,
+                                  GL_TEXTURE_2D, WGL_ACCESS_READ_WRITE_NV);
+
+        if (!wglTextureHandle_) {
+            error = GetLastError();
+            qDebug() << "Failed to register with read-write access, error:"
+                     << QString::number(error, 16);
+
+            // 清理失败的纹理
+            glDeleteTextures(1, &sharedTexture_);
+            sharedTexture_ = 0;
+            return false;
+        }
+    }
+
+    qDebug() << "Successfully registered RGB surface with OpenGL";
+    return true;
+}
+
+bool Nv12Render_Dxva2::validateOpenGLContext()
+{
+    GLint major, minor;
+    glGetIntegerv(GL_MAJOR_VERSION, &major);
+    glGetIntegerv(GL_MINOR_VERSION, &minor);
+
+    if (major == 0 && minor == 0) {
+        const char *version = reinterpret_cast<const char *>(glGetString(GL_VERSION));
+        qDebug() << "OpenGL version string:" << (version ? version : "unknown");
+        return version != nullptr;
+    }
+
+    qDebug() << "OpenGL version:" << major << "." << minor;
+    return true;
 }
 
 void Nv12Render_Dxva2::clearGL()
 {
-    glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
-}
-
-void Nv12Render_Dxva2::cleanupD3D9()
-{
-    if (d3dDevice_)
-    {
-        d3dDevice_->Release();
-        d3dDevice_ = nullptr;
-    }
-    if (d3d9_)
-    {
-        d3d9_->Release();
-        d3d9_ = nullptr;
-    }
-}
-
-void Nv12Render_Dxva2::cleanupWGL()
-{
-    // 注销所有WGL对象
-    if (wglD3DSurfaceCurrentY_)
-    {
-        wglDXUnregisterObjectNV(wglD3DDevice_, wglD3DSurfaceCurrentY_);
-        wglD3DSurfaceCurrentY_ = nullptr;
-    }
-    if (wglD3DSurfaceCurrentUV_)
-    {
-        wglDXUnregisterObjectNV(wglD3DDevice_, wglD3DSurfaceCurrentUV_);
-        wglD3DSurfaceCurrentUV_ = nullptr;
-    }
-    if (wglD3DSurfaceNextY_)
-    {
-        wglDXUnregisterObjectNV(wglD3DDevice_, wglD3DSurfaceNextY_);
-        wglD3DSurfaceNextY_ = nullptr;
-    }
-    if (wglD3DSurfaceNextUV_)
-    {
-        wglDXUnregisterObjectNV(wglD3DDevice_, wglD3DSurfaceNextUV_);
-        wglD3DSurfaceNextUV_ = nullptr;
-    }
-
-    if (wglD3DDevice_)
-    {
-        wglDXCloseDeviceNV(wglD3DDevice_);
-        wglD3DDevice_ = nullptr;
-    }
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
 }

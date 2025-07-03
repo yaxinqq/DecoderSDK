@@ -29,7 +29,7 @@ QString StreamManager::openStream(VideoPlayerImpl *player, QString url, QString 
 
     // 开启解码
     decoder_sdk::Config config;
-    config.hwAccelType = decoder_sdk::HWAccelType::kD3d11va;
+    config.hwAccelType = decoder_sdk::HWAccelType::kDxva2;
     config.decodeMediaType = decoder_sdk::Config::DecodeMediaType::kVideo;
     config.createHwContextCallback =
         std::bind(&StreamManager::createHwContextCallback, this, std::placeholders::_1);

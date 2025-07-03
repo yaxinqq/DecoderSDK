@@ -25,6 +25,7 @@ bool isD3D11Available();
 #include <wrl/client.h>
 namespace DXVA2Utils {
 Microsoft::WRL::ComPtr<IDirect3DDeviceManager9> getDXVA2DeviceManager();
+Microsoft::WRL::ComPtr<IDirect3DDevice9Ex> getDXVA2Device();
 bool isDXVA2Available();
 } // namespace DXVA2Utils
 #endif

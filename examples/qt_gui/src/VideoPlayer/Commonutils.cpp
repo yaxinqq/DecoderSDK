@@ -137,7 +137,7 @@ private:
 
     void initialize()
     {
-        UINT createDeviceFlags = 0;
+        UINT createDeviceFlags = D3D11_CREATE_DEVICE_VIDEO_SUPPORT;
 #ifdef _DEBUG
         createDeviceFlags |= D3D11_CREATE_DEVICE_DEBUG;
 #endif
@@ -215,6 +215,12 @@ public:
         return deviceManager_;
     }
 
+    Microsoft::WRL::ComPtr<IDirect3DDevice9Ex> getDevice()
+    {
+        std::call_once(init_flag_, [this]() { initialize(); });
+        return device_;
+    }
+
     bool isInitialized() const
     {
         return deviceManager_ != nullptr;
@@ -231,16 +237,16 @@ private:
     void initialize()
     {
         // 创建Direct3D9对象
-        Microsoft::WRL::ComPtr<IDirect3D9> d3d9;
-        d3d9.Attach(Direct3DCreate9(D3D_SDK_VERSION));
-        if (!d3d9) {
+        Microsoft::WRL::ComPtr<IDirect3D9Ex> d3d9ex;
+        Direct3DCreate9Ex(D3D_SDK_VERSION, &d3d9ex);
+        if (!d3d9ex) {
             qDebug() << "Failed to create Direct3D9 object";
             return;
         }
 
         // 获取默认适配器信息
         D3DADAPTER_IDENTIFIER9 adapterInfo;
-        HRESULT hr = d3d9->GetAdapterIdentifier(D3DADAPTER_DEFAULT, 0, &adapterInfo);
+        HRESULT hr = d3d9ex->GetAdapterIdentifier(D3DADAPTER_DEFAULT, 0, &adapterInfo);
         if (FAILED(hr)) {
             qDebug() << "Failed to get adapter identifier, HRESULT:" << Qt::hex << hr;
             return;
@@ -249,19 +255,33 @@ private:
         // 创建Direct3D9设备
         D3DPRESENT_PARAMETERS presentParams = {};
         presentParams.Windowed = TRUE;
+        presentParams.BackBufferWidth = 1;
+        presentParams.BackBufferHeight = 1;
         presentParams.SwapEffect = D3DSWAPEFFECT_DISCARD;
         presentParams.BackBufferFormat = D3DFMT_UNKNOWN;
-        presentParams.hDeviceWindow = GetDesktopWindow();
+        presentParams.BackBufferCount = 1;
+        presentParams.Flags = D3DPRESENTFLAG_VIDEO;
+        presentParams.hDeviceWindow = NULL;
 
-        Microsoft::WRL::ComPtr<IDirect3DDevice9> device;
         // 添加多线程支持标志
-        hr = d3d9->CreateDevice(
-            D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, GetDesktopWindow(),
-            D3DCREATE_HARDWARE_VERTEXPROCESSING | D3DCREATE_MULTITHREADED | D3DCREATE_FPU_PRESERVE,
-            &presentParams, &device);
+        hr = d3d9ex->CreateDeviceEx(D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, NULL,
+                                    D3DCREATE_NOWINDOWCHANGES | D3DCREATE_FPU_PRESERVE |
+                                        D3DCREATE_HARDWARE_VERTEXPROCESSING |
+                                        D3DCREATE_DISABLE_PSGP_THREADING | D3DCREATE_MULTITHREADED,
+                                    &presentParams, nullptr, &device_);
 
         if (FAILED(hr)) {
             qDebug() << "Failed to create Direct3D9 device, HRESULT:" << Qt::hex << hr;
+            return;
+        }
+
+        // Check if it's possible to StretchRect() from NV12 to XRGB surfaces
+        hr = d3d9ex->CheckDeviceFormatConversion(D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL,
+                                                 D3DFORMAT(MAKEFOURCC('N', 'V', '1', '2')),
+                                                 D3DFMT_X8R8G8B8);
+        if (hr != S_OK) {
+            qDebug() << "Can't StretchRect from NV12 to XRGB surfaces, HRESULT:" << Qt::hex << hr;
+            d3d9ex.Reset();
             return;
         }
 
@@ -274,7 +294,7 @@ private:
         }
 
         // 重置设备管理器
-        hr = deviceManager_->ResetDevice(device.Get(), resetToken);
+        hr = deviceManager_->ResetDevice(device_.Get(), resetToken);
         if (FAILED(hr)) {
             qDebug() << "Failed to reset DXVA2 device manager, HRESULT:" << Qt::hex << hr;
             deviceManager_.Reset();
@@ -285,6 +305,7 @@ private:
     }
 
     Microsoft::WRL::ComPtr<IDirect3DDeviceManager9> deviceManager_;
+    Microsoft::WRL::ComPtr<IDirect3DDevice9Ex> device_;
     std::once_flag init_flag_;
 };
 
@@ -292,6 +313,11 @@ private:
 Microsoft::WRL::ComPtr<IDirect3DDeviceManager9> getDXVA2DeviceManager()
 {
     return DXVA2Manager::getInstance().getDeviceManager();
+}
+
+Microsoft::WRL::ComPtr<IDirect3DDevice9Ex> getDXVA2Device()
+{
+    return DXVA2Manager::getInstance().getDevice();
 }
 
 bool isDXVA2Available()
