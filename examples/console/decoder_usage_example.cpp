@@ -73,7 +73,7 @@ int main(int argc, char *argv[])
 
     Config config;
     config.hwAccelType = HWAccelType::kAuto;
-    config.videoOutFormat = ImageFormat::kRGB24;
+    config.swVideoOutFormat = ImageFormat::kRGB24;
     config.requireFrameInSystemMemory = false;
     if (!manager.open(videoPath, config)) {
         std::cout << "打开文件失败: " << videoPath << std::endl;
