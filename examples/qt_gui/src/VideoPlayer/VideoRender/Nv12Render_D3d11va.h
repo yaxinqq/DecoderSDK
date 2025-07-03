@@ -13,6 +13,7 @@
 #define D3D11_INTERFACE_DEFINED
 #define D3D11_1_INTERFACE_DEFINED
 #include <d3d11.h>
+#include <d3d11_1.h>
 #include <wrl/client.h>
 
 using Microsoft::WRL::ComPtr;
@@ -51,17 +52,12 @@ public:
 private:
     bool initializeD3D11();
     bool initializeWGLInterop();
+    bool initializeVideoProcessor();
     void cleanup();
     bool loadWGLExtensions();
-    bool createNV12SharedTextures(const decoder_sdk::Frame &frame);
-    
-    // 新增方法
-    bool createSeparatedTextures(int width, int height); // 创建分离的Y和UV纹理
-    bool createPlaneSeparationShader();                  // 创建计算着色器
-    bool separatePlanes();                               // 执行平面分离
-    bool createNV12SRVs();                               // 创建从NV12纹理读取的SRV
-
-    bool registerPlanesWithOpenGL();
+    bool createRGBTexture(int width, int height);
+    bool processNV12ToRGB(const decoder_sdk::Frame &frame);
+    bool registerRGBTextureWithOpenGL();
     bool validateOpenGLContext();
     void clearGL();
 
@@ -69,8 +65,16 @@ private:
     // D3D11设备和上下文
     ComPtr<ID3D11Device> d3d11Device_;
     ComPtr<ID3D11DeviceContext> d3d11Context_;
+    ComPtr<ID3D11Device1> d3d11Device1_;
+    ComPtr<ID3D11DeviceContext1> d3d11Context1_;
     bool ownD3DDevice_ = false;
 
+    // VideoProcessor相关
+    ComPtr<ID3D11VideoDevice> videoDevice_;
+    ComPtr<ID3D11VideoContext> videoContext_;
+    ComPtr<ID3D11VideoProcessor> videoProcessor_;
+    ComPtr<ID3D11VideoProcessorEnumerator> videoProcessorEnum_;
+    
     // WGL互操作扩展函数指针
     PFNWGLDXOPENDEVICENVPROC wglDXOpenDeviceNV = nullptr;
     PFNWGLDXCLOSEDEVICENVPROC wglDXCloseDeviceNV = nullptr;
@@ -79,37 +83,21 @@ private:
     PFNWGLDXLOCKOBJECTSNVPROC wglDXLockObjectsNV = nullptr;
     PFNWGLDXUNLOCKOBJECTSNVPROC wglDXUnlockObjectsNV = nullptr;
 
-    // NV12双平面纹理资源
+    // WGL设备句柄
     HANDLE wglD3DDevice_ = nullptr;
 
-    // 原始NV12纹理
-    ComPtr<ID3D11Texture2D> nv12Texture_ = nullptr;
-    HANDLE sharedHandle_ = nullptr;
-
-    // 分离的Y和UV纹理（按照QtAV方式）
-    ComPtr<ID3D11Texture2D> yTexture_ = nullptr;  // Y平面独立纹理
-    ComPtr<ID3D11Texture2D> uvTexture_ = nullptr; // UV平面独立纹理
-    HANDLE ySharedHandle_ = nullptr;              // Y纹理共享句柄
-    HANDLE uvSharedHandle_ = nullptr;             // UV纹理共享句柄
-
-    // SRV用于从原始NV12纹理读取数据
-    ComPtr<ID3D11ShaderResourceView> nv12YSrv_ = nullptr;  // 从NV12读取Y平面
-    ComPtr<ID3D11ShaderResourceView> nv12UvSrv_ = nullptr; // 从NV12读取UV平面
-
-    // UAV用于写入分离的纹理
-    ComPtr<ID3D11UnorderedAccessView> yUav_ = nullptr;  // 写入Y纹理
-    ComPtr<ID3D11UnorderedAccessView> uvUav_ = nullptr; // 写入UV纹理
-
-    // 计算着色器用于平面分离
-    ComPtr<ID3D11ComputeShader> planeSeparationCS_ = nullptr;
+    // 输入NV12纹理
+    ComPtr<ID3D11Texture2D> inputNV12Texture_ = nullptr;
+    ComPtr<ID3D11VideoProcessorInputView> inputView_ = nullptr;
+    
+    // 输出RGB纹理
+    ComPtr<ID3D11Texture2D> outputRGBTexture_ = nullptr;
+    ComPtr<ID3D11VideoProcessorOutputView> outputView_ = nullptr;
+    HANDLE rgbSharedHandle_ = nullptr;
 
     // OpenGL纹理
-    GLuint glTextureY_ = 0;  // Y平面OpenGL纹理
-    GLuint glTextureUV_ = 0; // UV平面OpenGL纹理
-
-    // WGL句柄
-    HANDLE wglTextureHandleY_ = nullptr;  // Y平面WGL句柄
-    HANDLE wglTextureHandleUV_ = nullptr; // UV平面WGL句柄
+    GLuint glRGBTexture_ = 0;
+    HANDLE wglTextureHandle_ = nullptr;
 
     // 基本参数
     int videoWidth_ = 0;
