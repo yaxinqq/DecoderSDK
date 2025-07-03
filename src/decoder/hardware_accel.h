@@ -100,6 +100,12 @@ public:
     std::string getDeviceDescription() const;
 
     /**
+     * @brief 获取设备序号
+     * @return 设备序号
+     */
+    int getDeviceIndex() const;
+
+    /**
      * @brief 是否已初始化
      * @return 是否已初始化
      */

@@ -337,8 +337,8 @@ bool VideoDecoder::setupHardwareDecode()
         hwAccel_.reset();
         return false;
     } else {
-        LOG_INFO("Using hardware accelerator: {} ({})", hwAccel_->getDeviceName(),
-                  hwAccel_->getDeviceDescription());
+        LOG_INFO("Using hardware accelerator: {} ({}), device index: {}", hwAccel_->getDeviceName(),
+                  hwAccel_->getDeviceDescription(), std::to_string(hwAccel_->getDeviceIndex()));
 
         // 设置解码器上下文使用硬件加速
         if (!hwAccel_->setupDecoder(codecCtx_)) {

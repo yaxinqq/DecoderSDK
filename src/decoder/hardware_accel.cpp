@@ -261,6 +261,11 @@ std::string HardwareAccel::getDeviceDescription() const
     return getHWAccelTypeDescription(type_);
 }
 
+int HardwareAccel::getDeviceIndex() const
+{
+    return deviceIndex_;
+}
+
 const std::vector<HWAccelInfo> &HardwareAccel::getSupportedHWAccelTypes()
 {
     static std::vector<HWAccelInfo> result;
