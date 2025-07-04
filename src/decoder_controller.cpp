@@ -4,7 +4,7 @@ extern "C" {
 #include "libavdevice/avdevice.h"
 }
 
-#include "logger/Logger.h"
+#include "logger/logger.h"
 #include "utils/common_utils.h"
 
 DECODER_SDK_NAMESPACE_BEGIN

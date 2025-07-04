@@ -1,7 +1,16 @@
 ﻿#include "RenderWorker.h"
+
+#ifdef CUDA_AVAILABLE
 #include "Nv12Render_Cuda.h"
+#endif
+
+#ifdef D3D11VA_AVAILABLE
 #include "Nv12Render_D3d11va.h"
+#endif
+
+#ifdef DXVA2_AVAILABLE
 #include "Nv12Render_Dxva2.h"
+#endif
 
 #include <QDebug>
 #include <QThread>
@@ -34,13 +43,14 @@ QSharedPointer<VideoRender> RenderWorker::createRenderer(decoder_sdk::ImageForma
         case decoder_sdk::ImageFormat::kCuda:
             return QSharedPointer<VideoRender>(new Nv12Render_Cuda);
 #endif
-
+#ifdef D3D11VA_AVAILABLE
         case decoder_sdk::ImageFormat::kD3d11va:
             return QSharedPointer<VideoRender>(new Nv12Render_D3d11va);
-
+#endif
+#ifdef DXVA2_AVAILABLE
         case decoder_sdk::ImageFormat::kDxva2:
             return QSharedPointer<VideoRender>(new Nv12Render_Dxva2);
-
+#endif
         // 对于软解格式，可以使用默认的CUDA渲染器或添加专门的软解渲染器
         case decoder_sdk::ImageFormat::kNV12:
         case decoder_sdk::ImageFormat::kNV21:
@@ -48,12 +58,12 @@ QSharedPointer<VideoRender> RenderWorker::createRenderer(decoder_sdk::ImageForma
         case decoder_sdk::ImageFormat::kYUV422P:
         case decoder_sdk::ImageFormat::kYUV444P:
             // 对于软解格式，使用CUDA渲染器作为默认选择
-            return QSharedPointer<VideoRender>(new Nv12Render_D3d11va);
+            return nullptr;
 
         default:
             qWarning() << "Unsupported pixel format:" << static_cast<int>(format)
                        << ", using CUDA renderer as fallback";
-            return QSharedPointer<VideoRender>(new Nv12Render_D3d11va);
+            return nullptr;
     }
 }
 

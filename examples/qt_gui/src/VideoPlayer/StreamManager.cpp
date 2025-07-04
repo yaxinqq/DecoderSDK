@@ -29,7 +29,7 @@ QString StreamManager::openStream(VideoPlayerImpl *player, QString url, QString 
 
     // 开启解码
     decoder_sdk::Config config;
-    config.hwAccelType = decoder_sdk::HWAccelType::kD3d11va;
+    config.hwAccelType = decoder_sdk::HWAccelType::kCuda;
     config.decodeMediaType = decoder_sdk::Config::DecodeMediaType::kVideo;
     config.createHwContextCallback =
         std::bind(&StreamManager::createHwContextCallback, this, std::placeholders::_1);
@@ -271,10 +271,16 @@ StreamDecoderWorker *StreamManager::getOrCreateDecoder(const QString &url,
 void *StreamManager::createHwContextCallback(decoder_sdk::HWAccelType type)
 {
     switch (type) {
+#ifdef D3D11VA_AVAILABLE
         case decoder_sdk::HWAccelType::kD3d11va:
             return D3D11Utils::getD3D11Device().Get();
+#endif
+
+#ifdef DXVA2_AVAILABLE
         case decoder_sdk::HWAccelType::kDxva2:
             return DXVA2Utils::getDXVA2DeviceManager().Get();
+#endif 
+
         default:
             break;
     }

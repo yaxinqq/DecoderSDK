@@ -92,8 +92,7 @@ if(WIN32)
 elseif(UNIX AND NOT APPLE)
     # Linux特定库
     list(APPEND GLOBAL_LINK_LIBRARIES
-        GL
-        GLU
+        EGL
         X11
         pthread
     )

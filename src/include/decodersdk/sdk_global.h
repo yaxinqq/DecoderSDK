@@ -8,10 +8,18 @@
 #endif
 
 #ifndef BUILD_STATIC
+#if defined(_WIN32) || defined(_WIN64)
 #if defined(DECODER_SDK_LIB)
 #define DECODER_SDK_API __declspec(dllexport)
 #else
 #define DECODER_SDK_API __declspec(dllimport)
+#endif
+#else
+#if defined(DECODER_SDK_LIB)
+#define DECODER_SDK_API __attribute__((visibility("default")))
+#else
+#define DECODER_SDK_API
+#endif
 #endif
 #else
 #define DECODER_SDK_API

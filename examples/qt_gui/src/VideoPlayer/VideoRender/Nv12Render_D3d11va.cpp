@@ -1,3 +1,4 @@
+#ifdef D3D11VA_AVAILABLE
 #include "Nv12Render_D3d11va.h"
 #include "Commonutils.h"
 
@@ -548,3 +549,5 @@ void Nv12Render_D3d11va::clearGL()
     glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT);
 }
+
+#endif

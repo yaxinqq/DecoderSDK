@@ -10,7 +10,7 @@ extern "C" {
 
 #include "demuxer/demuxer.h"
 #include "event_system/event_dispatcher.h"
-#include "logger/Logger.h"
+#include "logger/logger.h"
 #include "stream_sync/stream_sync_manager.h"
 #include "utils/common_utils.h"
 

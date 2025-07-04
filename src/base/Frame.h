@@ -157,6 +157,7 @@ public:
      */
     void setPktDts(int64_t dts);
 
+#if LIBAVUTIL_VERSION_MAJOR >= 57
     /**
      * @brief 获得时间基
      * @return AVRational 时间基
@@ -167,6 +168,7 @@ public:
      * @param tb 时间基
      */
     void setTimeBase(AVRational tb);
+#endif
 
     /**
      * @brief 获得帧率
@@ -201,6 +203,7 @@ public:
      */
     void setRepeatPict(int repeat);
 
+#if LIBAVUTIL_VERSION_MAJOR >= 58
     /**
      * @brief 获得隔行扫描
      * @return int 隔行扫描
@@ -222,6 +225,7 @@ public:
      * @param tff 顶部字段优先
      */
     void setTopFieldFirst(int tff);
+#endif
 
     /**
      * @brief 获得图像类型

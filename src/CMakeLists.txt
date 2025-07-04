@@ -259,6 +259,9 @@ target_link_libraries(${PROJECT_NAME}
         ${HARDWARE_ACCEL_LIBS}
 )
 
+if (CMAKE_CXX_COMPILER_VERSION VERSION_LESS "9.0")
+    target_link_libraries(${PROJECT_NAME} PRIVATE stdc++fs)
+endif()
 
 # 编译定义
 target_compile_definitions(${PROJECT_NAME}

@@ -1,5 +1,5 @@
 #pragma once
-
+#ifdef D3D11VA_AVAILABLE
 #include "VideoRender.h"
 
 #include <QOpenGLBuffer>
@@ -111,3 +111,5 @@ private:
     QOpenGLShaderProgram program_;
     QOpenGLBuffer vbo_;
 };
+
+#endif

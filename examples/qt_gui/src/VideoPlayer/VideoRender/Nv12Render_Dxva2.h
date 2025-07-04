@@ -1,5 +1,7 @@
 #ifndef NV12RENDER_DXVA2_H
 #define NV12RENDER_DXVA2_H
+#ifdef DXVA2_AVAILABLE
+
 #include "VideoRender.h"
 
 #include <QDebug>
@@ -94,4 +96,5 @@ private:
     void clearGL();
 };
 
+#endif
 #endif // NV12RENDER_DXVA2_H

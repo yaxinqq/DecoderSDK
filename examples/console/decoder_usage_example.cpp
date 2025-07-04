@@ -4,7 +4,9 @@
 #include <iostream>
 #include <thread>
 
+#ifdef _WIN32
 #include <windows.h>
+#endif
 
 #include "decodersdk/decoder_controller.h"
 

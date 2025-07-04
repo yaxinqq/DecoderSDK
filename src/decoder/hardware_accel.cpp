@@ -2,7 +2,7 @@
 
 #include <algorithm>
 
-#include "logger/Logger.h"
+#include "logger/logger.h"
 #include "utils/common_utils.h"
 #include "version.h"
 

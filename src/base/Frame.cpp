@@ -183,6 +183,7 @@ void Frame::setPktDts(int64_t dts)
         frame_->pkt_dts = dts;
 }
 
+#if LIBAVUTIL_VERSION_MAJOR >= 57
 AVRational Frame::timeBase() const
 {
     return frame_ ? frame_->time_base : AVRational{0, 1};
@@ -192,6 +193,7 @@ void Frame::setTimeBase(AVRational tb)
     if (frame_)
         frame_->time_base = tb;
 }
+#endif
 
 AVRational Frame::sampleAspectRatio() const
 {
@@ -223,6 +225,7 @@ void Frame::setRepeatPict(int repeat)
         frame_->repeat_pict = repeat;
 }
 
+#if LIBAVUTIL_VERSION_MAJOR >= 58
 int Frame::interlacedFrame() const
 {
     return frame_ ? !!(frame_->flags & AV_FRAME_FLAG_INTERLACED) : 0;
@@ -254,6 +257,7 @@ void Frame::setTopFieldFirst(int tff)
     else
         frame_->flags &= ~AV_FRAME_FLAG_TOP_FIELD_FIRST;
 }
+#endif
 
 AVPictureType Frame::pictType() const
 {
@@ -267,17 +271,25 @@ void Frame::setPictType(AVPictureType type)
 
 int Frame::keyFrame() const
 {
+#if LIBAVUTIL_VERSION_MAJOR >= 58
     return frame_ ? !!(frame_->flags & AV_FRAME_FLAG_KEY) : 0;
+#else
+    return frame_ ? frame_->key_frame : 0;
+#endif
 }
 void Frame::setKeyFrame(int key)
 {
     if (!frame_)
         return;
 
+#if LIBAVUTIL_VERSION_MAJOR >= 58
     if (key)
         frame_->flags |= AV_FRAME_FLAG_KEY;
     else
         frame_->flags &= ~AV_FRAME_FLAG_KEY;
+#else
+    frame_->key_frame = !!(key);
+#endif
 }
 
 AVColorSpace Frame::colorspace() const

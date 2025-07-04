@@ -48,7 +48,11 @@ option(BUILD_SHARED_LIBS "Build shared libraries" ON)
 # 添加选项控制具体编译哪些例子
 option(BUILD_CONSOLE_EXAMPLE "Build console example" ON)
 option(BUILD_QT_GUI_EXAMPLE "Build Qt GUI example" ON)
-option(BUILD_D3D_RENDER_EXAMPLE "Build D3D render example" ON)
+option(BUILD_D3D_RENDER_EXAMPLE "Build D3D render example" OFF)
+
+# 设置FFMpeg的根路径
+set(FFMPEG_ROOT_DIR "" CACHE PATH "Path to FFmpeg installation directory")
+
 # 设置编译选项
 if (CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
     add_compile_options(/Zc:__cplusplus)
@@ -96,9 +100,9 @@ set(MAGIC_ENUM_INCLUDE_DIR ${CMAKE_SOURCE_DIR}/external/magic_enum/include)
 if (CMAKE_SYSTEM_NAME STREQUAL "Windows")
     # Windows-x86_64
     # FFmpeg
-    set(FFMPEG_INCLUDE_DIR ${CMAKE_SOURCE_DIR}/external/ffmpeg/windows-x86_64/include)
-    set(FFMPEG_LIB_DIR ${CMAKE_SOURCE_DIR}/external/ffmpeg/windows-x86_64/lib)
-    set(FFMPEG_BIN_DIR ${CMAKE_SOURCE_DIR}/external/ffmpeg/windows-x86_64/bin)
+    set(FFMPEG_INCLUDE_DIR ${FFMPEG_ROOT_DIR}/include)
+    set(FFMPEG_LIB_DIR ${FFMPEG_ROOT_DIR}/lib)
+    set(FFMPEG_BIN_DIR ${FFMPEG_ROOT_DIR}/bin)
     # spdlog
     set(SPDLOG_INCLUDE_DIR ${CMAKE_SOURCE_DIR}/external/spdlog/windows-x86_64/include)
     set(SPDLOG_LIB_DIR ${CMAKE_SOURCE_DIR}/external/spdlog/windows-x86_64/lib)
@@ -109,12 +113,28 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Windows")
     set(FMT_LIB_DIR ${CMAKE_SOURCE_DIR}/external/fmt/windows-x86_64/lib)
 
 elseif (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR STREQUAL "aarch64")
-    # Kylin-aarch64
+    # like Kylin-aarch64
     
 
 elseif (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
-    # UOS Desktop 20
+    # like UOS Desktop 20
+    # FFmpeg
+    find_package(PkgConfig REQUIRED)
 
+    pkg_check_modules(AVCODEC REQUIRED libavcodec)
+    pkg_check_modules(AVDEVICE REQUIRED libavdevice)
+    pkg_check_modules(AVFILTER REQUIRED libavfilter)
+    pkg_check_modules(AVFORMAT REQUIRED libavformat)
+    pkg_check_modules(AVUTIL REQUIRED libavutil)
+    pkg_check_modules(SWRESAMPLE REQUIRED libswresample)
+    pkg_check_modules(SWSCALE REQUIRED libswscale)
+    # spdlog
+    set(SPDLOG_INCLUDE_DIR ${CMAKE_SOURCE_DIR}/external/spdlog/linux-x86_64/include)
+    set(SPDLOG_LIB_DIR ${CMAKE_SOURCE_DIR}/external/spdlog/linux-x86_64/lib)
+
+    # fmt
+    set(FMT_INCLUDE_DIR ${CMAKE_SOURCE_DIR}/external/fmt/linux-x86_64/include)
+    set(FMT_LIB_DIR ${CMAKE_SOURCE_DIR}/external/fmt/linux-x86_64/lib)
 
 else ()
     # 不支持的系统或处理器架构

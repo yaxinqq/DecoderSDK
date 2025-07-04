@@ -1,3 +1,4 @@
+#ifdef DXVA2_AVAILABLE
 #include "Nv12Render_Dxva2.h"
 #include "Commonutils.h"
 
@@ -542,3 +543,5 @@ void Nv12Render_Dxva2::clearGL()
     glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT);
 }
+
+#endif

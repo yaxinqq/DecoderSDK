@@ -36,6 +36,11 @@ target_include_directories(${EXAMPLE_TARGET} PRIVATE
 target_link_libraries(${EXAMPLE_TARGET} PRIVATE
     DecoderSDK  # 主库
 )
+if(UNIX AND NOT APPLE)
+    target_link_libraries(${EXAMPLE_TARGET} PRIVATE
+        Threads::Threads
+    )
+endif()
 
 # Windows特定设置
 if(WIN32)

@@ -7,7 +7,7 @@ extern "C" {
 
 #include "demuxer/demuxer.h"
 #include "event_system/event_dispatcher.h"
-#include "logger/Logger.h"
+#include "logger/logger.h"
 #include "stream_sync/stream_sync_manager.h"
 #include "utils/common_utils.h"
 
@@ -227,13 +227,27 @@ bool AudioDecoder::initResampleContext()
         return false;
     }
 
-    // 设置输入参数
+    // FFmpeg版本兼容性处理
+#if LIBAVUTIL_VERSION_INT >= AV_VERSION_INT(57, 28, 100)  // FFmpeg 5.1+
+    // 设置输入参数 (新版本API)
     av_opt_set_chlayout(swrCtx_, "in_chlayout", &codecCtx_->ch_layout, 0);
     av_opt_set_int(swrCtx_, "in_sample_rate", codecCtx_->sample_rate, 0);
     av_opt_set_sample_fmt(swrCtx_, "in_sample_fmt", codecCtx_->sample_fmt, 0);
 
-    // 设置输出参数
+    // 设置输出参数 (新版本API)
     av_opt_set_chlayout(swrCtx_, "out_chlayout", &codecCtx_->ch_layout, 0);
+#else
+    // 设置输入参数 (旧版本API - FFmpeg 4.4.2)
+    av_opt_set_int(swrCtx_, "in_channel_layout", codecCtx_->channel_layout, 0);
+    av_opt_set_int(swrCtx_, "in_channels", codecCtx_->channels, 0);
+    av_opt_set_int(swrCtx_, "in_sample_rate", codecCtx_->sample_rate, 0);
+    av_opt_set_sample_fmt(swrCtx_, "in_sample_fmt", codecCtx_->sample_fmt, 0);
+
+    // 设置输出参数 (旧版本API - FFmpeg 4.4.2)
+    av_opt_set_int(swrCtx_, "out_channel_layout", codecCtx_->channel_layout, 0);
+    av_opt_set_int(swrCtx_, "out_channels", codecCtx_->channels, 0);
+#endif
+    
     // 根据播放速度调整采样率
     int outSampleRate = static_cast<int>(codecCtx_->sample_rate * curSpeed);
     av_opt_set_int(swrCtx_, "out_sample_rate", outSampleRate, 0);
@@ -254,7 +268,7 @@ bool AudioDecoder::initResampleContext()
 Frame AudioDecoder::resampleFrame(const Frame &frame)
 {
     if (!needResample_ || !swrCtx_ || !frame.isValid()) {
-        return frame; // 返回原帧的拷贝（此处应该不会被触发，已在外部优化）
+        return frame;
     }
 
     if (!resampleFrame_.isValid()) {
@@ -267,16 +281,28 @@ Frame AudioDecoder::resampleFrame(const Frame &frame)
     const int inputSampleRate = frame.sampleRate();
     const int outputSampleRate = static_cast<int>(inputSampleRate * curSpeed);
 
-    // 检查是否需要重新配置
-    bool needReconfig =
-        (resampleFrame_.sampleRate() != outputSampleRate) ||
-        (resampleFrame_.get()->ch_layout.nb_channels != frame.get()->ch_layout.nb_channels) ||
-        (resampleFrame_.get()->format != frame.get()->format);
+    // 检查是否需要重新配置 - 兼容不同FFmpeg版本
+    bool needReconfig = false;
+#if LIBAVUTIL_VERSION_INT >= AV_VERSION_INT(57, 28, 100)  // FFmpeg 5.1+
+    needReconfig = (resampleFrame_.sampleRate() != outputSampleRate) ||
+                   (resampleFrame_.get()->ch_layout.nb_channels != frame.get()->ch_layout.nb_channels) ||
+                   (resampleFrame_.get()->format != frame.get()->format);
+#else
+    needReconfig = (resampleFrame_.sampleRate() != outputSampleRate) ||
+                   (resampleFrame_.get()->channels != frame.get()->channels) ||
+                   (resampleFrame_.get()->format != frame.get()->format);
+#endif
 
     if (needReconfig) {
         // 重新配置输出帧参数
         resampleFrame_.setPixelFormat(static_cast<AVPixelFormat>(frame.get()->format));
+#if LIBAVUTIL_VERSION_INT >= AV_VERSION_INT(57, 28, 100)  // FFmpeg 5.1+
         resampleFrame_.setChannelLayout(frame.channelLayout());
+#else
+        // FFmpeg 4.4.2使用旧的channel layout API
+        resampleFrame_.get()->channel_layout = frame.get()->channel_layout;
+        resampleFrame_.get()->channels = frame.get()->channels;
+#endif
         resampleFrame_.setSampleRate(outputSampleRate);
     }
 

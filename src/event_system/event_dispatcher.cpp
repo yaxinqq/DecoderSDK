@@ -1,7 +1,4 @@
 #include "event_dispatcher.h"
-
-#include "magic_enum/magic_enum.hpp"
-
 #include "logger/logger.h"
 
 DECODER_SDK_NAMESPACE_BEGIN
