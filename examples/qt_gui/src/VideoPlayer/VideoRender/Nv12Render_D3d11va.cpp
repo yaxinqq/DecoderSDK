@@ -26,6 +26,10 @@ void main(void)
 
 // 简化的片段着色器 - 直接显示RGB纹理
 const char *fsrc = R"(
+#ifdef GL_ES
+precision mediump float;
+#endif
+
 uniform sampler2D rgbTexture;
 varying vec2 textureOut;
 void main(void)
@@ -91,9 +95,11 @@ Nv12Render_D3d11va::~Nv12Render_D3d11va()
     }
 }
 
-void Nv12Render_D3d11va::initialize(const int width, const int height, const bool horizontal,
+void Nv12Render_D3d11va::initialize(const decoder_sdk::Frame &frame, const bool horizontal,
                                     const bool vertical)
 {
+    const auto width = frame.width();
+    const auto height = frame.height();
     qDebug() << "Initialize called with size:" << width << "x" << height;
 
     initializeOpenGLFunctions();
@@ -503,7 +509,7 @@ bool Nv12Render_D3d11va::processNV12ToRGB(const decoder_sdk::Frame &frame)
         return false;
     }
 
-     // 解锁WGL对象
+    // 解锁WGL对象
     if (!wglDXUnlockObjectsNV(wglD3DDevice_, 1, &wglTextureHandle_)) {
         qDebug() << "Failed to unlock WGL objects";
     }

@@ -42,7 +42,7 @@ public:
     explicit Nv12Render_Dxva2(IDirect3DDevice9Ex *d3d9Device = nullptr);
     ~Nv12Render_Dxva2();
 
-    void initialize(const int width, const int height, const bool horizontal = false,
+    void initialize(const decoder_sdk::Frame &frame, const bool horizontal = false,
                     const bool vertical = false) override;
     void render(const decoder_sdk::Frame &frame) override;
     void draw() override;

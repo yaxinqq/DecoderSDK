@@ -20,7 +20,7 @@ public:
     ~Nv12Render_Cuda() override;
 
 public:
-    void initialize(const int width, const int height, const bool horizontal = false,
+    void initialize(const decoder_sdk::Frame &frame, const bool horizontal = false,
                     const bool vertical = false) override;
     //
     void render(const decoder_sdk::Frame &frame) override;

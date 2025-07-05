@@ -26,6 +26,10 @@ void main(void)
 
 // RGB纹理渲染的片段着色器
 const char *fsrc = R"(
+        #ifdef GL_ES
+            precision mediump float;
+        #endif
+
         uniform sampler2D texture0;
         varying vec2 textureOut;
 
@@ -68,9 +72,11 @@ Nv12Render_Dxva2::~Nv12Render_Dxva2()
     }
 }
 
-void Nv12Render_Dxva2::initialize(const int width, const int height, const bool horizontal,
+void Nv12Render_Dxva2::initialize(const decoder_sdk::Frame &frame, const bool horizontal,
                                   const bool vertical)
 {
+    const auto width = frame.width();
+    const auto height = frame.height();
     qDebug() << "DXVA2 Initialize called with size:" << width << "x" << height;
 
     initializeOpenGLFunctions();

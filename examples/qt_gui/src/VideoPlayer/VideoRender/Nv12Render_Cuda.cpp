@@ -20,7 +20,9 @@ const char *vsrc = R"(
 	)";
 
 const char *fsrc = R"(
-        precision mediump float;
+        #ifdef GL_ES
+            precision mediump float;
+        #endif
         uniform sampler2D textureY;
         uniform sampler2D textureUV;
 
@@ -109,7 +111,7 @@ Nv12Render_Cuda::~Nv12Render_Cuda()
 }
 
 Q_GLOBAL_STATIC(QMutex, initMutex)
-void Nv12Render_Cuda::initialize(const int width, const int height, const bool horizontal,
+void Nv12Render_Cuda::initialize(const decoder_sdk::Frame &frame, const bool horizontal,
                                  const bool vertical)
 {
     initializeOpenGLFunctions();
@@ -234,6 +236,8 @@ void Nv12Render_Cuda::initialize(const int width, const int height, const bool h
     glDepthMask(false);*/
 
     // 纹理和缓冲的初始值
+    const auto width = frame.width();
+    const auto height = frame.height();
     const qopengl_GLsizeiptr frameSize =
         static_cast<qopengl_GLsizeiptr>(width) * static_cast<qopengl_GLsizeiptr>(height);
     const std::vector<unsigned char> initYData(frameSize, 0);

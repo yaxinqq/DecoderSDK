@@ -1,4 +1,5 @@
 ﻿#include "RenderWorker.h"
+#include "SoftwareRender.h"
 
 #ifdef CUDA_AVAILABLE
 #include "Nv12Render_Cuda.h"
@@ -51,19 +52,9 @@ QSharedPointer<VideoRender> RenderWorker::createRenderer(decoder_sdk::ImageForma
         case decoder_sdk::ImageFormat::kDxva2:
             return QSharedPointer<VideoRender>(new Nv12Render_Dxva2);
 #endif
-        // 对于软解格式，可以使用默认的CUDA渲染器或添加专门的软解渲染器
-        case decoder_sdk::ImageFormat::kNV12:
-        case decoder_sdk::ImageFormat::kNV21:
-        case decoder_sdk::ImageFormat::kYUV420P:
-        case decoder_sdk::ImageFormat::kYUV422P:
-        case decoder_sdk::ImageFormat::kYUV444P:
-            // 对于软解格式，使用CUDA渲染器作为默认选择
-            return nullptr;
-
         default:
-            qWarning() << "Unsupported pixel format:" << static_cast<int>(format)
-                       << ", using CUDA renderer as fallback";
-            return nullptr;
+            // 对于软解格式，使用软解渲染器作为默认选择
+            return QSharedPointer<VideoRender>(new SoftwareRender);
     }
 }
 
@@ -99,7 +90,7 @@ void RenderWorker::render(const decoder_sdk::Frame &frame)
         // 根据像素格式创建新的渲染器
         render_ = createRenderer(pixelFormat);
         if (render_) {
-            render_->initialize(width, height);
+            render_->initialize(frame);
             renderWidth_ = width;
             renderHeight_ = height;
             currentPixelFormat_ = pixelFormat;

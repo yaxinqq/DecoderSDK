@@ -29,8 +29,10 @@ QString StreamManager::openStream(VideoPlayerImpl *player, QString url, QString 
 
     // 开启解码
     decoder_sdk::Config config;
-    config.hwAccelType = decoder_sdk::HWAccelType::kCuda;
+    config.hwAccelType = decoder_sdk::HWAccelType::kNone;
+    config.swVideoOutFormat = decoder_sdk::ImageFormat::kBGRA;
     config.decodeMediaType = decoder_sdk::Config::DecodeMediaType::kVideo;
+    config.enableFrameRateControl = true;
     config.createHwContextCallback =
         std::bind(&StreamManager::createHwContextCallback, this, std::placeholders::_1);
     worker->open(url, config);
@@ -202,6 +204,7 @@ QString StreamManager::createStream(const QString &url, Stream::OpenMode openMod
     decoder_sdk::Config config;
     config.hwAccelType = decoder_sdk::HWAccelType::kD3d11va;
     config.decodeMediaType = decoder_sdk::Config::DecodeMediaType::kVideo;
+    config.enableFrameRateControl = true;
     config.createHwContextCallback =
         std::bind(&StreamManager::createHwContextCallback, this, std::placeholders::_1);
     worker->open(url, config);
@@ -279,7 +282,7 @@ void *StreamManager::createHwContextCallback(decoder_sdk::HWAccelType type)
 #ifdef DXVA2_AVAILABLE
         case decoder_sdk::HWAccelType::kDxva2:
             return DXVA2Utils::getDXVA2DeviceManager().Get();
-#endif 
+#endif
 
         default:
             break;

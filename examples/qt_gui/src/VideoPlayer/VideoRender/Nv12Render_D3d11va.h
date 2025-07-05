@@ -43,7 +43,7 @@ public:
     ~Nv12Render_D3d11va() override;
 
 public:
-    void initialize(const int width, const int height, const bool horizontal = false,
+    void initialize(const decoder_sdk::Frame &frame, const bool horizontal = false,
                     const bool vertical = false) override;
     void render(const decoder_sdk::Frame &frame) override;
     void draw() override;
@@ -74,7 +74,7 @@ private:
     ComPtr<ID3D11VideoContext> videoContext_;
     ComPtr<ID3D11VideoProcessor> videoProcessor_;
     ComPtr<ID3D11VideoProcessorEnumerator> videoProcessorEnum_;
-    
+
     // WGL互操作扩展函数指针
     PFNWGLDXOPENDEVICENVPROC wglDXOpenDeviceNV = nullptr;
     PFNWGLDXCLOSEDEVICENVPROC wglDXCloseDeviceNV = nullptr;
@@ -89,7 +89,7 @@ private:
     // 输入NV12纹理
     ComPtr<ID3D11Texture2D> inputNV12Texture_ = nullptr;
     ComPtr<ID3D11VideoProcessorInputView> inputView_ = nullptr;
-    
+
     // 输出RGB纹理
     ComPtr<ID3D11Texture2D> outputRGBTexture_ = nullptr;
     ComPtr<ID3D11VideoProcessorOutputView> outputView_ = nullptr;
