@@ -16,22 +16,46 @@
 #include <memory>
 #include <mutex>
 
-class SoftwareRender : public QOpenGLFunctions, public VideoRender {
+class SoftwareRender : public VideoRender {
 public:
     SoftwareRender();
     ~SoftwareRender() override;
 
-    // VideoRender接口实现
-    void initialize(const decoder_sdk::Frame &frame, const bool horizontal = false,
-                    const bool vertical = false) override;
-    void render(const decoder_sdk::Frame &frame) override;
-    void draw() override;
-    QOpenGLFramebufferObject *getFrameBuffer(const QSize &size) override;
+protected:
+    /**
+     * @brief 初始化VBO
+     * @param horizontal 是否水平镜像
+     * @param vertical 是否垂直镜像
+     */
+    bool initRenderVbo(const bool horizontal, const bool vertical) override;
+
+    /**
+     * @brief 初始化渲染Shader
+     * @param frame 视频帧
+     */
+    bool initRenderShader(const decoder_sdk::Frame &frame) override;
+
+    /**
+     * @brief 初始化渲染纹理
+     * @param frame 视频帧
+     */
+    bool initRenderTexture(const decoder_sdk::Frame &frame) override;
+
+    /**
+     * @brief 初始化硬件帧互操作资源
+     * @param frame 视频帧
+     */
+    bool initInteropsResource(const decoder_sdk::Frame &frame) override;
+
+    /**
+     * @brief 渲染视频帧，会绘制在一个FBO上
+     * @param frame 视频帧
+     */
+    bool renderFrame(const decoder_sdk::Frame &frame) override;
 
 private:
     // 初始化相关
     bool initializeShaders(decoder_sdk::ImageFormat format);
-    bool initializeVertexBuffer();
     void cleanup();
 
     // 纹理处理
@@ -39,7 +63,6 @@ private:
     bool uploadRGBTexture(const decoder_sdk::Frame &frame);
     bool createTextures(int width, int height, decoder_sdk::ImageFormat format);
     void clearTextures();
-    void swapTextures();
 
     // 着色器相关
     const char *getVertexShader() const;
@@ -52,36 +75,31 @@ private:
 
     // OpenGL错误检查
     bool checkGLError(const char *operation);
-
-private:
-    // 纹理同步锁
-    QMutex mtx_;
-
-    // OpenGL资源
-    QOpenGLShaderProgram program_;
-    QOpenGLBuffer vbo_;
-    std::unique_ptr<QOpenGLFramebufferObject> fbo_;
-
-    // 双缓冲纹理对象 - Current用于显示，Next用于上传
+    
+    // 纹理对象
     struct TextureSet {
         GLuint yTexture = 0;  // Y分量或RGB纹理
         GLuint uTexture = 0;  // U分量纹理
         GLuint vTexture = 0;  // V分量纹理
         GLuint uvTexture = 0; // UV交错纹理(NV12/NV21)
     };
+    /*
+     * @brief 绘制视频帧
+     *
+     * @prarm textures 纹理组
+     * @prarm format 图片格式
+     */
+    bool drawFrame(const TextureSet &textures, decoder_sdk::ImageFormat format);
 
-    TextureSet currentTextures_; // 当前显示的纹理
-    TextureSet nextTextures_;    // 下一帧准备的纹理
+private:
+    // OpenGL资源
+    QOpenGLShaderProgram program_;
+    QOpenGLBuffer vbo_;
 
-    // 渲染参数
-    int videoWidth_ = 0;
-    int videoHeight_ = 0;
-    bool flipHorizontal_ = false;
-    bool flipVertical_ = false;
-    decoder_sdk::ImageFormat currentFormat_ = decoder_sdk::ImageFormat::kUnknown;
+    // 当前纹理
+    TextureSet textures_;
 
     // 状态标志
-    bool initialized_ = false;
     bool texturesCreated_ = false;
 };
 

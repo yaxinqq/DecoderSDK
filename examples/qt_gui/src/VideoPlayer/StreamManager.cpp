@@ -29,8 +29,8 @@ QString StreamManager::openStream(VideoPlayerImpl *player, QString url, QString 
 
     // 开启解码
     decoder_sdk::Config config;
-    config.hwAccelType = decoder_sdk::HWAccelType::kNone;
-    config.swVideoOutFormat = decoder_sdk::ImageFormat::kBGRA;
+    config.hwAccelType = decoder_sdk::HWAccelType::kCuda;
+    config.swVideoOutFormat = decoder_sdk::ImageFormat::kNV12;
     config.decodeMediaType = decoder_sdk::Config::DecodeMediaType::kVideo;
     config.enableFrameRateControl = true;
     config.createHwContextCallback =

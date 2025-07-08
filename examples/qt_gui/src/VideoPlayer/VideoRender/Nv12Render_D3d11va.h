@@ -37,37 +37,89 @@ typedef BOOL(WINAPI *PFNWGLDXUNLOCKOBJECTSNVPROC)(HANDLE hDevice, GLint count, H
 
 #endif
 
-class Nv12Render_D3d11va : public QOpenGLFunctions, public VideoRender {
+class Nv12Render_D3d11va : public VideoRender {
 public:
-    Nv12Render_D3d11va(ID3D11Device *d3d11Device = nullptr);
+    Nv12Render_D3d11va();
     ~Nv12Render_D3d11va() override;
 
-public:
-    void initialize(const decoder_sdk::Frame &frame, const bool horizontal = false,
-                    const bool vertical = false) override;
-    void render(const decoder_sdk::Frame &frame) override;
-    void draw() override;
-    QOpenGLFramebufferObject *getFrameBuffer(const QSize &size) override;
+protected:
+    /**
+     * @brief 初始化VBO
+     * @param horizontal 是否水平镜像
+     * @param vertical 是否垂直镜像
+     */
+    bool initRenderVbo(const bool horizontal, const bool vertical) override;
+
+    /**
+     * @brief 初始化渲染Shader
+     * @param frame 视频帧
+     */
+    bool initRenderShader(const decoder_sdk::Frame &frame) override;
+
+    /**
+     * @brief 初始化渲染纹理
+     * @param frame 视频帧
+     */
+    bool initRenderTexture(const decoder_sdk::Frame &frame) override;
+
+    /**
+     * @brief 初始化硬件帧互操作资源
+     * @param frame 视频帧
+     */
+    bool initInteropsResource(const decoder_sdk::Frame &frame) override;
+
+    /**
+     * @brief 渲染视频帧，会绘制在一个FBO上
+     * @param frame 视频帧
+     */
+    bool renderFrame(const decoder_sdk::Frame &frame) override;
 
 private:
-    bool initializeD3D11();
+    /*
+     * @brief 初始化WGL互操作资源
+     */
     bool initializeWGLInterop();
-    bool initializeVideoProcessor();
+    /*
+     * @brief 初始化视频帧处理工具
+     * 
+     * @param width 视频帧宽
+     * @param height 视频帧高
+     */
+    bool initializeVideoProcessor(int width, int height);
+    /*
+     * @brief 清理申请的资源
+     */
     void cleanup();
+    /*
+     * @brief 加载WDG扩展
+     */
     bool loadWGLExtensions();
-    bool createRGBTexture(int width, int height);
+    /*
+     * @brief 创建OpenGL纹理
+     */
+    bool createRGBTexture();
+    /*
+     * @brief 将NV12的视频帧，转化为RGB格式的视频帧
+     *
+     * @param frame 帧数据
+     */
     bool processNV12ToRGB(const decoder_sdk::Frame &frame);
-    bool registerRGBTextureWithOpenGL();
-    bool validateOpenGLContext();
-    void clearGL();
+    /*
+     * @brief D3D Texture 和 OpenGL Texture 互注册（Zero-copy）
+     */
+    bool registerTextureWithOpenGL(int width, int height);
+
+    /*
+     * @brief 绘制视频帧
+     *
+     * @prarm id RGB纹理
+     */
+    bool drawFrame(GLuint id);
 
 private:
     // D3D11设备和上下文
     ComPtr<ID3D11Device> d3d11Device_;
     ComPtr<ID3D11DeviceContext> d3d11Context_;
-    ComPtr<ID3D11Device1> d3d11Device1_;
-    ComPtr<ID3D11DeviceContext1> d3d11Context1_;
-    bool ownD3DDevice_ = false;
 
     // VideoProcessor相关
     ComPtr<ID3D11VideoDevice> videoDevice_;
@@ -98,14 +150,6 @@ private:
     // OpenGL纹理
     GLuint glRGBTexture_ = 0;
     HANDLE wglTextureHandle_ = nullptr;
-
-    // 基本参数
-    int videoWidth_ = 0;
-    int videoHeight_ = 0;
-    int currentWidth_ = 0;
-    int currentHeight_ = 0;
-    bool flipHorizontal_ = false;
-    bool flipVertical_ = false;
 
     // OpenGL资源
     QOpenGLShaderProgram program_;

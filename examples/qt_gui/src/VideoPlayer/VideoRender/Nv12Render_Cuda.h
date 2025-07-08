@@ -14,28 +14,53 @@
 
 #include <condition_variable>
 
-class Nv12Render_Cuda : public QOpenGLFunctions, public VideoRender {
+class Nv12Render_Cuda : public VideoRender {
 public:
-    Nv12Render_Cuda(CUcontext ctx = nullptr);
+    Nv12Render_Cuda();
     ~Nv12Render_Cuda() override;
 
-public:
-    void initialize(const decoder_sdk::Frame &frame, const bool horizontal = false,
-                    const bool vertical = false) override;
-    //
-    void render(const decoder_sdk::Frame &frame) override;
-    //
-    void draw() override;
+protected:
+    /**
+     * @brief 初始化VBO
+     * @param horizontal 是否水平镜像
+     * @param vertical 是否垂直镜像
+     */
+    bool initRenderVbo(const bool horizontal, const bool vertical) override;
 
-    QOpenGLFramebufferObject *getFrameBuffer(const QSize &size) override;
+    /**
+     * @brief 初始化渲染Shader
+     * @param frame 视频帧
+     */
+    bool initRenderShader(const decoder_sdk::Frame &frame) override;
+
+    /**
+     * @brief 初始化渲染纹理
+     * @param frame 视频帧
+     */
+    bool initRenderTexture(const decoder_sdk::Frame &frame) override;
+
+    /**
+     * @brief 初始化硬件帧互操作资源
+     * @param frame 视频帧
+     */
+    bool initInteropsResource(const decoder_sdk::Frame &frame) override;
+
+    /**
+     * @brief 渲染视频帧，会绘制在一个FBO上
+     * @param frame 视频帧
+     */
+    bool renderFrame(const decoder_sdk::Frame &frame) override;
 
 private:
-    void clearGL();
+    /*
+     * @brief 绘制视频帧
+     * 
+     * @prarm idY Y纹理
+     * @param idUV UV纹理
+     */
+    void drawFrame(GLuint idY, GLuint idUV);
 
 private:
-    // 纹理同步锁
-    QMutex mtx_;
-
     // CUDA流同步
     std::condition_variable conditional_;
     std::mutex conditionalMtx_;
@@ -49,31 +74,21 @@ private:
     CUstream copyUVStream_ = nullptr;
 
     // CUDA的资源映射对象
-    CUgraphicsResource resourceCurrentY_ = nullptr;
-    CUgraphicsResource resourceCurrentUV_ = nullptr;
-    CUgraphicsResource resourceNextY_ = nullptr;
-    CUgraphicsResource resourceNextUV_ = nullptr;
+    CUgraphicsResource resourceY_ = nullptr;
+    CUgraphicsResource resourceUV_ = nullptr;
 
     // 用来从CUDA中拷贝数据
-    CUarray cudaArrayCurrentY_;
-    CUarray cudaArrayCurrentUV_;
-    CUarray cudaArrayNextY_;
-    CUarray cudaArrayNextUV_;
+    CUarray cudaArrayY_ = nullptr;
+    CUarray cudaArrayUV_ = nullptr;
 
     // 资源映射是否成功
-    bool resourceCurrentYRegisteredFailed_ = false;
-    bool resourceCurrentUVRegisteredFailed_ = false;
-    bool resourceNextYRegisteredFailed_ = false;
-    bool resourceNextUVRegisteredFailed_ = false;
-
-    // 是否需要删除CUDA上下文
-    bool needDestoryContext_ = false;
+    bool resourceYRegisteredFailed_ = false;
+    bool resourceUVRegisteredFailed_ = false;
 
     // OpenGL的相关对象
     QOpenGLShaderProgram program_;
     QOpenGLBuffer vbo_;
-    GLuint idCurrentY_ = 0, idCurrentUV_ = 0;
-    GLuint idNextY_ = 0, idNextUV_ = 0;
+    GLuint idY_ = 0, idUV_ = 0;
 };
 
 #endif

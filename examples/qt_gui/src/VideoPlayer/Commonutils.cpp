@@ -48,13 +48,19 @@ public:
 
     CUcontext getContext()
     {
-        std::call_once(init_flag_, [this]() { initialize(); });
-        return context_;
+        CUcontext context = nullptr;
+        cuDevicePrimaryCtxRetain(&context, device_);
+        return context;
+    }
+
+    CUdevice getDevice()
+    {
+        return device_;
     }
 
     bool isInitialized() const
     {
-        return context_ != nullptr;
+        return isInitialized_.load();
     }
 
     // 禁止拷贝和赋值
@@ -62,38 +68,41 @@ public:
     CudaManager &operator=(const CudaManager &) = delete;
 
 private:
-    CudaManager() = default;
+    CudaManager()
+    {
+        initialize();
+    }
 
     ~CudaManager()
     {
-        if (context_) {
-            // 注意：析构函数中不应该调用可能失败的CUDA函数
-            // 但为了资源清理，这里还是需要调用
-            cuDevicePrimaryCtxRelease(device_);
-        }
     }
 
     void initialize()
     {
-        if (cuInit(0) == CUDA_SUCCESS && cuDeviceGet(&device_, 0) == CUDA_SUCCESS &&
-            cuDevicePrimaryCtxRetain(&context_, device_) == CUDA_SUCCESS) {
-            // 初始化成功
-            qDebug() << "CUDA initialized successfully";
+        if (isInitialized_.load())
+            return;
+
+        isInitialized_.store(cuInit(0) == CUDA_SUCCESS && cuDeviceGet(&device_, 0) == CUDA_SUCCESS);
+        if (isInitialized_.load()) {
+            qDebug() << "CUDA initialized successfully!";
         } else {
-            qDebug() << "CUDA initialization failed";
-            context_ = nullptr;
+            qWarning() << "CUDA initialized failed!";
         }
     }
 
-    CUcontext context_ = nullptr;
     CUdevice device_ = 0;
-    std::once_flag init_flag_;
+    std::atomic_bool isInitialized_ = false;
 };
 
 // 全局访问函数
 CUcontext getCudaContext()
 {
     return CudaManager::getInstance().getContext();
+}
+
+CUdevice getCudaDevice()
+{
+    return CudaManager::getInstance().getDevice();
 }
 
 bool isCudaAvailable()

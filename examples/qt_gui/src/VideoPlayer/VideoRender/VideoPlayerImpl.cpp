@@ -272,7 +272,7 @@ void VideoPlayerImpl::renderToImage(const QSize &size, QImage &image)
 		{
 			curThreadRenderWorkerContext->makeCurrent(renderWorker_->surface());
 			curThreadRenderWorkerContext->functions()->glViewport(0, 0, size.width(), size.height());
-			auto *const frameBuffer = sharedRender->getFrameBuffer(size);
+			auto frameBuffer = sharedRender->getFrameBuffer();
 			if (frameBuffer)
 			{
 				image = frameBuffer->toImage();
@@ -280,7 +280,7 @@ void VideoPlayerImpl::renderToImage(const QSize &size, QImage &image)
 				GLuint fbo = frameBuffer->handle(); // 返回此帧缓冲对象的OpenGL帧缓冲对象句柄
 				curThreadRenderWorkerContext->functions()->glDeleteFramebuffers(1, &fbo);
 
-				delete frameBuffer;
+				frameBuffer.reset();
 			}
 			curThreadRenderWorkerContext->doneCurrent();
 

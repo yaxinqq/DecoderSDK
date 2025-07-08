@@ -3,7 +3,9 @@
 
 #include "decodersdk/frame.h"
 
+#include <QMutex>
 #include <QOpenGLBuffer>
+#include <QOpenGLExtraFunctions>
 #include <QOpenGLFramebufferObject>
 #include <QOpenGLFunctions>
 #include <QOpenGLShaderProgram>
@@ -11,13 +13,13 @@
 #include <QSharedPointer>
 
 class FboQueue;
-class VideoRender : protected QOpenGLFunctions {
+class VideoRender : protected QOpenGLExtraFunctions {
 public:
     VideoRender();
     virtual ~VideoRender();
 
     /**
-     * @description:
+     * @brief
      * 初始化OpenGL上下文，编译链接shader；如果是GPU直接与OpenGL对接数据，则会分配GPU内存或注册资源
      * @param frame		 视频帧
      * @param horizontal 是否水平镜像
@@ -27,71 +29,93 @@ public:
                     const bool vertical = false);
 
     /**
-     * @description: 渲染
+     * @brief 渲染
      */
     void render(const decoder_sdk::Frame &frame);
 
     /**
-     * @description: 绘制
+     * @brief 绘制
      */
     void draw();
 
     /**
-     * @description: 将图像渲染到缓存帧中，外部负责释放QOpenGLFramebufferObject
+     * @brief 将图像渲染到缓存帧中，外部负责释放QOpenGLFramebufferObject
      */
     QSharedPointer<QOpenGLFramebufferObject> getFrameBuffer();
 
+    /*
+     * @brief render是否有效，目前通过是否完成初始化来判断
+     *
+     * @return 是否有效
+     */
+    bool isValid() const;
+
 protected:
     /**
-     * @description: 初始化VBO
+     * @brief 初始化VBO
      * @param horizontal 是否水平镜像
      * @param vertical 是否垂直镜像
      */
-    virtual void initRenderVbo(const bool horizontal, const bool vertical) = 0;
+    virtual bool initRenderVbo(const bool horizontal, const bool vertical) = 0;
 
     /**
-     * @description: 初始化渲染Shader
+     * @brief 初始化渲染Shader
      * @param frame 视频帧
      */
-    virtual void initRenderShader(const decoder_sdk::Frame &frame) = 0;
+    virtual bool initRenderShader(const decoder_sdk::Frame &frame) = 0;
 
     /**
-     * @description: 初始化渲染纹理
+     * @brief 初始化渲染纹理
      * @param frame 视频帧
      */
-    virtual void initRenderTexture(const decoder_sdk::Frame &frame) = 0;
+    virtual bool initRenderTexture(const decoder_sdk::Frame &frame) = 0;
 
     /**
-     * @description: 初始化硬件帧互操作资源
+     * @brief 初始化硬件帧互操作资源
      * @param frame 视频帧
      */
-    virtual void initInteropsResource(const decoder_sdk::Frame &frame) = 0;
+    virtual bool initInteropsResource(const decoder_sdk::Frame &frame) = 0;
 
     /**
-     * @description: 渲染视频帧，会绘制在一个FBO上
+     * @brief 渲染视频帧，会绘制在一个FBO上
      * @param frame 视频帧
      */
-    virtual void renderFrame(const decoder_sdk::Frame &frame) = 0;
+    virtual bool renderFrame(const decoder_sdk::Frame &frame) = 0;
+
+protected:
+    /*
+     * @brief 创建一个默认的VBO，其中的顶点坐标和纹理坐标，分离式存储
+     *        前四组（x、y）是顶点坐标，后四组（x、y)是纹理坐标
+     */
+    void initDefaultVBO(QOpenGLBuffer &vbo, const bool horizontal, const bool vertical) const;
+
+    /*
+     * @brief OpenGL清屏
+     */
+    void clearGL();
 
 private:
-    void initializeFboDrawResources();
-    void drawFboToScreen(QSharedPointer<QOpenGLFramebufferObject> fbo);
+    bool initializeFboDrawResources(const QSize &size);
+    void drawFbo(QSharedPointer<QOpenGLFramebufferObject> fbo);
     QSharedPointer<QOpenGLFramebufferObject> createFbo(const QSize &size,
                                                        const QOpenGLFramebufferObjectFormat &fmt);
-    void updateCurrentFbo(QSharedPointer<QOpenGLFramebufferObject> newFbo);
 
 private:
-    // FBO队列
-    QScopedPointer<FboQueue> fboQueue_;
+    // 纹理交换锁
+    QMutex mutex_;
 
-    // 当前需处于绘制状态的FBO
+    // 处于后台更新状态的FBO
+    QSharedPointer<QOpenGLFramebufferObject> nextFbo_;
+    // 处于绘制状态的FBO
     QSharedPointer<QOpenGLFramebufferObject> curFbo_;
 
     // 用于绘制FBO到屏幕的资源
     QOpenGLShaderProgram fboDrawProgram_;
     QOpenGLBuffer fboDrawVbo_;
-    bool initialized_;
-    bool fboDrawResourcesInitialized_;
+    std::atomic_bool fboDrawResourcesInitialized_;
+
+    // 是否初始化完成
+    std::atomic_bool initialized_;
 };
 
 #endif // VIDEORENDER_H

@@ -216,200 +216,61 @@ void main(void)
 
 } // namespace
 
-SoftwareRender::SoftwareRender()
+SoftwareRender::SoftwareRender() : VideoRender()
 {
-    qDebug() << "SoftwareRender constructor";
 }
 
 SoftwareRender::~SoftwareRender()
 {
-    qDebug() << "SoftwareRender destructor";
     cleanup();
 }
 
-void SoftwareRender::initialize(const decoder_sdk::Frame &frame, const bool horizontal,
-                                const bool vertical)
+bool SoftwareRender::initRenderVbo(const bool horizontal, const bool vertical)
+{
+    initDefaultVBO(vbo_, horizontal, vertical);
+    return true;
+}
+
+bool SoftwareRender::initRenderShader(const decoder_sdk::Frame &frame)
+{
+    if (!initializeShaders(frame.pixelFormat())) {
+        qWarning() << "Failed to initialize shaders!";
+        return false;
+    }
+
+    return true;
+}
+
+bool SoftwareRender::initRenderTexture(const decoder_sdk::Frame &frame)
+{
+    return createTextures(frame.width(), frame.height(), frame.pixelFormat());
+}
+
+bool SoftwareRender::initInteropsResource(const decoder_sdk::Frame &frame)
+{
+    // software decode frame not need hardware interopt
+    return true;
+}
+
+bool SoftwareRender::renderFrame(const decoder_sdk::Frame &frame)
 {
     if (!frame.isValid()) {
-        qDebug() << "Invalid frame provided to initialize";
-        return;
+        return false;
     }
-
-    const auto format = frame.pixelFormat();
-    if (!isSupportedFormat(format)) {
-        qDebug() << "Unsupported pixel format:" << static_cast<int>(format);
-        return;
-    }
-
-    initializeOpenGLFunctions();
-
-    videoWidth_ = frame.width();
-    videoHeight_ = frame.height();
-    flipHorizontal_ = horizontal;
-    flipVertical_ = vertical;
-    currentFormat_ = format;
-
-    qDebug() << "Initializing SoftwareRender with size:" << videoWidth_ << "x" << videoHeight_
-             << "format:" << static_cast<int>(format) << "horizontal flip:" << horizontal
-             << "vertical flip:" << vertical;
-
-    // 清理之前的资源
-    cleanup();
-
-    // 初始化着色器
-    if (!initializeShaders(format)) {
-        qDebug() << "Failed to initialize shaders";
-        return;
-    }
-
-    // 初始化顶点缓冲区
-    if (!initializeVertexBuffer()) {
-        qDebug() << "Failed to initialize vertex buffer";
-        return;
-    }
-
-    // 创建双缓冲纹理
-    if (!createTextures(videoWidth_, videoHeight_, format)) {
-        qDebug() << "Failed to create textures";
-        return;
-    }
-
-    if (!checkGLError("initialize")) {
-        qDebug() << "OpenGL errors during initialization";
-        return;
-    }
-
-    initialized_ = true;
-    qDebug() << "SoftwareRender initialized successfully";
-}
-
-void SoftwareRender::render(const decoder_sdk::Frame &frame)
-{
-    if (!initialized_ || !frame.isValid()) {
-        qDebug() << "Not initialized or invalid frame - initialized:" << initialized_
-                 << "frame valid:" << frame.isValid();
-        return;
-    }
-
-    if (frame.pixelFormat() != currentFormat_) {
-        qDebug() << "Frame format changed from" << static_cast<int>(currentFormat_) << "to"
-                 << static_cast<int>(frame.pixelFormat()) << ", reinitializing";
-        initialize(frame, flipHorizontal_, flipVertical_);
-        return;
-    }
-
-    // 验证帧数据
-    if (!frame.data(0) || frame.linesize(0) <= 0) {
-        qDebug() << "Invalid frame data - data:" << frame.data(0)
-                 << "linesize:" << frame.linesize(0);
-        return;
-    }
-
-    // auto start = std::chrono::high_resolution_clock::now();
 
     // 上传纹理数据到next纹理
-    bool uploadSuccess = false;
-    if (isYUVFormat(currentFormat_)) {
-        uploadSuccess = uploadYUVTextures(frame);
-    } else if (isRGBFormat(currentFormat_)) {
-        uploadSuccess = uploadRGBTexture(frame);
-    }
-
-    if (!uploadSuccess) {
-        qDebug() << "Failed to upload texture data";
-        return;
+    const auto currentFormat = frame.pixelFormat();
+    if (isYUVFormat(currentFormat)) {
+        uploadYUVTextures(frame);
+    } else if (isRGBFormat(currentFormat)) {
+        uploadRGBTexture(frame);
     }
 
     if (!checkGLError("texture upload")) {
-        qDebug() << "OpenGL errors during texture upload";
-        return;
+        return true;
     }
 
-    // 切换纹理
-    swapTextures();
-
-    /* auto end = std::chrono::high_resolution_clock::now();
-     auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
-     qDebug() << "Frame rendered in" << duration.count() << "microseconds";*/
-}
-
-void SoftwareRender::draw()
-{
-    if (!initialized_ || !program_.isLinked()) {
-        qDebug() << "Not ready for drawing - initialized:" << initialized_
-                 << "program linked:" << (program_.isLinked());
-        return;
-    }
-
-    QMutexLocker lock(&mtx_);
-
-    program_.bind();
-    vbo_.bind();
-
-    // 设置纹理uniform
-    if (isYUVFormat(currentFormat_)) {
-        if (currentFormat_ == decoder_sdk::ImageFormat::kNV12 ||
-            currentFormat_ == decoder_sdk::ImageFormat::kNV21) {
-            // NV12/NV21格式
-            glActiveTexture(GL_TEXTURE0);
-            glBindTexture(GL_TEXTURE_2D, currentTextures_.yTexture);
-            program_.setUniformValue("yTexture", 0);
-
-            glActiveTexture(GL_TEXTURE1);
-            glBindTexture(GL_TEXTURE_2D, currentTextures_.uvTexture);
-            program_.setUniformValue("uvTexture", 1);
-        } else {
-            // YUV420P/422P/444P格式
-            glActiveTexture(GL_TEXTURE0);
-            glBindTexture(GL_TEXTURE_2D, currentTextures_.yTexture);
-            program_.setUniformValue("yTexture", 0);
-
-            glActiveTexture(GL_TEXTURE1);
-            glBindTexture(GL_TEXTURE_2D, currentTextures_.uTexture);
-            program_.setUniformValue("uTexture", 1);
-
-            glActiveTexture(GL_TEXTURE2);
-            glBindTexture(GL_TEXTURE_2D, currentTextures_.vTexture);
-            program_.setUniformValue("vTexture", 2);
-        }
-    } else if (isRGBFormat(currentFormat_)) {
-        // RGB格式
-        glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, currentTextures_.yTexture); // 复用yTexture_存储RGB数据
-        program_.setUniformValue("rgbTexture", 0);
-    }
-
-    // 设置顶点属性
-    program_.enableAttributeArray("vertexIn");
-    program_.enableAttributeArray("textureIn");
-    program_.setAttributeBuffer("vertexIn", GL_FLOAT, 0, 2, 0);
-    program_.setAttributeBuffer("textureIn", GL_FLOAT, 2 * 4 * sizeof(GLfloat), 2, 0);
-
-    // 绘制
-    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-
-    program_.disableAttributeArray("vertexIn");
-    program_.disableAttributeArray("textureIn");
-    program_.release();
-    vbo_.release();
-
-    checkGLError("draw");
-}
-
-QOpenGLFramebufferObject *SoftwareRender::getFrameBuffer(const QSize &size)
-{
-    QMutexLocker lock(&mtx_);
-
-    if (!fbo_ || fbo_->size() != size) {
-        fbo_ = std::make_unique<QOpenGLFramebufferObject>(size);
-    }
-
-    fbo_->bind();
-
-    // 在FBO中绘制
-    draw();
-
-    return fbo_.get();
+    return drawFrame(textures_, currentFormat);
 }
 
 bool SoftwareRender::initializeShaders(decoder_sdk::ImageFormat format)
@@ -439,43 +300,6 @@ bool SoftwareRender::initializeShaders(decoder_sdk::ImageFormat format)
     return true;
 }
 
-bool SoftwareRender::initializeVertexBuffer()
-{
-    // 设置顶点数据
-    GLfloat points[] = {
-        // 位置坐标
-        -1.0f,
-        1.0f,
-        1.0f,
-        1.0f,
-        -1.0f,
-        -1.0f,
-        1.0f,
-        -1.0f,
-        // 纹理坐标
-        flipHorizontal_ ? 1.0f : 0.0f,
-        flipVertical_ ? 1.0f : 0.0f,
-        flipHorizontal_ ? 0.0f : 1.0f,
-        flipVertical_ ? 1.0f : 0.0f,
-        flipHorizontal_ ? 1.0f : 0.0f,
-        flipVertical_ ? 0.0f : 1.0f,
-        flipHorizontal_ ? 0.0f : 1.0f,
-        flipVertical_ ? 0.0f : 1.0f,
-    };
-
-    if (!vbo_.create()) {
-        qDebug() << "Failed to create VBO";
-        return false;
-    }
-
-    vbo_.bind();
-    vbo_.allocate(points, sizeof(points));
-    vbo_.release();
-
-    qDebug() << "Vertex buffer initialized successfully";
-    return true;
-}
-
 void SoftwareRender::cleanup()
 {
     clearTextures();
@@ -484,8 +308,6 @@ void SoftwareRender::cleanup()
         vbo_.destroy();
     }
 
-    fbo_.reset();
-    initialized_ = false;
     texturesCreated_ = false;
 }
 
@@ -510,15 +332,8 @@ void SoftwareRender::clearTextures()
         }
     };
 
-    clearTextureSet(currentTextures_);
-    clearTextureSet(nextTextures_);
+    clearTextureSet(textures_);
     texturesCreated_ = false;
-}
-
-void SoftwareRender::swapTextures()
-{
-    QMutexLocker lock(&mtx_);
-    std::swap(currentTextures_, nextTextures_);
 }
 
 bool SoftwareRender::uploadYUVTextures(const decoder_sdk::Frame &frame)
@@ -531,17 +346,18 @@ bool SoftwareRender::uploadYUVTextures(const decoder_sdk::Frame &frame)
     const int width = frame.width();
     const int height = frame.height();
     const int yLinesize = frame.linesize(0);
+    const auto currentForamt = frame.pixelFormat();
 
     // 设置像素解包参数
     glPixelStorei(GL_UNPACK_ROW_LENGTH, yLinesize);
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
 
-    if (currentFormat_ == decoder_sdk::ImageFormat::kNV12 ||
-        currentFormat_ == decoder_sdk::ImageFormat::kNV21) {
+    if (currentForamt == decoder_sdk::ImageFormat::kNV12 ||
+        currentForamt == decoder_sdk::ImageFormat::kNV21) {
         // NV12/NV21格式：Y平面 + UV交错平面
 
         // 上传Y平面到next纹理
-        glBindTexture(GL_TEXTURE_2D, nextTextures_.yTexture);
+        glBindTexture(GL_TEXTURE_2D, textures_.yTexture);
         glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, GL_RED, GL_UNSIGNED_BYTE,
                         frame.data(0));
         if (!checkGLError("Y plane upload"))
@@ -550,7 +366,7 @@ bool SoftwareRender::uploadYUVTextures(const decoder_sdk::Frame &frame)
         // 上传UV平面
         const int uvLinesize = frame.linesize(1);
         glPixelStorei(GL_UNPACK_ROW_LENGTH, uvLinesize / 2); // UV是2字节一组
-        glBindTexture(GL_TEXTURE_2D, nextTextures_.uvTexture);
+        glBindTexture(GL_TEXTURE_2D, textures_.uvTexture);
         glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width / 2, height / 2, GL_RG, GL_UNSIGNED_BYTE,
                         frame.data(1));
         if (!checkGLError("UV plane upload"))
@@ -560,7 +376,7 @@ bool SoftwareRender::uploadYUVTextures(const decoder_sdk::Frame &frame)
         // YUV420P/422P/444P格式：分离的Y、U、V平面
 
         // 上传Y平面
-        glBindTexture(GL_TEXTURE_2D, nextTextures_.yTexture);
+        glBindTexture(GL_TEXTURE_2D, textures_.yTexture);
         glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, GL_RED, GL_UNSIGNED_BYTE,
                         frame.data(0));
         if (!checkGLError("Y plane upload"))
@@ -569,10 +385,10 @@ bool SoftwareRender::uploadYUVTextures(const decoder_sdk::Frame &frame)
         // 计算UV平面尺寸
         int uvWidth = width;
         int uvHeight = height;
-        if (currentFormat_ == decoder_sdk::ImageFormat::kYUV420P) {
+        if (currentForamt == decoder_sdk::ImageFormat::kYUV420P) {
             uvWidth /= 2;
             uvHeight /= 2;
-        } else if (currentFormat_ == decoder_sdk::ImageFormat::kYUV422P) {
+        } else if (currentForamt == decoder_sdk::ImageFormat::kYUV422P) {
             uvWidth /= 2;
         }
         // YUV444P保持原尺寸
@@ -580,7 +396,7 @@ bool SoftwareRender::uploadYUVTextures(const decoder_sdk::Frame &frame)
         // 上传U平面
         const int uLinesize = frame.linesize(1);
         glPixelStorei(GL_UNPACK_ROW_LENGTH, uLinesize);
-        glBindTexture(GL_TEXTURE_2D, nextTextures_.uTexture);
+        glBindTexture(GL_TEXTURE_2D, textures_.uTexture);
         glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, uvWidth, uvHeight, GL_RED, GL_UNSIGNED_BYTE,
                         frame.data(1));
         if (!checkGLError("U plane upload"))
@@ -589,7 +405,7 @@ bool SoftwareRender::uploadYUVTextures(const decoder_sdk::Frame &frame)
         // 上传V平面
         const int vLinesize = frame.linesize(2);
         glPixelStorei(GL_UNPACK_ROW_LENGTH, vLinesize);
-        glBindTexture(GL_TEXTURE_2D, nextTextures_.vTexture);
+        glBindTexture(GL_TEXTURE_2D, textures_.vTexture);
         glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, uvWidth, uvHeight, GL_RED, GL_UNSIGNED_BYTE,
                         frame.data(2));
         if (!checkGLError("V plane upload"))
@@ -614,11 +430,12 @@ bool SoftwareRender::uploadRGBTexture(const decoder_sdk::Frame &frame)
     const int width = frame.width();
     const int height = frame.height();
     const int linesize = frame.linesize(0);
+    const auto currentForamt = frame.pixelFormat();
 
     GLenum format = GL_RGB;
     int bytesPerPixel = 3;
-    if (currentFormat_ == decoder_sdk::ImageFormat::kRGBA ||
-        currentFormat_ == decoder_sdk::ImageFormat::kBGRA) {
+    if (currentForamt == decoder_sdk::ImageFormat::kRGBA ||
+        currentForamt == decoder_sdk::ImageFormat::kBGRA) {
         format = GL_RGBA;
         bytesPerPixel = 4;
     }
@@ -627,19 +444,18 @@ bool SoftwareRender::uploadRGBTexture(const decoder_sdk::Frame &frame)
     glPixelStorei(GL_UNPACK_ROW_LENGTH, linesize / bytesPerPixel);
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
 
-    // AMD兼容性改进：更严格的对齐处理
     const int expectedMinLinesize = width * bytesPerPixel;
     if (linesize == expectedMinLinesize) {
         // 无填充，使用默认设置
         glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
-        glPixelStorei(GL_UNPACK_ALIGNMENT, 4); // AMD驱动偏好4字节对齐
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
     } else {
         // 有填充，需要设置行长度
         glPixelStorei(GL_UNPACK_ROW_LENGTH, linesize / bytesPerPixel);
         glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
     }
 
-    glBindTexture(GL_TEXTURE_2D, nextTextures_.yTexture);
+    glBindTexture(GL_TEXTURE_2D, textures_.yTexture);
     glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, format, GL_UNSIGNED_BYTE, frame.data(0));
 
     bool success = checkGLError("RGB texture upload");
@@ -656,103 +472,93 @@ bool SoftwareRender::createTextures(int width, int height, decoder_sdk::ImageFor
 {
     clearTextures();
 
-    auto createTextureSet = [this, width, height, format](TextureSet &texSet) -> bool {
-        if (isYUVFormat(format)) {
-            // 创建Y纹理
-            glGenTextures(1, &texSet.yTexture);
-            glBindTexture(GL_TEXTURE_2D, texSet.yTexture);
-            glTexImage2D(GL_TEXTURE_2D, 0, GL_RED, width, height, 0, GL_RED, GL_UNSIGNED_BYTE,
+    if (isYUVFormat(format)) {
+        // 创建Y纹理
+        glGenTextures(1, &textures_.yTexture);
+        glBindTexture(GL_TEXTURE_2D, textures_.yTexture);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RED, width, height, 0, GL_RED, GL_UNSIGNED_BYTE, nullptr);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glBindTexture(GL_TEXTURE_2D, 0);
+        if (!checkGLError("Y texture creation"))
+            return false;
+
+        if (format == decoder_sdk::ImageFormat::kNV12 ||
+            format == decoder_sdk::ImageFormat::kNV21) {
+            // 创建UV交错纹理
+            glGenTextures(1, &textures_.uvTexture);
+            glBindTexture(GL_TEXTURE_2D, textures_.uvTexture);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RG, width / 2, height / 2, 0, GL_RG, GL_UNSIGNED_BYTE,
                          nullptr);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-            if (!checkGLError("Y texture creation"))
+            glBindTexture(GL_TEXTURE_2D, 0);
+            if (!checkGLError("UV texture creation"))
                 return false;
 
-            if (format == decoder_sdk::ImageFormat::kNV12 ||
-                format == decoder_sdk::ImageFormat::kNV21) {
-                // 创建UV交错纹理
-                glGenTextures(1, &texSet.uvTexture);
-                glBindTexture(GL_TEXTURE_2D, texSet.uvTexture);
-                glTexImage2D(GL_TEXTURE_2D, 0, GL_RG, width / 2, height / 2, 0, GL_RG,
-                             GL_UNSIGNED_BYTE, nullptr);
-                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-                if (!checkGLError("UV texture creation"))
-                    return false;
-            } else {
-                // 计算UV平面尺寸
-                int uvWidth = width;
-                int uvHeight = height;
-                if (format == decoder_sdk::ImageFormat::kYUV420P) {
-                    uvWidth /= 2;
-                    uvHeight /= 2;
-                } else if (format == decoder_sdk::ImageFormat::kYUV422P) {
-                    uvWidth /= 2;
-                }
-
-                // 创建U纹理
-                glGenTextures(1, &texSet.uTexture);
-                glBindTexture(GL_TEXTURE_2D, texSet.uTexture);
-                glTexImage2D(GL_TEXTURE_2D, 0, GL_RED, uvWidth, uvHeight, 0, GL_RED,
-                             GL_UNSIGNED_BYTE, nullptr);
-                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-                if (!checkGLError("U texture creation"))
-                    return false;
-
-                // 创建V纹理
-                glGenTextures(1, &texSet.vTexture);
-                glBindTexture(GL_TEXTURE_2D, texSet.vTexture);
-                glTexImage2D(GL_TEXTURE_2D, 0, GL_RED, uvWidth, uvHeight, 0, GL_RED,
-                             GL_UNSIGNED_BYTE, nullptr);
-                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-                if (!checkGLError("V texture creation"))
-                    return false;
-            }
-        } else if (isRGBFormat(format)) {
-            GLenum internalFormat = GL_RGB8; // 明确指定内部格式
-            GLenum dataFormat = GL_RGB;
-            if (format == decoder_sdk::ImageFormat::kRGBA ||
-                format == decoder_sdk::ImageFormat::kBGRA) {
-                internalFormat = GL_RGBA8;
-                dataFormat = GL_RGBA;
+        } else {
+            // 计算UV平面尺寸
+            int uvWidth = width;
+            int uvHeight = height;
+            if (format == decoder_sdk::ImageFormat::kYUV420P) {
+                uvWidth /= 2;
+                uvHeight /= 2;
+            } else if (format == decoder_sdk::ImageFormat::kYUV422P) {
+                uvWidth /= 2;
             }
 
-            glGenTextures(1, &texSet.yTexture);
-            glBindTexture(GL_TEXTURE_2D, texSet.yTexture);
-            glTexImage2D(GL_TEXTURE_2D, 0, internalFormat, width, height, 0, dataFormat,
-                         GL_UNSIGNED_BYTE, nullptr);
+            // 创建U纹理
+            glGenTextures(1, &textures_.uTexture);
+            glBindTexture(GL_TEXTURE_2D, textures_.uTexture);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RED, uvWidth, uvHeight, 0, GL_RED, GL_UNSIGNED_BYTE,
+                         nullptr);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-            if (!checkGLError("RGB texture creation"))
+            glBindTexture(GL_TEXTURE_2D, 0);
+            if (!checkGLError("U texture creation"))
+                return false;
+
+            // 创建V纹理
+            glGenTextures(1, &textures_.vTexture);
+            glBindTexture(GL_TEXTURE_2D, textures_.vTexture);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RED, uvWidth, uvHeight, 0, GL_RED, GL_UNSIGNED_BYTE,
+                         nullptr);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+            glBindTexture(GL_TEXTURE_2D, 0);
+            if (!checkGLError("V texture creation"))
                 return false;
         }
-        return true;
-    };
+    } else if (isRGBFormat(format)) {
+        GLenum internalFormat = GL_RGB8; // 明确指定内部格式
+        GLenum dataFormat = GL_RGB;
+        if (format == decoder_sdk::ImageFormat::kRGBA ||
+            format == decoder_sdk::ImageFormat::kBGRA) {
+            internalFormat = GL_RGBA8;
+            dataFormat = GL_RGBA;
+        }
 
-    // 创建双缓冲纹理
-    if (!createTextureSet(currentTextures_)) {
-        qDebug() << "Failed to create current texture set";
-        return false;
+        glGenTextures(1, &textures_.yTexture);
+        glBindTexture(GL_TEXTURE_2D, textures_.yTexture);
+        glTexImage2D(GL_TEXTURE_2D, 0, internalFormat, width, height, 0, dataFormat,
+                     GL_UNSIGNED_BYTE, nullptr);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glBindTexture(GL_TEXTURE_2D, 0);
+        if (!checkGLError("RGB texture creation"))
+            return false;
     }
 
-    if (!createTextureSet(nextTextures_)) {
-        qDebug() << "Failed to create next texture set";
-        return false;
-    }
-
-    glBindTexture(GL_TEXTURE_2D, 0);
     texturesCreated_ = true;
     return true;
 }
@@ -821,5 +627,63 @@ bool SoftwareRender::checkGLError(const char *operation)
         qDebug() << "OpenGL error in" << operation << ":" << error;
         return false;
     }
+    return true;
+}
+
+bool SoftwareRender::drawFrame(const TextureSet &textures, decoder_sdk::ImageFormat format)
+{
+    clearGL();
+
+    program_.bind();
+    vbo_.bind();
+
+    // 设置纹理uniform
+    if (isYUVFormat(format)) {
+        if (format == decoder_sdk::ImageFormat::kNV12 ||
+            format == decoder_sdk::ImageFormat::kNV21) {
+            // NV12/NV21格式
+            glActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_2D, textures.yTexture);
+            program_.setUniformValue("yTexture", 0);
+
+            glActiveTexture(GL_TEXTURE1);
+            glBindTexture(GL_TEXTURE_2D, textures.uvTexture);
+            program_.setUniformValue("uvTexture", 1);
+        } else {
+            // YUV420P/422P/444P格式
+            glActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_2D, textures.yTexture);
+            program_.setUniformValue("yTexture", 0);
+
+            glActiveTexture(GL_TEXTURE1);
+            glBindTexture(GL_TEXTURE_2D, textures.uTexture);
+            program_.setUniformValue("uTexture", 1);
+
+            glActiveTexture(GL_TEXTURE2);
+            glBindTexture(GL_TEXTURE_2D, textures.vTexture);
+            program_.setUniformValue("vTexture", 2);
+        }
+    } else if (isRGBFormat(format)) {
+        // RGB格式
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, textures.yTexture); // 复用yTexture_存储RGB数据
+        program_.setUniformValue("rgbTexture", 0);
+    }
+
+    // 设置顶点属性
+    program_.enableAttributeArray("vertexIn");
+    program_.enableAttributeArray("textureIn");
+    program_.setAttributeBuffer("vertexIn", GL_FLOAT, 0, 2, 0);
+    program_.setAttributeBuffer("textureIn", GL_FLOAT, 2 * 4 * sizeof(GLfloat), 2, 0);
+
+    // 绘制
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+
+    program_.disableAttributeArray("vertexIn");
+    program_.disableAttributeArray("textureIn");
+    program_.release();
+    vbo_.release();
+
+    checkGLError("draw");
     return true;
 }

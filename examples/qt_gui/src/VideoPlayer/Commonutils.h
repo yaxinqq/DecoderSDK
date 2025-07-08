@@ -5,6 +5,7 @@ void registerVideoMetaType();
 #include <cuda.h>
 namespace CudaUtils {
 CUcontext getCudaContext();
+CUdevice getCudaDevice();
 bool isCudaAvailable();
 } // namespace CudaUtils
 #endif
