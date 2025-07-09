@@ -13,7 +13,12 @@
 #include "Nv12Render_Dxva2.h"
 #endif
 
+#ifdef VAAPI_AVAILABLE
+#include "Nv12Render_Vaapi.h"
+#endif
+
 #include <QDebug>
+#include <QOpenGLContext>
 #include <QThread>
 
 RenderWorker::RenderWorker(QSurface *surface, QOpenGLContext *context, QObject *parent)
@@ -51,6 +56,10 @@ QSharedPointer<VideoRender> RenderWorker::createRenderer(decoder_sdk::ImageForma
 #ifdef DXVA2_AVAILABLE
         case decoder_sdk::ImageFormat::kDxva2:
             return QSharedPointer<VideoRender>(new Nv12Render_Dxva2);
+#endif
+#ifdef VAAPI_AVAILABLE
+        case decoder_sdk::ImageFormat::kVaapi:
+            return QSharedPointer<VideoRender>(new Nv12Render_Vaapi(context_));
 #endif
         default:
             // 对于软解格式，使用软解渲染器作为默认选择

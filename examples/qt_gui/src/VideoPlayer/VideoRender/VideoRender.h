@@ -82,6 +82,11 @@ protected:
      */
     virtual bool renderFrame(const decoder_sdk::Frame &frame) = 0;
 
+    /**
+     * @brief 清理渲染资源。会在OpenGL同步后调用，可以清理本轮次渲染视频帧的相关资源。
+     */
+    virtual void cleanupRenderResources() {}
+
 protected:
     /*
      * @brief 创建一个默认的VBO，其中的顶点坐标和纹理坐标，分离式存储

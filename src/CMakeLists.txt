@@ -36,6 +36,29 @@ foreach(MODULE ${MODULE_DIRS})
     list(APPEND ALL_MODULE_SOURCES ${${MODULE_UPPER}_SRC})
 endforeach()
 
+# 硬件加速文件收集
+set(ALL_HWACCEL_SRC )
+set(HWACCEL_DIRS )
+if (VAAPI_FOUND)
+    # 模块目录配置
+    list(APPEND HWACCEL_DIRS
+        vaapi
+    )
+endif()
+
+# 硬件相关源文件收集
+foreach(HWACCEL ${HWACCEL_DIRS})
+    string(TOUPPER ${HWACCEL} HWACCEL_UPPER)
+    file(GLOB ${HWACCEL_UPPER}_SRC
+        "${HWACCEL}/*.h"
+        "${HWACCEL}/*.cpp"
+        "${HWACCEL}/*.hpp"
+        "${HWACCEL}/*.cc"
+    )
+    source_group(${HWACCEL} FILES ${${HWACCEL_UPPER}_SRC})
+    list(APPEND ALL_HWACCEL_SRC ${${HWACCEL_UPPER}_SRC})
+endforeach()
+
 # 根目录源文件收集
 file(GLOB ROOT_SRC
     "*.h"
@@ -55,6 +78,7 @@ endif()
 add_library(${PROJECT_NAME} ${LIB_TYPE}
     ${ROOT_SRC}
     ${ALL_MODULE_SOURCES}
+    ${ALL_HWACCEL_SRC}
     # 添加Windows资源文件
     $<$<PLATFORM_ID:Windows>:DecoderSDK.rc>
 )

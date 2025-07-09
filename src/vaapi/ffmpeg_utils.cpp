@@ -1,0 +1,279 @@
+﻿#include "sys_deps.h"
+#include "ffmpeg_utils.h"
+#include "ffmpeg_compat.h"
+#include "vaapi_compat.h"
+
+DECODER_SDK_NAMESPACE_BEGIN
+INTERNAL_NAMESPACE_BEGIN
+
+namespace va_wrapper {
+// Returns a string representation of the supplied FFmpeg error id
+const char* ffmpeg_strerror(int errnum, char errbuf[BUFSIZ])
+{
+    if (av_strerror(errnum, errbuf, BUFSIZ) != 0)
+        sprintf(errbuf, "error %d", errnum);
+    return errbuf;
+}
+
+// Translates FFmpeg codec and profile to VA profile
+bool ffmpeg_to_vaapi_profile(enum AVCodecID ff_codec, int ff_profile, VAProfile *profile_ptr)
+{
+    int profile = -1;
+
+#define DEFINE_PROFILE(CODEC, FFMPEG_PROFILE, VA_PROFILE)       \
+    case U_GEN_CONCAT4(FF_PROFILE_,CODEC,_,FFMPEG_PROFILE):     \
+        profile = U_GEN_CONCAT3(VAProfile,CODEC,VA_PROFILE);    \
+        break
+
+    switch (ff_codec) {
+    case AV_CODEC_ID_MPEG2VIDEO:
+        switch (ff_profile) {
+            DEFINE_PROFILE(MPEG2, SIMPLE, Simple);
+            DEFINE_PROFILE(MPEG2, MAIN, Main);
+        }
+        break;
+    case AV_CODEC_ID_MPEG4:
+        switch (ff_profile) {
+            DEFINE_PROFILE(MPEG4, SIMPLE, Simple);
+            DEFINE_PROFILE(MPEG4, MAIN, Main);
+            DEFINE_PROFILE(MPEG4, ADVANCED_SIMPLE, AdvancedSimple);
+        }
+        break;
+    case AV_CODEC_ID_H264:
+        switch (ff_profile) {
+            DEFINE_PROFILE(H264, BASELINE, Baseline);
+            DEFINE_PROFILE(H264, CONSTRAINED_BASELINE, ConstrainedBaseline);
+            DEFINE_PROFILE(H264, MAIN, Main);
+            DEFINE_PROFILE(H264, HIGH, High);
+        }
+        break;
+    case AV_CODEC_ID_WMV3:
+    case AV_CODEC_ID_VC1:
+        switch (ff_profile) {
+            DEFINE_PROFILE(VC1, SIMPLE, Simple);
+            DEFINE_PROFILE(VC1, MAIN, Main);
+            DEFINE_PROFILE(VC1, ADVANCED, Advanced);
+        }
+        break;
+#if FFMPEG_HAS_HEVC_DECODER
+    case AV_CODEC_ID_HEVC:
+        switch (ff_profile) {
+            DEFINE_PROFILE(HEVC, MAIN, Main);
+            DEFINE_PROFILE(HEVC, MAIN_10, Main10);
+        }
+        break;
+#endif
+    case AV_CODEC_ID_VP8:
+        profile = VAProfileVP8Version0_3;
+        break;
+#if FFMPEG_HAS_VP9_DECODER
+    case AV_CODEC_ID_VP9:
+        profile = VAProfileVP9Profile0;
+        break;
+#endif
+    default:
+        break;
+    }
+#undef DEFINE_PROFILE
+
+    if (profile_ptr)
+        *profile_ptr = static_cast<VAProfile>(profile);
+    return profile != -1;
+}
+
+struct ffva_pix_fmt_map {
+    enum AVPixelFormat pix_fmt;
+    uint32_t va_fourcc;
+    uint32_t va_chroma;
+};
+
+#define DEFINE_FORMAT(FF_FORMAT, FOURCC, CHROMA)                \
+    { U_GEN_CONCAT(AV_PIX_FMT_,FF_FORMAT), VA_FOURCC FOURCC,    \
+            U_GEN_CONCAT(VA_RT_FORMAT_,CHROMA) }
+
+static const struct ffva_pix_fmt_map g_ffva_pix_fmt_map[] = {
+    DEFINE_FORMAT(GRAY8,                ('Y','8','0','0'), YUV400),
+    DEFINE_FORMAT(YUV420P,              ('I','4','2','0'), YUV420),
+    DEFINE_FORMAT(NV12,                 ('N','V','1','2'), YUV420),
+    DEFINE_FORMAT(YUYV422,              ('Y','U','Y','2'), YUV422),
+    DEFINE_FORMAT(UYVY422,              ('U','Y','V','Y'), YUV422),
+#if LIBAVUTIL_VERSION_INT >= AV_VERSION_INT(51,30,0)
+    DEFINE_FORMAT(NE(RGB0, 0BGR),       ('R','G','B','X'), RGB32),
+    DEFINE_FORMAT(NE(BGR0, 0RGB),       ('B','G','R','X'), RGB32),
+    DEFINE_FORMAT(NE(RGBA, ABGR),       ('R','G','B','A'), RGB32),
+    DEFINE_FORMAT(NE(BGRA, ARGB),       ('B','G','R','A'), RGB32),
+#endif
+    { AV_PIX_FMT_NONE, }
+};
+#undef DEFINE_FORMAT
+
+// Translates FFmpeg pixel format to a VA fourcc
+bool ffmpeg_to_vaapi_pix_fmt(enum AVPixelFormat pix_fmt, uint32_t *fourcc_ptr, uint32_t *chroma_ptr)
+{
+    const struct ffva_pix_fmt_map *m;
+
+    for (m = g_ffva_pix_fmt_map; m->pix_fmt != AV_PIX_FMT_NONE; m++) {
+        if (m->pix_fmt == pix_fmt){
+            break;
+        }
+    }
+
+    if (fourcc_ptr)
+        *fourcc_ptr = m->va_fourcc;
+    if (chroma_ptr)
+        *chroma_ptr = m->va_chroma;
+    return m->pix_fmt != AV_PIX_FMT_NONE;
+}
+
+// Translates VA fourcc to FFmpeg pixel format
+bool vaapi_to_ffmpeg_pix_fmt(uint32_t fourcc, enum AVPixelFormat *pix_fmt_ptr)
+{
+    const struct ffva_pix_fmt_map *m;
+
+    for (m = g_ffva_pix_fmt_map; m->va_fourcc != 0; m++) {
+        if (m->va_fourcc == fourcc){
+            break;
+        }
+    }
+
+    if (pix_fmt_ptr)
+        *pix_fmt_ptr = m->pix_fmt;
+    return m->pix_fmt != AV_PIX_FMT_NONE;
+}
+
+// Translates VA status to FFmpeg error
+int vaapi_to_ffmpeg_error(VAStatus va_status)
+{
+    int ret;
+
+    switch (va_status) {
+    case VA_STATUS_ERROR_OPERATION_FAILED:
+        ret = AVERROR(ENOTSUP);
+        break;
+    case VA_STATUS_ERROR_INVALID_DISPLAY:
+    case VA_STATUS_ERROR_INVALID_CONFIG:
+    case VA_STATUS_ERROR_INVALID_CONTEXT:
+    case VA_STATUS_ERROR_INVALID_SURFACE:
+    case VA_STATUS_ERROR_INVALID_BUFFER:
+    case VA_STATUS_ERROR_INVALID_IMAGE:
+    case VA_STATUS_ERROR_INVALID_SUBPICTURE:
+        ret = AVERROR(EINVAL);
+        break;
+    case VA_STATUS_ERROR_INVALID_PARAMETER:
+    case VA_STATUS_ERROR_INVALID_VALUE:
+        ret = AVERROR(EINVAL);
+        break;
+    case VA_STATUS_ERROR_ALLOCATION_FAILED:
+        ret = AVERROR(ENOMEM);
+        break;
+    case VA_STATUS_ERROR_UNIMPLEMENTED:
+        ret = AVERROR(ENOSYS);
+        break;
+    case VA_STATUS_ERROR_SURFACE_BUSY:
+        ret = AVERROR(EBUSY);
+        break;
+    default:
+        ret = AVERROR_UNKNOWN;
+        break;
+    }
+    return ret;
+}
+
+void save_yuv_to_file(FILE *file, unsigned char *yuv_data, int width, int height, VAImage *va_image) {
+	for (int i = 0; i < height; i++) {
+	   fwrite(yuv_data + va_image->offsets[0] + i * va_image->pitches[0], 1, width, file);
+	}
+
+	// Save UV plane (interleaved for NV12)
+	for (int i = 0; i < height / 2; i++) {
+	   fwrite(yuv_data + va_image->offsets[1] + i * va_image->pitches[1], 1, width, file);
+	}
+
+}
+
+void get_surface_image(VADisplay va_dpy, VASurfaceID surface, int width, int height)
+{
+	VAImage va_image;
+    VAStatus va_status;
+
+    // 设置需要的图像格式
+    VAImageFormat imageFormat;
+    imageFormat.fourcc = VA_FOURCC_NV12;
+    imageFormat.byte_order = VA_LSB_FIRST;
+    imageFormat.bits_per_pixel = 12; // NV12 has 12 bits per pixel
+
+	// Create a VAImage to hold the surface data
+	va_status = vaCreateImage(va_dpy, &imageFormat, width, height, &va_image);
+	if (va_status != VA_STATUS_SUCCESS) {
+	   fprintf(stderr, "Failed to create image: %d\n", va_status);
+	   return;
+	}
+
+	// Transfer the surface data to the image
+	va_status = vaGetImage(va_dpy, surface, 0, 0, width, height, va_image.image_id);;
+	if (va_status != VA_STATUS_SUCCESS) {
+	   fprintf(stderr, "Failed to get image: %d\n", va_status);
+	   vaDestroyImage(va_dpy, va_image.image_id);
+	   return;
+	}
+	
+	
+    vaDestroyImage(va_dpy, va_image.image_id);
+}
+
+int save_surface_to_file(VADisplay va_dpy, VASurfaceID surface, int width, int height, const char *filename) {
+    VAImage va_image;
+    VAStatus va_status;
+    void *image_data = NULL;
+    FILE *file = fopen(filename, "a+b");
+
+    if (!file) {
+        perror("Failed to open file");
+        return -1;
+    }
+    // 设置需要的图像格式
+    VAImageFormat imageFormat;
+    imageFormat.fourcc = VA_FOURCC_NV12;
+    imageFormat.byte_order = VA_LSB_FIRST;
+    imageFormat.bits_per_pixel = 12; // NV12 has 12 bits per pixel
+
+	// Create a VAImage to hold the surface data
+	va_status = vaCreateImage(va_dpy, &imageFormat, width, height, &va_image);
+	if (va_status != VA_STATUS_SUCCESS) {
+	   fprintf(stderr, "Failed to create image: %d\n", va_status);
+	   fclose(file);
+	   return -1;
+	}
+
+	// Transfer the surface data to the image
+	va_status = vaGetImage(va_dpy, surface, 0, 0, width, height, va_image.image_id);;
+	if (va_status != VA_STATUS_SUCCESS) {
+	   fprintf(stderr, "Failed to get image: %d\n", va_status);
+	   vaDestroyImage(va_dpy, va_image.image_id);
+	   fclose(file);
+	   return -1;
+	}
+
+	// Map the image buffer to CPU memory
+	va_status = vaMapBuffer(va_dpy, va_image.buf, &image_data);
+	if (va_status != VA_STATUS_SUCCESS) {
+	   fprintf(stderr, "Failed to map buffer: %d\n", va_status);
+	   vaDestroyImage(va_dpy, va_image.image_id);
+	   fclose(file);
+	   return -1;
+	}
+
+    // Save the YUV data to the file
+    save_yuv_to_file(file, (unsigned char *)image_data, width, height, &va_image);
+
+    // Unmap and clean up
+    vaUnmapBuffer(va_dpy, va_image.buf);
+    vaDestroyImage(va_dpy, va_image.image_id);
+    fclose(file);
+
+    return 0;
+}
+}
+
+INTERNAL_NAMESPACE_END
+DECODER_SDK_NAMESPACE_END

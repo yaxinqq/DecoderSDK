@@ -2,6 +2,7 @@
 
 #include "decodersdk/frame.h"
 
+#include <QDebug>
 #include <QVariant>
 
 #if defined(WIN32)
@@ -20,7 +21,6 @@ void registerVideoMetaType()
 #ifdef CUDA_AVAILABLE
 #include <mutex>
 
-#include <QDebug>
 namespace {
 inline bool check(int e, int iLine, const char *szFile)
 {
@@ -37,7 +37,7 @@ inline bool check(int e, int iLine, const char *szFile)
 #define ck(call) check(call, __LINE__, __FILE__)
 } // namespace
 
-namespace CudaUtils {
+namespace cuda_utils {
 class CudaManager {
 public:
     static CudaManager &getInstance()
@@ -109,14 +109,13 @@ bool isCudaAvailable()
 {
     return CudaManager::getInstance().isInitialized();
 }
-} // namespace CudaUtils
+} // namespace cuda_utils
 #endif
 
 #ifdef D3D11VA_AVAILABLE
-#include <QDebug>
 #include <mutex>
 
-namespace D3D11Utils {
+namespace d3d11_utils {
 class D3D11Manager {
 public:
     static D3D11Manager &getInstance()
@@ -202,14 +201,13 @@ bool isD3D11Available()
 {
     return D3D11Manager::getInstance().isInitialized();
 }
-} // namespace D3D11Utils
+} // namespace d3d11_utils
 #endif
 
 #ifdef DXVA2_AVAILABLE
-#include <QDebug>
 #include <mutex>
 
-namespace DXVA2Utils {
+namespace dxva2_utils {
 class DXVA2Manager {
 public:
     static DXVA2Manager &getInstance()
@@ -333,5 +331,141 @@ bool isDXVA2Available()
 {
     return DXVA2Manager::getInstance().isInitialized();
 }
-} // namespace DXVA2Utils
+} // namespace dxva2_utils
+#endif
+
+#ifdef VAAPI_AVAILABLE
+#include <mutex>
+
+#include <EGL/egl.h>
+#include <EGL/eglext.h>
+
+namespace egl {
+struct FuncTable
+{
+    PFNEGLCREATEIMAGEKHRPROC egl_create_image_KHR;
+    PFNEGLDESTROYIMAGEKHRPROC egl_destroy_image_KHR;
+    PFNGLEGLIMAGETARGETTEXTURE2DOESPROC gl_egl_image_target_texture2d_oes;
+};
+static struct FuncTable g_funcTable;
+
+bool loadFuncTable()
+{
+    g_funcTable.egl_create_image_KHR = (PFNEGLCREATEIMAGEKHRPROC)eglGetProcAddress("eglCreateImageKHR");
+    if (!g_funcTable.egl_create_image_KHR)
+    {
+        qCritical() << QStringLiteral("Can not get eglCreateImageKHR proc address!");
+        return false;
+    }
+    g_funcTable.egl_destroy_image_KHR = (PFNEGLDESTROYIMAGEKHRPROC)eglGetProcAddress("eglDestroyImageKHR");
+    if (!g_funcTable.egl_destroy_image_KHR)
+    {
+        qCritical() << QStringLiteral("Can not get eglDestroyImageKHR proc address!");
+        return false;
+    }
+    g_funcTable.gl_egl_image_target_texture2d_oes = (PFNGLEGLIMAGETARGETTEXTURE2DOESPROC)eglGetProcAddress("glEGLImageTargetTexture2DOES");
+    if (!g_funcTable.gl_egl_image_target_texture2d_oes)
+    {
+        qCritical() << QStringLiteral("Can not get glEGLImageTargetTexture2DOES proc address!");
+        return false;
+    }
+
+    return true;
+}
+
+EGLImageKHR egl_create_image_KHR(EGLDisplay dpy, EGLContext ctx, EGLenum target, EGLClientBuffer buffer, const EGLint *attrib_list)
+{
+    if (!g_funcTable.egl_create_image_KHR)
+    {
+        qCritical() << QStringLiteral("Can not get eglCreateImageKHR proc address!");
+        return nullptr;
+    }
+
+    return g_funcTable.egl_create_image_KHR(dpy, ctx, target, buffer, attrib_list);
+}
+
+EGLBoolean egl_destroy_image_KHR(EGLDisplay dpy, EGLImageKHR image)
+{
+    if (!g_funcTable.egl_destroy_image_KHR)
+    {
+        qCritical() << QStringLiteral("Can not get egl_destroy_image_KHR proc address!");
+        return 0;
+    }
+
+    return g_funcTable.egl_destroy_image_KHR(dpy, image);
+}
+
+void gl_egl_image_target_texture2d_oes(GLenum target, GLeglImageOES image)
+{
+    if (!g_funcTable.gl_egl_image_target_texture2d_oes)
+    {
+        qCritical() << QStringLiteral("Can not get glEGLImageTargetTexture2DOES proc address!");
+        return;
+    }
+
+    g_funcTable.gl_egl_image_target_texture2d_oes(target, image);
+}
+}
+
+namespace vaapi_utils {
+class VADisplayManager {
+public:
+    static VADisplayManager &getInstance()
+    {
+        static VADisplayManager instance;
+        return instance;
+    }
+
+    VADisplay getVADisplay()
+    {
+        std::call_once(init_flag_, [this]() { initialize(); });
+        return vaDisplay_;
+    }
+
+    bool isInitialized() const
+    {
+        return vaDisplay_ != nullptr;
+    }
+
+    // 禁止拷贝和赋值
+    VADisplayManager(const VADisplayManager &) = delete;
+    VADisplayManager &operator=(const VADisplayManager &) = delete;
+
+private:
+    VADisplayManager() = default;
+    ~VADisplayManager()
+    {
+        if (isInitialized()) {
+            decoder_sdk::destoryDrmVADisplay(vaDisplay_, fd_);
+        }
+    }
+
+    void initialize()
+    {
+        egl::loadFuncTable();
+
+        vaDisplay_ = decoder_sdk::createDrmVADisplay(fd_);
+        if (vaDisplay_ == nullptr) {
+            qWarning() << QStringLiteral("VADisplay initialize failed!");
+        } else {
+            qDebug() << QStringLiteral("VADisplay initialize successful!");
+        }
+    }
+
+    VADisplay vaDisplay_ = nullptr;
+    int fd_ = -1;
+    std::once_flag init_flag_;
+};
+
+// 全局访问函数
+VADisplay getVADisplayDRM()
+{
+    return VADisplayManager::getInstance().getVADisplay();
+}
+
+bool isVAAPIAvailable()
+{
+    return VADisplayManager::getInstance().isInitialized();
+}
+} // namespace vaapi_utils
 #endif

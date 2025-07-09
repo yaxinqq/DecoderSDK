@@ -89,7 +89,7 @@ void VideoRender::render(const decoder_sdk::Frame &frame)
     if (success) {
         // 检查是否支持fence同步（OpenGL 3.2+）
         QOpenGLContext *context = QOpenGLContext::currentContext();
-        if (context && context->hasExtension(QByteArrayLiteral("GL_ARB_sync"))) {
+        if (context && (context->hasExtension(QByteArrayLiteral("GL_ARB_sync")) || context->hasExtension("GL_OES_EGL_sync"))) {
             // 插入fence，异步等待渲染完成
             GLsync fence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
 
@@ -111,6 +111,7 @@ void VideoRender::render(const decoder_sdk::Frame &frame)
             std::swap(curFbo_, nextFbo_);
         }
     }
+    cleanupRenderResources();
 }
 
 void VideoRender::draw()

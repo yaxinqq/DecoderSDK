@@ -29,6 +29,12 @@ extern "C" {
 }
 #endif
 
+#ifdef VAAPI_AVAILABLE
+extern "C" {
+#include <libavutil/hwcontext_vaapi.h>
+}
+#endif
+
 DECODER_SDK_NAMESPACE_BEGIN
 INTERNAL_NAMESPACE_BEGIN
 

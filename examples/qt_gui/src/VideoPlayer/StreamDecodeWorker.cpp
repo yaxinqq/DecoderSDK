@@ -233,8 +233,7 @@ int StreamDecoder::resume()
 
 #if DEBUG_DECODER
         g_decodingDecoder.fetch_add(1);
-        qDebug() << QStringLiteral("****** decoding decoder count: %1
-******").arg(g_decodingDecoder.load()); 
+        qDebug() << QStringLiteral("****** decoding decoder count: %1 ******").arg(g_decodingDecoder.load()); 
 #endif
 
         return ret;
@@ -262,8 +261,7 @@ void StreamDecoder::openCallback(decoder_sdk::AsyncOpenResult result, bool openS
 
 #if DEBUG_DECODER
         g_decodingDecoder.fetch_add(1);
-        qDebug() << QStringLiteral("****** decoding decoder count: %1
-******").arg(g_decodingDecoder.load()); 
+        qDebug() << QStringLiteral("****** decoding decoder count: %1 ******").arg(g_decodingDecoder.load()); 
 #endif
     }
 }

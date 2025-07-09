@@ -43,7 +43,7 @@ const char *fsrc = R"(
 
 Nv12Render_D3d11va::Nv12Render_D3d11va()
     : VideoRender() 
-    , d3d11Device_(D3D11Utils::getD3D11Device())
+    , d3d11Device_(d3d11_utils::getD3D11Device())
 {
     if (d3d11Device_) {
         d3d11Device_->GetImmediateContext(&d3d11Context_);

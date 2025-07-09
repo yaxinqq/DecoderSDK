@@ -276,12 +276,17 @@ void *StreamManager::createHwContextCallback(decoder_sdk::HWAccelType type)
     switch (type) {
 #ifdef D3D11VA_AVAILABLE
         case decoder_sdk::HWAccelType::kD3d11va:
-            return D3D11Utils::getD3D11Device().Get();
+            return d3d11_utils::getD3D11Device().Get();
 #endif
 
 #ifdef DXVA2_AVAILABLE
         case decoder_sdk::HWAccelType::kDxva2:
-            return DXVA2Utils::getDXVA2DeviceManager().Get();
+            return dxva2_utils::getDXVA2DeviceManager().Get();
+#endif
+
+#ifdef VAAPI_AVAILABLE
+        case decoder_sdk::HWAccelType::kVaapi:
+            return vaapi_utils::getVADisplayDRM();
 #endif
 
         default:

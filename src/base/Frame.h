@@ -424,15 +424,6 @@ public:
      */
     void unref();
 
-#ifdef USE_VAAPI
-    /**
-     * @brief 复制帧
-     * @param srcFrame 源帧
-     * @return true 成功, false 失败
-     */
-    bool copyFrmae(AVFrame *srcFrame);
-#endif
-
 private:
     friend class FrameQueue;
 

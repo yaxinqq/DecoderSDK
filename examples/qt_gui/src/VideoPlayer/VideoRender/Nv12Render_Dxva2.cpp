@@ -45,7 +45,7 @@ const char *fsrc = R"(
 
 Nv12Render_Dxva2::Nv12Render_Dxva2()
     : VideoRender()
-    , d3d9Device_(DXVA2Utils::getDXVA2Device())
+    , d3d9Device_(dxva2_utils::getDXVA2Device())
 {
 
 }

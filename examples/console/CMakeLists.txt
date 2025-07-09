@@ -3,6 +3,11 @@ cmake_minimum_required(VERSION 3.16)
 
 project(decoder_usage_example)
 
+# Linux 特定组件
+if(UNIX AND NOT APPLE)
+    find_package(Threads REQUIRED)
+endif()
+
 # 设置可执行文件名
 set(EXAMPLE_TARGET decoder_usage_example)
 

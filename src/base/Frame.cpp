@@ -12,11 +12,7 @@ Frame::Frame(AVFrame *srcFrame) : frame_(nullptr), serial_(0), duration_(0), pts
 {
     if (srcFrame) {
         ensureAllocated();
-#ifdef USE_VAAPI
-        if (!copyFrmae(srcFrame)) {
-#else
         if (av_frame_ref(frame_, srcFrame) != 0) {
-#endif
             release();
         }
     }
@@ -27,11 +23,7 @@ Frame::Frame(const Frame &other)
 {
     if (other.frame_) {
         ensureAllocated();
-#ifdef USE_VAAPI
-        if (!copyFrmae(other.frame_)) {
-#else
         if (av_frame_ref(frame_, other.frame_) != 0) {
-#endif
             release();
         }
     }
@@ -47,11 +39,7 @@ Frame &Frame::operator=(const Frame &other)
 
         if (other.frame_) {
             ensureAllocated();
-#ifdef USE_VAAPI
-            if (!copyFrmae(other.frame_)) {
-#else
             if (av_frame_ref(frame_, other.frame_) != 0) {
-#endif
                 release();
             }
         }
@@ -464,15 +452,6 @@ void Frame::unref()
 {
     if (frame_) {
         av_frame_unref(frame_);
-
-#ifdef USE_VAAPI
-        if (frame_->data[0]) {
-            free(frame_->data[0]);
-        }
-        if (frame_->data[1]) {
-            free(frame_->data[1]);
-        }
-#endif
     }
 }
 
@@ -484,30 +463,6 @@ void Frame::release()
         frame_ = nullptr;
     }
 }
-
-#ifdef USE_VAAPI
-bool Frame::copyFrmae(AVFrame *srcFrame)
-{
-    if (!srcFrame)
-        return false;
-
-    frame_->width = srcFrame->width;
-    frame_->height = srcFrame->height;
-    frame_->format = srcFrame->format;
-
-    egl::RDDmaBufExternalMemory yBuf =
-        *reinterpret_cast<egl::RDDmaBufExternalMemory *>(srcFrame->data[0]);
-    frame_->data[0] = (uint8_t *)malloc(sizeof(egl::RDDmaBufExternalMemory));
-    memcpy(frame_->data[0], &(yBuf), sizeof(egl::RDDmaBufExternalMemory));
-
-    egl::RDDmaBufExternalMemory uvBuf =
-        *reinterpret_cast<egl::RDDmaBufExternalMemory *>(srcFrame->data[1]);
-    frame_->data[1] = (uint8_t *)malloc(sizeof(egl::RDDmaBufExternalMemory));
-    memcpy(frame_->data[1], &(uvBuf), sizeof(egl::RDDmaBufExternalMemory));
-
-    return true;
-}
-#endif
 
 INTERNAL_NAMESPACE_END
 DECODER_SDK_NAMESPACE_END

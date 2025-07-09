@@ -68,7 +68,7 @@ inline bool check(int e, int iLine, const char *szFile)
 
 #define ck(call) check(call, __LINE__, __FILE__)
 
-Nv12Render_Cuda::Nv12Render_Cuda() : VideoRender(), context_(CudaUtils::getCudaContext())
+Nv12Render_Cuda::Nv12Render_Cuda() : VideoRender(), context_(cuda_utils::getCudaContext())
 {
 }
 
@@ -89,7 +89,7 @@ Nv12Render_Cuda::~Nv12Render_Cuda()
         ck(cuStreamDestroy(copyUVStream_));
 
     if (context_) {
-        ck(cuDevicePrimaryCtxRelease(CudaUtils::getCudaDevice()));
+        ck(cuDevicePrimaryCtxRelease(cuda_utils::getCudaDevice()));
     }
 
     vbo_.destroy();

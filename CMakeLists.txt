@@ -260,6 +260,7 @@ elseif(APPLE)
         add_definitions(-DCUDA_AVAILABLE)
         message(STATUS "Found CUDA Toolkit: ${CUDAToolkit_VERSION}")
     else()
+        # 用老版工具再检测一次
         find_package(CUDA QUIET)
         if(CUDA_FOUND)
             set(CUDA_INCLUDE_DIR ${CUDA_INCLUDE_DIRS})
