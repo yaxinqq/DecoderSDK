@@ -290,7 +290,7 @@ void StreamDecoder::streamEventCallback(decoder_sdk::EventType type,
         case decoder_sdk::EventType::kStreamOpening:
             isOpening_.store(true);
             break;
-        case decoder_sdk::EventType::kDecodeStarted:
+        case decoder_sdk::EventType::kDecodeFirstFrame:
             decode();
             break;
         case decoder_sdk::EventType::kStreamClosed: {

@@ -17,6 +17,8 @@ private slots:
     void onStopBtnClicked();
     void onPauseBtnClicked();
     void onResumeBtnClicked();
+    void onStartRecordBtnClicked();
+    void onStopRecordBtnClicked();
 
 private:
     void initUi();

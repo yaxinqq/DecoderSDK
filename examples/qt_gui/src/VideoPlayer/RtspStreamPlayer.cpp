@@ -70,6 +70,21 @@ void RtspStreamPlayer::resume()
 	StreamManager::instance()->resume(impl_);
 }
 
+void RtspStreamPlayer::startRecoding(const QString &recoderPath)
+{
+    StreamManager::instance()->startRecoding(impl_, recoderPath);
+}
+
+void RtspStreamPlayer::stopRecoding()
+{
+    StreamManager::instance()->stopRecoding(impl_);
+}
+
+bool RtspStreamPlayer::isRecording() const
+{
+    return StreamManager::instance()->isRecoding(impl_);
+}
+
 bool RtspStreamPlayer::switchStream(const QString &url)
 {
 	// 如果当前没执行过open函数，则返回

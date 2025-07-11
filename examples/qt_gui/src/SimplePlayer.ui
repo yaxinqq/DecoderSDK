@@ -6,8 +6,8 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>353</width>
-    <height>326</height>
+    <width>687</width>
+    <height>427</height>
    </rect>
   </property>
   <property name="windowTitle">
@@ -51,6 +51,20 @@
       <widget class="QPushButton" name="stopBtn">
        <property name="text">
         <string>停止</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="startRecordBtn">
+       <property name="text">
+        <string>开始录制</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="stopRecordBtn">
+       <property name="text">
+        <string>停止录制</string>
        </property>
       </widget>
      </item>

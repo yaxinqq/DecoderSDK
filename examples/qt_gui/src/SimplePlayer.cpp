@@ -2,6 +2,7 @@
 
 #include "ui_SimplePlayer.h"
 
+#include <QFileDialog>
 #include <QUuid>
 
 SimplePlayer::SimplePlayer(QWidget *parent) : QWidget(parent), ui{new Ui::SimplePlayer}
@@ -39,6 +40,24 @@ void SimplePlayer::onResumeBtnClicked()
     ui->player->resume();
 }
 
+void SimplePlayer::onStartRecordBtnClicked()
+{
+    const QString path =
+        QFileDialog::getSaveFileName(this, QStringLiteral("保存文件"), QStringLiteral(""),
+                                     QStringLiteral("MP4 (*.mp4)"));
+
+    if (path.isEmpty()) {
+        return;
+    }
+
+    ui->player->startRecoding(path);
+}
+
+void SimplePlayer::onStopRecordBtnClicked()
+{
+    ui->player->stopRecoding();
+}
+
 void SimplePlayer::initUi()
 {
     ui->urlEdit->setText(QStringLiteral("C:/Users/zhkj/Desktop/test_video/test.mp4"));
@@ -50,4 +69,6 @@ void SimplePlayer::initConnection()
     connect(ui->stopBtn, &QPushButton::clicked, this, &SimplePlayer::onStopBtnClicked);
     connect(ui->pauseBtn, &QPushButton::clicked, this, &SimplePlayer::onPauseBtnClicked);
     connect(ui->resumeBtn, &QPushButton::clicked, this, &SimplePlayer::onResumeBtnClicked);
+    connect(ui->startRecordBtn, &QPushButton::clicked, this, &SimplePlayer::onStartRecordBtnClicked);
+    connect(ui->stopRecordBtn, &QPushButton::clicked, this, &SimplePlayer::onStopRecordBtnClicked);
 }

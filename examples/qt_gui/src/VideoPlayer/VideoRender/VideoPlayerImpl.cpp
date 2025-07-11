@@ -352,12 +352,15 @@ void VideoPlayerImpl::onDecoderEventChanged(decoder_sdk::EventType type,
             qWarning() << QStringLiteral("播放失败，解码器资源不足。");
             break;
         case decoder_sdk::EventType::kRecordingStarted:
+            qInfo() << QStringLiteral("开始录制视频");
             emit recordStarted();
             break;
         case decoder_sdk::EventType::kRecordingStopped:
+            qInfo() << QStringLiteral("结束录制视频");
             emit recordStopped();
             break;
         case decoder_sdk::EventType::kRecordingError:
+            qInfo() << QStringLiteral("录制视频出错");
             emit recordErrorOccured();
             break;
         default:
