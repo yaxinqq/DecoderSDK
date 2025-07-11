@@ -4,6 +4,7 @@
 #include <thread>
 
 extern "C" {
+#include <libavutil/error.h>
 #include <libavutil/time.h>
 #include <libswscale/swscale.h>
 }
@@ -16,6 +17,9 @@ extern "C" {
 
 namespace {
 const std::string kVideoDecoderName = "Video Decoder";
+
+// 硬解出错，降级到软解的容忍时间
+constexpr int kDefaultFallbackToleranceTime = 1000; // 单位：毫秒
 }
 
 DECODER_SDK_NAMESPACE_BEGIN
@@ -45,6 +49,9 @@ void VideoDecoder::init(const Config &config)
     softPixelFormat_ = utils::imageFormat2AVPixelFormat(config.swVideoOutFormat);
     requireFrameInMemory_ = config.requireFrameInSystemMemory;
     hwContextCallbeck_ = config.createHwContextCallback;
+    
+    // 新增：配置硬件解码退化选项
+    enableHardwareFallback_ = config.enableHardwareFallback;
 }
 
 bool VideoDecoder::open()
@@ -88,6 +95,7 @@ void VideoDecoder::decodeLoop()
     bool hasKeyFrame = false;
     bool readFirstFrame = false;
     bool occuredError = false;
+    std::optional<std::chrono::high_resolution_clock::time_point> errorStartTime;
 
     resetStatistics();
     while (isRunning_.load()) {
@@ -136,6 +144,32 @@ void VideoDecoder::decodeLoop()
         // 发送包到解码器
         int ret = avcodec_send_packet(codecCtx_, packet.get());
         if (ret < 0 && ret != AVERROR(EAGAIN) && ret != AVERROR_EOF) {
+            // 判断是否需要退化到软解
+            if (readFirstFrame || !shouldFallbackToSoftware(ret))
+                continue;
+
+            // 记录出错时间
+            const auto currentTime = std::chrono::high_resolution_clock::now();
+            if (!errorStartTime.has_value()) {
+                errorStartTime = currentTime; // 记录第一次错误时间
+            }
+
+            // 判断是否超过容忍时间
+            if (std::chrono::duration_cast<std::chrono::milliseconds>(currentTime -
+                                                                      errorStartTime.value())
+                    .count() < kDefaultFallbackToleranceTime) {
+                continue; // 未超过容忍时间，继续等待
+            }
+
+            // 如果超过容忍时间，尝试软解
+            if (reinitializeWithSoftwareDecoder()) {
+                LOG_INFO("Video Decoder: Fallback to software decoding.");
+                hasKeyFrame = false;    // 重置关键帧标志
+                errorStartTime.reset(); // 重置错误计时
+            } else {
+                LOG_ERROR("Video Decoder: Failed to reinitialize with software decoder.");
+                break; // 退出解码循环
+            }
             continue;
         }
 
@@ -169,6 +203,7 @@ void VideoDecoder::decodeLoop()
         // 如果是第一帧，发出事件
         if (!readFirstFrame) {
             readFirstFrame = true;
+            errorStartTime.reset(); // 重置错误计时
             handleFirstFrame(kVideoDecoderName, MediaType::kMediaTypeVideo);
         }
 
@@ -378,6 +413,86 @@ void VideoDecoder::updateFrameRate(AVRational frameRate)
     }
 
     frameRate_ = newFrameRate;
+}
+
+bool VideoDecoder::shouldFallbackToSoftware(int errorCode) const
+{
+    // 检查退化条件：
+    // 1. 启用了硬件解码退化功能
+    // 2. 当前使用硬件解码（有硬件设备上下文）
+    // 3. 错误码是 AVERROR_INVALIDDATA
+    // 4. 还未解码出过视频帧
+    // 5. 硬件解码还未失败过（避免重复尝试）
+    return enableHardwareFallback_ && codecCtx_ && codecCtx_->hw_device_ctx &&
+           errorCode == AVERROR_INVALIDDATA;
+}
+
+bool VideoDecoder::reinitializeWithSoftwareDecoder()
+{
+    LOG_INFO("Attempting to reinitialize decoder with software decoding");
+    
+    // 关闭当前解码器
+    if (codecCtx_) {
+        avcodec_free_context(&codecCtx_);
+        codecCtx_ = nullptr;
+    }
+    
+    // 重置硬件加速器
+    hwAccel_.reset();
+    
+    // 重新打开解码器（不使用硬件加速）
+    auto *const formatContext = demuxer_->formatContext();
+    if (!formatContext) {
+        LOG_ERROR("Format context is null during software fallback");
+        return false;
+    }
+
+    stream_ = formatContext->streams[streamIndex_];
+    if (!stream_) {
+        LOG_ERROR("Stream is null during software fallback");
+        return false;
+    }
+
+    // 查找解码器（强制使用软件解码器）
+    const AVCodec *codec = avcodec_find_decoder(stream_->codecpar->codec_id);
+    if (!codec) {
+        LOG_ERROR("Software decoder not found for codec {}", static_cast<int>(stream_->codecpar->codec_id));
+        return false;
+    }
+
+    // 分配解码器上下文
+    codecCtx_ = avcodec_alloc_context3(codec);
+    if (!codecCtx_) {
+        LOG_ERROR("Failed to allocate software decoder context");
+        return false;
+    }
+
+    // 复制流参数到解码器上下文
+    int ret = avcodec_parameters_to_context(codecCtx_, stream_->codecpar);
+    if (ret < 0) {
+        char errBuf[AV_ERROR_MAX_STRING_SIZE];
+        av_strerror(ret, errBuf, sizeof(errBuf));
+        LOG_ERROR("Failed to copy stream parameters to software decoder context: {}", errBuf);
+        avcodec_free_context(&codecCtx_);
+        return false;
+    }
+
+    // 打开软件解码器（不设置硬件加速）
+    ret = avcodec_open2(codecCtx_, codec, nullptr);
+    if (ret < 0) {
+        char errBuf[AV_ERROR_MAX_STRING_SIZE];
+        av_strerror(ret, errBuf, sizeof(errBuf));
+        LOG_ERROR("Failed to open software decoder: {}", errBuf);
+        avcodec_free_context(&codecCtx_);
+        return false;
+    }
+
+    LOG_INFO("Successfully switched to software decoding for codec: {}", codec->name);
+    
+    // 刷新解码器缓冲区
+    avcodec_flush_buffers(codecCtx_);
+    
+    return true;
 }
 
 INTERNAL_NAMESPACE_END

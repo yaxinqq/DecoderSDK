@@ -93,6 +93,20 @@ private:
      */
     Frame convertSoftwareFrame(const Frame &frame);
 
+    /**
+     * @brief 检查是否应该退回到软件解码
+     * @param errorCode 错误码
+     * @param errorCode 错误码
+     * @return 是否应该退回到软件解码
+     */
+    bool shouldFallbackToSoftware(int errorCode) const;
+    
+    /**
+     * @brief 重新初始化软件解码器
+     * @return 是否成功初始化
+     */
+    bool reinitializeWithSoftwareDecoder();
+
 private:
     // 检测到的帧率
     double frameRate_;
@@ -114,6 +128,10 @@ private:
     SwsContext *swsCtx_ = nullptr;
     Frame memoryFrame_;
     Frame swsFrame_;
+
+    // 硬件解码退化相关
+    // 是否启用硬件解码退化
+    bool enableHardwareFallback_ = true;       
 };
 
 INTERNAL_NAMESPACE_END

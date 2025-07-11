@@ -375,6 +375,9 @@ struct Config {
     // 否则可能会因为另外类型媒体数据的PackQueue满队，导致程序阻塞
     DecodeMediaType decodeMediaType = DecodeMediaType::kAll;
 
+    // 硬件解码自动退化到软解的配置，是否启用硬件解码失败时自动退化到软解
+    bool enableHardwareFallback = true;
+
     // 硬件上下文创建回调。
     // 每次创建解码器时，会调用一次回调，用于获取当前所选解码类型对应的硬件上下文。
     // 若希望多个解码器共用同一个上下文，请自行缓存并复用上下文指针。上下文指针由上层管理。
