@@ -44,7 +44,7 @@ void SimplePlayer::onStartRecordBtnClicked()
 {
     const QString path =
         QFileDialog::getSaveFileName(this, QStringLiteral("保存文件"), QStringLiteral(""),
-                                     QStringLiteral("MP4 (*.mp4)"));
+                                     QStringLiteral("* (*.*)"));
 
     if (path.isEmpty()) {
         return;

@@ -6,6 +6,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <unordered_map>
 
 extern "C" {
 #include <libavformat/avformat.h>
@@ -18,6 +19,35 @@ extern "C" {
 
 DECODER_SDK_NAMESPACE_BEGIN
 INTERNAL_NAMESPACE_BEGIN
+
+/**
+ * @brief 支持的容器格式枚举
+ */
+enum class ContainerFormat {
+    MP4,        // MP4容器
+    AVI,        // AVI容器
+    MKV,        // Matroska容器
+    MOV,        // QuickTime容器
+    FLV,        // Flash Video容器
+    TS,         // MPEG-TS容器
+    WEBM,       // WebM容器
+    OGV,        // Ogg Video容器
+    UNKNOWN     // 未知格式
+};
+
+/**
+ * @brief 容器格式信息结构
+ */
+struct ContainerFormatInfo {
+    ContainerFormat format;
+    std::string formatName;     // FFmpeg格式名称
+    std::string extension;      // 文件扩展名
+    std::string description;    // 格式描述
+    bool supportVideo;          // 是否支持视频
+    bool supportAudio;          // 是否支持音频
+    std::vector<std::string> supportedVideoCodecs;  // 支持的视频编解码器
+    std::vector<std::string> supportedAudioCodecs;  // 支持的音频编解码器
+};
 
 class RealTimeStreamRecorder {
 public:
@@ -69,6 +99,30 @@ public:
      */
     std::string getRecordingPath() const;
 
+    /**
+     * @brief 获取支持的容器格式列表
+     * @return 支持的容器格式信息列表
+     */
+    static std::vector<ContainerFormatInfo> getSupportedFormats();
+
+    /**
+     * @brief 检测文件路径对应的容器格式
+     * @param filePath 文件路径
+     * @return 检测到的容器格式
+     */
+    static ContainerFormat detectContainerFormat(const std::string &filePath);
+
+    /**
+     * @brief 验证容器格式是否支持指定的编解码器
+     * @param format 容器格式
+     * @param inputFormatCtx 输入格式上下文
+     * @param errorMsg 错误信息输出
+     * @return 是否支持
+     */
+    static bool validateFormatCompatibility(ContainerFormat format, 
+                                          AVFormatContext *inputFormatCtx, 
+                                          std::string &errorMsg);
+
 private:
     /**
      * @brief 录制线程主循环
@@ -102,6 +156,12 @@ private:
      * @return 是否成功写入
      */
     bool processPacket(const Packet &packet, AVMediaType mediaType);
+
+    /**
+     * @brief 获取容器格式信息映射表
+     * @return 格式信息映射表
+     */
+    static const std::unordered_map<ContainerFormat, ContainerFormatInfo>& getFormatInfoMap();
 
 private:
     // 事件分发器
@@ -137,6 +197,9 @@ private:
     // 流初始pts和dts映射表
     std::unordered_map<AVMediaType, int64_t> firstPtsMap_;
     std::unordered_map<AVMediaType, int64_t> firstDtsMap_;
+
+    // 当前使用的容器格式
+    ContainerFormat currentFormat_ = ContainerFormat::UNKNOWN;
 };
 
 INTERNAL_NAMESPACE_END

@@ -6,6 +6,8 @@ extern "C" {
 
 #include "logger/logger.h"
 #include "utils/common_utils.h"
+#include <filesystem>
+#include <algorithm>
 
 DECODER_SDK_NAMESPACE_BEGIN
 INTERNAL_NAMESPACE_BEGIN
@@ -38,6 +40,20 @@ bool RealTimeStreamRecorder::startRecording(const std::string &outputPath,
         return false;
     }
 
+    // 检测容器格式
+    currentFormat_ = detectContainerFormat(outputPath);
+    if (currentFormat_ == ContainerFormat::UNKNOWN) {
+        LOG_ERROR("Unsupported container format for file: {}", outputPath);
+        return false;
+    }
+
+    // 验证格式兼容性
+    std::string errorMsg;
+    if (!validateFormatCompatibility(currentFormat_, inputFormatCtx, errorMsg)) {
+        LOG_ERROR("Format compatibility validation failed: {}", errorMsg);
+        return false;
+    }
+
     // 保存输入格式上下文引用
     inputFormatCtx_ = inputFormatCtx;
 
@@ -65,11 +81,12 @@ bool RealTimeStreamRecorder::startRecording(const std::string &outputPath,
     recordingThread_ = std::thread(&RealTimeStreamRecorder::recordingLoop, this);
 
     // 发送录制开始事件
-    auto event = std::make_shared<RecordingEventArgs>(outputPath_, "mp4", "RealTimeStreamRecorder",
-                                                      "Recording Started");
+    const auto& formatInfo = getFormatInfoMap().at(currentFormat_);
+    auto event = std::make_shared<RecordingEventArgs>(outputPath_, formatInfo.extension, 
+                                                      "RealTimeStreamRecorder", "Recording Started");
     eventDispatcher_->triggerEvent(EventType::kRecordingStarted, event);
 
-    LOG_INFO("Recording started: {}", outputPath_);
+    LOG_INFO("Recording started: {} (Format: {})", outputPath_, formatInfo.description);
     return true;
 }
 
@@ -143,10 +160,15 @@ std::string RealTimeStreamRecorder::getRecordingPath() const
 bool RealTimeStreamRecorder::initOutputContext(const std::string &outputPath,
                                                AVFormatContext *inputFormatCtx)
 {
+    // 获取格式信息
+    const auto& formatInfo = getFormatInfoMap().at(currentFormat_);
+    
     // 创建输出格式上下文
-    int ret = avformat_alloc_output_context2(&outputFormatCtx_, nullptr, "mp4", outputPath.c_str());
+    int ret = avformat_alloc_output_context2(&outputFormatCtx_, nullptr, 
+                                           formatInfo.formatName.c_str(), outputPath.c_str());
     if (ret < 0 || !outputFormatCtx_) {
-        LOG_ERROR("Failed to allocate output format context: {}", utils::avErr2Str(ret));
+        LOG_ERROR("Failed to allocate output format context for {}: {}", 
+                  formatInfo.description, utils::avErr2Str(ret));
         return false;
     }
 
@@ -158,6 +180,25 @@ bool RealTimeStreamRecorder::initOutputContext(const std::string &outputPath,
         if (inStream->codecpar->codec_type != AVMEDIA_TYPE_VIDEO &&
             inStream->codecpar->codec_type != AVMEDIA_TYPE_AUDIO) {
             continue;
+        }
+
+        // 检查编解码器兼容性
+        const char* codecName = avcodec_get_name(inStream->codecpar->codec_id);
+        bool codecSupported = false;
+        
+        if (inStream->codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
+            codecSupported = std::find(formatInfo.supportedVideoCodecs.begin(),
+                                     formatInfo.supportedVideoCodecs.end(),
+                                     codecName) != formatInfo.supportedVideoCodecs.end();
+        } else if (inStream->codecpar->codec_type == AVMEDIA_TYPE_AUDIO) {
+            codecSupported = std::find(formatInfo.supportedAudioCodecs.begin(),
+                                     formatInfo.supportedAudioCodecs.end(),
+                                     codecName) != formatInfo.supportedAudioCodecs.end();
+        }
+
+        if (!codecSupported) {
+            LOG_WARN("Codec {} may not be fully supported by {} format", 
+                     codecName, formatInfo.description);
         }
 
         // 创建输出流
@@ -449,6 +490,163 @@ void RealTimeStreamRecorder::cleanup()
 
     outputPath_.clear();
     streamCount_ = 0;
+    currentFormat_ = ContainerFormat::UNKNOWN;
+}
+
+std::vector<ContainerFormatInfo> RealTimeStreamRecorder::getSupportedFormats()
+{
+    std::vector<ContainerFormatInfo> formats;
+    const auto& formatMap = getFormatInfoMap();
+    
+    for (const auto& pair : formatMap) {
+        if (pair.first != ContainerFormat::UNKNOWN) {
+            formats.push_back(pair.second);
+        }
+    }
+    
+    return formats;
+}
+
+ContainerFormat RealTimeStreamRecorder::detectContainerFormat(const std::string &filePath)
+{
+    // 获取文件扩展名
+    std::filesystem::path path(filePath);
+    std::string extension = path.extension().string();
+    
+    // 转换为小写
+    std::transform(extension.begin(), extension.end(), extension.begin(), ::tolower);
+    
+    // 移除点号
+    if (!extension.empty() && extension[0] == '.') {
+        extension = extension.substr(1);
+    }
+    
+    // 匹配扩展名
+    const auto& formatMap = getFormatInfoMap();
+    for (const auto& pair : formatMap) {
+        if (pair.second.extension == extension) {
+            return pair.first;
+        }
+    }
+    
+    return ContainerFormat::UNKNOWN;
+}
+
+bool RealTimeStreamRecorder::validateFormatCompatibility(ContainerFormat format, 
+                                                        AVFormatContext *inputFormatCtx, 
+                                                        std::string &errorMsg)
+{
+    if (format == ContainerFormat::UNKNOWN) {
+        errorMsg = "Unknown container format";
+        return false;
+    }
+    
+    if (!inputFormatCtx) {
+        errorMsg = "Input format context is null";
+        return false;
+    }
+    
+    const auto& formatInfo = getFormatInfoMap().at(format);
+    
+    bool hasVideo = false;
+    bool hasAudio = false;
+    std::vector<std::string> unsupportedCodecs;
+    
+    // 检查每个流
+    for (unsigned int i = 0; i < inputFormatCtx->nb_streams; i++) {
+        AVStream *stream = inputFormatCtx->streams[i];
+        const char* codecName = avcodec_get_name(stream->codecpar->codec_id);
+        
+        if (stream->codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
+            hasVideo = true;
+            if (std::find(formatInfo.supportedVideoCodecs.begin(),
+                         formatInfo.supportedVideoCodecs.end(),
+                         codecName) == formatInfo.supportedVideoCodecs.end()) {
+                unsupportedCodecs.push_back(std::string("Video: ") + codecName);
+            }
+        } else if (stream->codecpar->codec_type == AVMEDIA_TYPE_AUDIO) {
+            hasAudio = true;
+            if (std::find(formatInfo.supportedAudioCodecs.begin(),
+                         formatInfo.supportedAudioCodecs.end(),
+                         codecName) == formatInfo.supportedAudioCodecs.end()) {
+                unsupportedCodecs.push_back(std::string("Audio: ") + codecName);
+            }
+        }
+    }
+    
+    // 检查格式是否支持视频/音频
+    if (hasVideo && !formatInfo.supportVideo) {
+        errorMsg = formatInfo.description + " format does not support video streams";
+        return false;
+    }
+    
+    if (hasAudio && !formatInfo.supportAudio) {
+        errorMsg = formatInfo.description + " format does not support audio streams";
+        return false;
+    }
+    
+    // 检查不支持的编解码器
+    if (!unsupportedCodecs.empty()) {
+        errorMsg = "Unsupported codecs for " + formatInfo.description + " format: ";
+        for (size_t i = 0; i < unsupportedCodecs.size(); ++i) {
+            if (i > 0) errorMsg += ", ";
+            errorMsg += unsupportedCodecs[i];
+        }
+        return false;
+    }
+    
+    return true;
+}
+
+const std::unordered_map<ContainerFormat, ContainerFormatInfo>& RealTimeStreamRecorder::getFormatInfoMap()
+{
+    static const std::unordered_map<ContainerFormat, ContainerFormatInfo> formatMap = {
+        {ContainerFormat::MP4, {
+            ContainerFormat::MP4, "mp4", "mp4", "MPEG-4 Part 14", true, true,
+            {"h264", "h265", "hevc", "mpeg4", "av1"},
+            {"aac", "mp3", "ac3", "eac3", "opus"}
+        }},
+        {ContainerFormat::AVI, {
+            ContainerFormat::AVI, "avi", "avi", "Audio Video Interleave", true, true,
+            {"h264", "mpeg4", "mjpeg", "rawvideo"},
+            {"mp3", "ac3", "pcm_s16le", "pcm_s24le"}
+        }},
+        {ContainerFormat::MKV, {
+            ContainerFormat::MKV, "matroska", "mkv", "Matroska", true, true,
+            {"h264", "h265", "hevc", "vp8", "vp9", "av1", "mpeg4"},
+            {"aac", "mp3", "ac3", "eac3", "opus", "vorbis", "flac", "pcm_s16le"}
+        }},
+        {ContainerFormat::MOV, {
+            ContainerFormat::MOV, "mov", "mov", "QuickTime", true, true,
+            {"h264", "h265", "hevc", "mpeg4", "prores"},
+            {"aac", "mp3", "ac3", "pcm_s16le", "pcm_s24le"}
+        }},
+        {ContainerFormat::FLV, {
+            ContainerFormat::FLV, "flv", "flv", "Flash Video", true, true,
+            {"h264", "flv1"},
+            {"aac", "mp3", "pcm_s16le"}
+        }},
+        {ContainerFormat::TS, {
+            ContainerFormat::TS, "mpegts", "ts", "MPEG Transport Stream", true, true,
+            {"h264", "h265", "hevc", "mpeg2video"},
+            {"aac", "mp3", "ac3", "eac3"}
+        }},
+        {ContainerFormat::WEBM, {
+            ContainerFormat::WEBM, "webm", "webm", "WebM", true, true,
+            {"vp8", "vp9", "av1"},
+            {"vorbis", "opus"}
+        }},
+        {ContainerFormat::OGV, {
+            ContainerFormat::OGV, "ogg", "ogv", "Ogg Video", true, true,
+            {"theora", "vp8"},
+            {"vorbis", "opus", "flac"}
+        }},
+        {ContainerFormat::UNKNOWN, {
+            ContainerFormat::UNKNOWN, "", "", "Unknown Format", false, false, {}, {}
+        }}
+    };
+    
+    return formatMap;
 }
 
 INTERNAL_NAMESPACE_END
