@@ -1,8 +1,7 @@
+#ifdef VAAPI_AVAILABLE
 #include "include/decodersdk/vaapi_utils.h"
 #include "logger/logger.h"
 #include "vaapi/vaapi_utils.h"
-
-#ifdef VAAPI_AVAILABLE
 
 namespace decoder_sdk {
 VADisplay createDrmVADisplay(int &fd)

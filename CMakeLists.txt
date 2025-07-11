@@ -142,6 +142,14 @@ else ()
 endif ()
 
 # 查找和配置各种硬件解码支持
+set(CUDA_FOUND FALSE)
+set(D3D11VA_FOUND FALSE)
+set(DXVA2_FOUND FALSE)
+set(VAAPI_FOUND FALSE)
+set(VDPAU_FOUND FALSE)
+set(OPENMAX_FOUND FALSE)
+set(VIDEOTOOLBOX_FOUND FALSE)
+set(QSV_FOUND FALSE)
 if(WIN32)
     # Windows平台硬件解码支持
     
