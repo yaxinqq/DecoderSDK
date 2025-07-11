@@ -114,6 +114,8 @@ void VideoDecoder::decodeLoop()
             }
             // 重置最后帧时间
             lastFrameTime_ = std::nullopt;
+            // 重置第一帧读取状态
+            readFirstFrame = false;
             continue;
         }
 

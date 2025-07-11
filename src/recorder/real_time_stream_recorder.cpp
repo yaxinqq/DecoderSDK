@@ -38,6 +38,9 @@ bool RealTimeStreamRecorder::startRecording(const std::string &outputPath,
         return false;
     }
 
+    // 保存输入格式上下文引用
+    inputFormatCtx_ = inputFormatCtx;
+
     // 初始化输出上下文
     if (!initOutputContext(outputPath, inputFormatCtx)) {
         return false;
@@ -257,7 +260,7 @@ void RealTimeStreamRecorder::recordingLoop()
 
 bool RealTimeStreamRecorder::processPacket(const Packet &packet, AVMediaType mediaType)
 {
-    if (!outputFormatCtx_ || !streamMapping_) {
+    if (!outputFormatCtx_ || !inputFormatCtx_ || !streamMapping_) {
         return false;
     }
 
@@ -282,6 +285,28 @@ bool RealTimeStreamRecorder::processPacket(const Packet &packet, AVMediaType med
         return false;
     }
 
+    // 获取输入和输出流
+    AVStream *inStream = inputFormatCtx_->streams[pkt->stream_index];
+    AVStream *outStream = outputFormatCtx_->streams[outStreamIndex];
+    
+    if (!inStream || !outStream) {
+        LOG_ERROR("Invalid input or output stream");
+        return false;
+    }
+
+    // 查看当前是否创建了这个类型的初始时间戳，如果没保存，则先保存
+    if (firstPtsMap_.find(mediaType) == firstPtsMap_.end()) {
+        // 保存初始PTS和DTS（输入流时间基）
+        int64_t firstPts = (pkt->pts != AV_NOPTS_VALUE) ? pkt->pts : 0;
+        int64_t firstDts = (pkt->dts != AV_NOPTS_VALUE) ? pkt->dts : firstPts;
+        
+        firstPtsMap_.insert({mediaType, firstPts});
+        firstDtsMap_.insert({mediaType, firstDts});
+        
+        LOG_DEBUG("Saved first timestamps for media type {}: PTS={}, DTS={}", 
+                  static_cast<int>(mediaType), firstPts, firstDts);
+    }
+
     // 创建临时数据包
     AVPacket *tempPacket = av_packet_alloc();
     if (!tempPacket) {
@@ -298,15 +323,85 @@ bool RealTimeStreamRecorder::processPacket(const Packet &packet, AVMediaType med
     // 调整流索引
     tempPacket->stream_index = outStreamIndex;
 
-    // 时间戳转换（这里需要输入格式上下文，简化处理）
-    // 在实际使用中，应该传入正确的时间基进行转换
+    // 时间戳转换：从输入流时间基转换到输出流时间基
+    int64_t firstPts = firstPtsMap_[mediaType];
+    int64_t firstDts = firstDtsMap_[mediaType];
+    
+    // 1. 先转换为相对时间戳（相对于第一帧）
+    if (tempPacket->pts != AV_NOPTS_VALUE) {
+        tempPacket->pts -= firstPts;
+        // 确保PTS不为负数
+        if (tempPacket->pts < 0) {
+            tempPacket->pts = 0;
+        }
+    }
+    if (tempPacket->dts != AV_NOPTS_VALUE) {
+        tempPacket->dts -= firstDts;
+        // 确保DTS不为负数
+        if (tempPacket->dts < 0) {
+            tempPacket->dts = 0;
+        }
+    }
+    
+    // 2. 从输入流时间基转换到输出流时间基
+    if (tempPacket->pts != AV_NOPTS_VALUE) {
+        tempPacket->pts = av_rescale_q(tempPacket->pts, inStream->time_base, outStream->time_base);
+    }
+    if (tempPacket->dts != AV_NOPTS_VALUE) {
+        tempPacket->dts = av_rescale_q(tempPacket->dts, inStream->time_base, outStream->time_base);
+    }
+    if (tempPacket->duration > 0) {
+        tempPacket->duration = av_rescale_q(tempPacket->duration, inStream->time_base, outStream->time_base);
+    }
+
+    // 确保DTS <= PTS
+    if (tempPacket->dts != AV_NOPTS_VALUE && tempPacket->pts != AV_NOPTS_VALUE) {
+        if (tempPacket->dts > tempPacket->pts) {
+            LOG_WARN("DTS ({}) > PTS ({}), adjusting DTS to PTS", tempPacket->dts, tempPacket->pts);
+            tempPacket->dts = tempPacket->pts;
+        }
+    }
+
+    // // 确保时间戳单调递增（针对每种媒体类型）
+    // static std::unordered_map<AVMediaType, int64_t> lastPtsMap;
+    // static std::unordered_map<AVMediaType, int64_t> lastDtsMap;
+    
+    // if (tempPacket->pts != AV_NOPTS_VALUE) {
+    //     auto it = lastPtsMap.find(mediaType);
+    //     if (it != lastPtsMap.end() && tempPacket->pts <= it->second) {
+    //         tempPacket->pts = it->second + 1;
+    //         LOG_DEBUG("Adjusted PTS for monotonicity: {}", tempPacket->pts);
+    //     }
+    //     lastPtsMap[mediaType] = tempPacket->pts;
+    // }
+    
+    // if (tempPacket->dts != AV_NOPTS_VALUE) {
+    //     auto it = lastDtsMap.find(mediaType);
+    //     if (it != lastDtsMap.end() && tempPacket->dts <= it->second) {
+    //         tempPacket->dts = it->second + 1;
+    //         LOG_DEBUG("Adjusted DTS for monotonicity: {}", tempPacket->dts);
+    //     }
+    //     lastDtsMap[mediaType] = tempPacket->dts;
+        
+    //     // 再次确保DTS <= PTS
+    //     if (tempPacket->pts != AV_NOPTS_VALUE && tempPacket->dts > tempPacket->pts) {
+    //         tempPacket->dts = tempPacket->pts;
+    //     }
+    // }
 
     // 写入数据包
     ret = av_interleaved_write_frame(outputFormatCtx_, tempPacket);
     if (ret < 0) {
-        LOG_ERROR("Failed to write frame: {}", utils::avErr2Str(ret));
+        const auto errStr = utils::avErr2Str(ret);
+        LOG_ERROR("Failed to write frame: PTS={}, DTS={}, error: {}", 
+                  tempPacket->pts, tempPacket->dts, errStr);
         av_packet_unref(tempPacket);
         av_packet_free(&tempPacket);
+
+        const auto event = std::make_shared<RecordingEventArgs>(
+            outputPath_, "mp4", "RealTimeStreamRecorder", "Recording Error", ret, errStr);
+        eventDispatcher_->triggerEvent(EventType::kRecordingError, event);
+
         return false;
     }
 
@@ -331,6 +426,9 @@ void RealTimeStreamRecorder::cleanup()
         outputFormatCtx_ = nullptr;
     }
 
+    // 清空输入格式上下文引用
+    inputFormatCtx_ = nullptr;
+
     // 释放流映射表
     if (streamMapping_) {
         av_free(streamMapping_);
@@ -344,6 +442,10 @@ void RealTimeStreamRecorder::cleanup()
     if (audioPacketQueue_) {
         audioPacketQueue_->flush();
     }
+
+    // 清空首帧PTS和DTS映射
+    firstPtsMap_.clear();
+    firstDtsMap_.clear();
 
     outputPath_.clear();
     streamCount_ = 0;

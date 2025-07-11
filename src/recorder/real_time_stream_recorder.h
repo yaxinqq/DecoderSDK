@@ -120,6 +120,7 @@ private:
 
     // FFmpeg相关
     AVFormatContext *outputFormatCtx_ = nullptr;
+    AVFormatContext *inputFormatCtx_ = nullptr; 
     std::string outputPath_;
 
     // 数据包队列 - 使用PacketQueue替代简单queue
@@ -132,6 +133,10 @@ private:
 
     // 关键帧标志
     std::atomic<bool> hasKeyFrame_{false};
+
+    // 流初始pts和dts映射表
+    std::unordered_map<AVMediaType, int64_t> firstPtsMap_;
+    std::unordered_map<AVMediaType, int64_t> firstDtsMap_;
 };
 
 INTERNAL_NAMESPACE_END
