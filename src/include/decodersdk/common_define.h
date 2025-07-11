@@ -114,7 +114,7 @@ enum class EventType : uint32_t {
     // 解码相关事件
     kDecodeStarted = 20,   // 解码已开始（调用startDecode成功）
     kDecodeStopped,        // 解码已停止（调用stopDecode成功）
-    kDecodePaused,         // 解码已暂停（调用pauseDecode成功）  // Todo: 暂时不支持
+    kDecodePaused,         // 解码已暂停（调用pauseDecode成功）
     kCreateDecoderSuccess, // 创建解码器成功
     kCreateDecoderFailed,  // 创建解码器失败
     kDestoryDecoder,       // 销毁解码器

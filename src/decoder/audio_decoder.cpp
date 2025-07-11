@@ -75,6 +75,17 @@ void AudioDecoder::decodeLoop()
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
             continue;
         }
+        // 处理暂停状态
+        if (isPaused_.load()) {
+            std::unique_lock<std::mutex> lock(pauseMutex_);
+            pauseCv_.wait(lock, [this] { return !isPaused_.load() || !isRunning_.load(); });
+            if (!isRunning_.load()) {
+                break;
+            }
+            // 重置最后帧时间
+            lastFrameTime_ = std::nullopt;
+            continue;
+        }
 
         // 检查序列号变化
         if (checkAndUpdateSerial(serial, packetQueue.get())) {
@@ -228,7 +239,7 @@ bool AudioDecoder::initResampleContext()
     }
 
     // FFmpeg版本兼容性处理
-#if LIBAVUTIL_VERSION_INT >= AV_VERSION_INT(57, 28, 100)  // FFmpeg 5.1+
+#if LIBAVUTIL_VERSION_INT >= AV_VERSION_INT(57, 28, 100) // FFmpeg 5.1+
     // 设置输入参数 (新版本API)
     av_opt_set_chlayout(swrCtx_, "in_chlayout", &codecCtx_->ch_layout, 0);
     av_opt_set_int(swrCtx_, "in_sample_rate", codecCtx_->sample_rate, 0);
@@ -247,7 +258,7 @@ bool AudioDecoder::initResampleContext()
     av_opt_set_int(swrCtx_, "out_channel_layout", codecCtx_->channel_layout, 0);
     av_opt_set_int(swrCtx_, "out_channels", codecCtx_->channels, 0);
 #endif
-    
+
     // 根据播放速度调整采样率
     int outSampleRate = static_cast<int>(codecCtx_->sample_rate * curSpeed);
     av_opt_set_int(swrCtx_, "out_sample_rate", outSampleRate, 0);
@@ -283,10 +294,11 @@ Frame AudioDecoder::resampleFrame(const Frame &frame)
 
     // 检查是否需要重新配置 - 兼容不同FFmpeg版本
     bool needReconfig = false;
-#if LIBAVUTIL_VERSION_INT >= AV_VERSION_INT(57, 28, 100)  // FFmpeg 5.1+
-    needReconfig = (resampleFrame_.sampleRate() != outputSampleRate) ||
-                   (resampleFrame_.get()->ch_layout.nb_channels != frame.get()->ch_layout.nb_channels) ||
-                   (resampleFrame_.get()->format != frame.get()->format);
+#if LIBAVUTIL_VERSION_INT >= AV_VERSION_INT(57, 28, 100) // FFmpeg 5.1+
+    needReconfig =
+        (resampleFrame_.sampleRate() != outputSampleRate) ||
+        (resampleFrame_.get()->ch_layout.nb_channels != frame.get()->ch_layout.nb_channels) ||
+        (resampleFrame_.get()->format != frame.get()->format);
 #else
     needReconfig = (resampleFrame_.sampleRate() != outputSampleRate) ||
                    (resampleFrame_.get()->channels != frame.get()->channels) ||
@@ -296,7 +308,7 @@ Frame AudioDecoder::resampleFrame(const Frame &frame)
     if (needReconfig) {
         // 重新配置输出帧参数
         resampleFrame_.setPixelFormat(static_cast<AVPixelFormat>(frame.get()->format));
-#if LIBAVUTIL_VERSION_INT >= AV_VERSION_INT(57, 28, 100)  // FFmpeg 5.1+
+#if LIBAVUTIL_VERSION_INT >= AV_VERSION_INT(57, 28, 100) // FFmpeg 5.1+
         resampleFrame_.setChannelLayout(frame.channelLayout());
 #else
         // FFmpeg 4.4.2使用旧的channel layout API

@@ -209,7 +209,12 @@ void StreamDecoder::openAsync(const QString &url, const decoder_sdk::Config &con
 int StreamDecoder::pause()
 {
     if (isDecoding() && decodeThread_) {
-        const int ret = controller_.stopDecode();
+        bool ret;
+        ret = controller_.pause();
+        if (controller_.isRealTimeUrl()) {
+            ret = controller_.stopDecode();
+        }
+
         decodeThread_->requestInterruption();
         decodeThread_->quit();
         decodeThread_->wait();
@@ -220,7 +225,7 @@ int StreamDecoder::pause()
                         .arg(g_decodingDecoder.load());
 #endif
 
-        return ret;
+        return ret ? 0 : -1;
     }
 
     return -1;
@@ -228,12 +233,17 @@ int StreamDecoder::pause()
 
 int StreamDecoder::resume()
 {
-    if (controller_.isDecodeStopped()) {
-        const int ret = controller_.startDecode();
+    if (!isDecoding()) {
+        int ret = -1;
+        if (controller_.isRealTimeUrl()) {
+            ret = controller_.startDecode();
+        }
+        ret = controller_.resume();
 
 #if DEBUG_DECODER
         g_decodingDecoder.fetch_add(1);
-        qDebug() << QStringLiteral("****** decoding decoder count: %1 ******").arg(g_decodingDecoder.load()); 
+        qDebug() << QStringLiteral("****** decoding decoder count: %1 ******")
+                        .arg(g_decodingDecoder.load());
 #endif
 
         return ret;
@@ -247,7 +257,7 @@ bool StreamDecoder::isDecoding() const
     if (isOpening_.load())
         return false;
 
-    return !controller_.isDecodeStopped();
+    return !controller_.isDecodeStopped() && !controller_.isDecodePaused();
 }
 
 void StreamDecoder::openCallback(decoder_sdk::AsyncOpenResult result, bool openSuccess,
@@ -261,7 +271,8 @@ void StreamDecoder::openCallback(decoder_sdk::AsyncOpenResult result, bool openS
 
 #if DEBUG_DECODER
         g_decodingDecoder.fetch_add(1);
-        qDebug() << QStringLiteral("****** decoding decoder count: %1 ******").arg(g_decodingDecoder.load()); 
+        qDebug() << QStringLiteral("****** decoding decoder count: %1 ******")
+                        .arg(g_decodingDecoder.load());
 #endif
     }
 }
@@ -279,7 +290,7 @@ void StreamDecoder::streamEventCallback(decoder_sdk::EventType type,
         case decoder_sdk::EventType::kStreamOpening:
             isOpening_.store(true);
             break;
-        case decoder_sdk::EventType::kDecodeFirstFrame:
+        case decoder_sdk::EventType::kDecodeStarted:
             decode();
             break;
         case decoder_sdk::EventType::kStreamClosed: {
@@ -436,7 +447,8 @@ void StreamDecoderWorker::registerPlayer(VideoPlayerImpl *player)
 
     connect(decoder_, &StreamDecoder::videoFrameReady, player, &VideoPlayerImpl::videoFrameReady,
             Qt::UniqueConnection);
-    connect(decoder_, &StreamDecoder::eventUpdated, player, &VideoPlayerImpl::onDecoderEventChanged, Qt::UniqueConnection);
+    connect(decoder_, &StreamDecoder::eventUpdated, player, &VideoPlayerImpl::onDecoderEventChanged,
+            Qt::UniqueConnection);
     refPlayers_ << player;
 }
 
@@ -447,7 +459,8 @@ void StreamDecoderWorker::unRegisterPlayer(VideoPlayerImpl *player)
 
     disconnect(decoder_, &StreamDecoder::videoFrameReady, player,
                &VideoPlayerImpl::videoFrameReady);
-    disconnect(decoder_, &StreamDecoder::eventUpdated, player, &VideoPlayerImpl::onDecoderEventChanged);
+    disconnect(decoder_, &StreamDecoder::eventUpdated, player,
+               &VideoPlayerImpl::onDecoderEventChanged);
     refPlayers_.removeOne(player);
 }
 

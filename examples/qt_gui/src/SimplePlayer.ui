@@ -34,6 +34,20 @@
       </widget>
      </item>
      <item>
+      <widget class="QPushButton" name="pauseBtn">
+       <property name="text">
+        <string>暂停</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="resumeBtn">
+       <property name="text">
+        <string>恢复</string>
+       </property>
+      </widget>
+     </item>
+     <item>
       <widget class="QPushButton" name="stopBtn">
        <property name="text">
         <string>停止</string>

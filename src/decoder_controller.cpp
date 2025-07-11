@@ -104,14 +104,14 @@ void DecoderController::openAsync(const std::string &url, const Config &config,
             // 检查是否需要取消
             if (shouldCancelAsyncOpen_.load()) {
                 result = AsyncOpenResult::kCancelled;
-                errorMessage = "Operation was cancelled before starting";
+                errorMessage = "Operation was canceled before starting";
             } else {
                 // 执行实际的打开操作
                 openSuccess = openAsyncInternal(url, config);
 
                 if (shouldCancelAsyncOpen_.load()) {
                     result = AsyncOpenResult::kCancelled;
-                    errorMessage = "Operation was cancelled during execution";
+                    errorMessage = "Operation was canceled during execution";
                     // 如果打开成功但被取消，需要关闭
                     if (openSuccess) {
                         demuxer_->close();
@@ -246,6 +246,11 @@ bool DecoderController::pause()
         return false;
     }
 
+    if (videoDecoder_)
+        videoDecoder_->pause();
+    if (audioDecoder_)
+        audioDecoder_->pause();
+
     return demuxer_->pause();
 }
 
@@ -254,6 +259,15 @@ bool DecoderController::resume()
     if (!demuxer_) {
         return false;
     }
+
+    if (demuxer_->isRealTime()) {
+        syncController_->resetClocks();
+    }
+
+    if (videoDecoder_)
+        videoDecoder_->resume();
+    if (audioDecoder_)
+        audioDecoder_->resume();
 
     return demuxer_->resume();
 }
@@ -304,6 +318,11 @@ bool DecoderController::stopDecode()
 bool DecoderController::isDecodeStopped() const
 {
     return !isStartDecoding_.load();
+}
+
+bool DecoderController::isDecodePaused() const
+{
+    return demuxer_->isPaused();
 }
 
 bool DecoderController::seek(double position)
@@ -520,6 +539,11 @@ void DecoderController::stopReconnect()
 bool DecoderController::isReconnecting() const
 {
     return isReconnecting_.load();
+}
+
+bool DecoderController::isRealTimeUrl() const
+{
+    return demuxer_ ? demuxer_->isRealTime() : false;
 }
 
 PreBufferState DecoderController::getPreBufferState() const

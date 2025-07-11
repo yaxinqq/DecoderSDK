@@ -145,10 +145,15 @@ public:
      */
     bool isPreBufferReady() const;
 
-    // 获取预缓冲进度
+    /**
+     * @brief 获取预缓冲进度
+     * @return 预缓冲进度
+     */
     PreBufferProgress getPreBufferProgress() const;
 
-    // 清理预缓冲回调
+    /**
+     * @brief 清理预缓冲回调
+     */
     void clearPreBufferCallback();
 
 protected:
@@ -182,7 +187,36 @@ private:
      */
     void waitForQueueEmpty();
 
-    // 检查预缓冲状态
+    /**
+     * @brief 文件流解复用循环
+     * @param pkt 数据包
+     */
+    void fileStreamDemuxLoop(AVPacket *pkt);
+
+    /**
+     * @brief 实时流解复用循环
+     * @param pkt 数据包
+     */
+    void realTimeStreamDemuxLoop(AVPacket *pkt);
+
+    /**
+     * @brief 处理暂停状态（文件流）
+     * @return 是否应该继续循环
+     */
+    bool handleFileStreamPause();
+
+    /**
+     * @brief 读取并处理数据包
+     * @param pkt 数据包
+     * @param errorCount 错误计数引用
+     * @param readFirstPacket 是否已读取首包引用
+     * @return 读取结果：0=成功，1=EOF，-1=错误需要继续，-2=严重错误需要退出
+     */
+    int readAndProcessPacket(AVPacket *pkt, int &errorCount, bool &readFirstPacket);
+
+    /**
+     * @brief 检查预缓冲状态
+     */
     void checkPreBufferStatus();
 
 private:
@@ -207,14 +241,14 @@ private:
     std::atomic<bool> isPaused_{false};
 
     // 录制器
-    std::unique_ptr<RealTimeStreamRecorder> RealTimeStreamRecorder_;
+    std::unique_ptr<RealTimeStreamRecorder> realTimeStreamRecorder_;
 
     // 事件分发器
     std::shared_ptr<EventDispatcher> eventDispatcher_;
 
     // 状态信息
     std::string url_;
-    bool isRealTime_ = false;
+    std::atomic_bool isRealTime_ = false;
     bool needClose_ = false;
     bool isReopen_ = false;
 

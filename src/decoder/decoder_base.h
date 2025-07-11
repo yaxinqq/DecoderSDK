@@ -47,13 +47,21 @@ public:
      */
     virtual bool open();
     /**
-     * @brief 启动解码器
+     * @brief 启动解码器（启动线程）
      */
     virtual void start();
     /**
-     * @brief 停止解码器
+     * @brief 停止解码器（停止线程）
      */
     virtual void stop();
+    /**
+     * @brief 暂停解码器（不停止线程，仅设置标志位）
+     */
+    virtual void pause();
+    /**
+     * @brief 恢复解码器（不重新启动线程，仅设置标志位）
+     */
+    virtual void resume();
     /**
      * @brief 关闭解码器
      */
@@ -250,6 +258,9 @@ protected:
 
     std::thread thread_;                 // 解码线程
     std::atomic_bool isRunning_ = false; // 解码线程运行状态
+    std::atomic_bool isPaused_ = false;  // 解码线程暂停运行状态
+    std::mutex pauseMutex_;              // 同步原语
+    std::condition_variable pauseCv_;    // 用于暂停的条件变量
 
     // 解码时间戳
     std::optional<std::chrono::steady_clock::time_point> lastFrameTime_;
@@ -268,9 +279,6 @@ protected:
     std::atomic_uint16_t maxConsecutiveErrors_{5};
     // 解码错误后，恢复的时间间隔（ms）
     std::atomic_uint16_t recoveryInterval_{3};
-
-    std::condition_variable sleepCond_; // 等待条件变量
-    std::mutex sleepMutex_;             // 等待互斥锁
 
     // 同步控制器
     std::shared_ptr<StreamSyncManager> syncController_;

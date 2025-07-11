@@ -95,6 +95,12 @@ public:
      * @return true 已停止; false 未停止
      */
     bool isDecodeStopped() const;
+    /**
+     * @brief 解码是否已暂停
+     *
+     * @return true 已停止; false 未停止
+     */
+    bool isDecodePaused() const;
 
     /**
      * @brief 定位
@@ -243,6 +249,13 @@ public:
      * @return true 正在重连; false 未重连
      */
     bool isReconnecting() const;
+
+    /**
+     * @brief 检查是否为实时流地址
+     *
+     * @return true 是实时流地址; false 不是实时流地址
+     */
+    bool isRealTimeUrl() const;
 
 public:
     /**

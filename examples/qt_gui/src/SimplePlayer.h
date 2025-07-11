@@ -15,6 +15,8 @@ public:
 private slots:
     void onStartBtnClicked();
     void onStopBtnClicked();
+    void onPauseBtnClicked();
+    void onResumeBtnClicked();
 
 private:
     void initUi();

@@ -55,6 +55,11 @@ bool DecoderController::isDecodeStopped() const
     return impl_ ? impl_->isDecodeStopped() : false;
 }
 
+bool DecoderController::isDecodePaused() const
+{
+    return impl_ ? impl_->isDecodePaused() : false;
+}
+
 bool DecoderController::seek(double position)
 {
     return impl_ ? impl_->seek(position) : false;
@@ -187,5 +192,10 @@ PreBufferState DecoderController::getPreBufferState() const
 PreBufferProgress DecoderController::getPreBufferProgress() const
 {
     return impl_ ? impl_->getPreBufferProgress() : PreBufferProgress();
+}
+
+bool DecoderController::isRealTimeUrl() const
+{
+    return impl_ ? impl_->isRealTimeUrl() : false;
 }
 } // namespace decoder_sdk

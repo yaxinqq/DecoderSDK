@@ -48,6 +48,11 @@ DecoderBase::~DecoderBase()
 
 bool DecoderBase::open()
 {
+    // 如果解码器已经打开，则先关闭
+    if (needClose_) {
+        close();
+    }
+
     const auto sendFailedEvent = [this]() {
         auto event = std::make_shared<DecoderEventArgs>(codecCtx_ ? codecCtx_->codec->name : "",
                                                         streamIndex_, transAVMediaType(type()),
@@ -107,7 +112,7 @@ bool DecoderBase::open()
 
 void DecoderBase::start()
 {
-    if (isRunning_)
+    if (isRunning_.load())
         return;
 
     // 获取对应的包队列
@@ -126,7 +131,7 @@ void DecoderBase::start()
         seekPos_ = 0.0;
     }
 
-    isRunning_ = true;
+    isRunning_.store(true);
     thread_ = std::thread(&DecoderBase::decodeLoop, this);
 
     // 发送解码已开始的事件
@@ -138,13 +143,15 @@ void DecoderBase::start()
 
 void DecoderBase::stop()
 {
-    if (!isRunning_)
+    if (!isRunning_.load())
         return;
 
-    isRunning_ = false;
+    isPaused_.store(false);
+    isRunning_.store(false);
     frameQueue_->setAbortStatus(true);
 
-    sleepCond_.notify_all();
+    // 唤醒暂停的线程
+    pauseCv_.notify_all();
 
     if (thread_.joinable())
         thread_.join();
@@ -154,6 +161,35 @@ void DecoderBase::stop()
         codecCtx_->codec->name, streamIndex_, transAVMediaType(type()),
         codecCtx_->hw_device_ctx != nullptr, "Decoder", "Decode Stopped");
     eventDispatcher_->triggerEvent(EventType::kDecodeStopped, event);
+}
+
+void DecoderBase::pause()
+{
+    if (!isRunning_.load())
+        return;
+
+    isPaused_.store(true);
+
+    // 发送解码已暂停的事件
+    auto event = std::make_shared<DecoderEventArgs>(
+        codecCtx_->codec->name, streamIndex_, transAVMediaType(type()),
+        codecCtx_->hw_device_ctx != nullptr, "Decoder", "Decode Paused");
+    eventDispatcher_->triggerEvent(EventType::kDecodePaused, event);
+}
+
+void DecoderBase::resume()
+{
+    if (!isRunning_.load() || !isPaused_.load())
+        return;
+
+    isPaused_.store(false);
+    pauseCv_.notify_all();
+
+    // 发送解码已开始的事件
+    auto event = std::make_shared<DecoderEventArgs>(
+        codecCtx_->codec->name, streamIndex_, transAVMediaType(type()),
+        codecCtx_->hw_device_ctx != nullptr, "Decoder", "Decode Started");
+    eventDispatcher_->triggerEvent(EventType::kDecodeStarted, event);
 }
 
 void DecoderBase::close()

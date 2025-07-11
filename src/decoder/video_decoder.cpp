@@ -20,7 +20,7 @@ const std::string kVideoDecoderName = "Video Decoder";
 
 // 硬解出错，降级到软解的容忍时间
 constexpr int kDefaultFallbackToleranceTime = 1000; // 单位：毫秒
-}
+} // namespace
 
 DECODER_SDK_NAMESPACE_BEGIN
 INTERNAL_NAMESPACE_BEGIN
@@ -49,7 +49,7 @@ void VideoDecoder::init(const Config &config)
     softPixelFormat_ = utils::imageFormat2AVPixelFormat(config.swVideoOutFormat);
     requireFrameInMemory_ = config.requireFrameInSystemMemory;
     hwContextCallbeck_ = config.createHwContextCallback;
-    
+
     // 新增：配置硬件解码退化选项
     enableHardwareFallback_ = config.enableHardwareFallback;
 }
@@ -102,6 +102,18 @@ void VideoDecoder::decodeLoop()
         // 如果在等待预缓冲，则暂停解码
         if (waitingForPreBuffer_.load()) {
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            continue;
+        }
+
+        // 处理暂停状态
+        if (isPaused_.load()) {
+            std::unique_lock<std::mutex> lock(pauseMutex_);
+            pauseCv_.wait(lock, [this] { return !isPaused_.load() || !isRunning_.load(); });
+            if (!isRunning_.load()) {
+                break;
+            }
+            // 重置最后帧时间
+            lastFrameTime_ = std::nullopt;
             continue;
         }
 
@@ -361,7 +373,8 @@ Frame VideoDecoder::convertSoftwareFrame(const Frame &frame)
 bool VideoDecoder::setupHardwareDecode()
 {
     // 创建硬件加速器（默认尝试自动选择最佳硬件加速方式）
-    hwAccel_ = HardwareAccelFactory::getInstance().createHardwareAccel(hwAccelType_, deviceIndex_, hwContextCallbeck_);
+    hwAccel_ = HardwareAccelFactory::getInstance().createHardwareAccel(hwAccelType_, deviceIndex_,
+                                                                       hwContextCallbeck_);
     if (!hwAccel_) {
         LOG_WARN("Hardware acceleration not available, using software decode");
         return false;
@@ -373,7 +386,7 @@ bool VideoDecoder::setupHardwareDecode()
         return false;
     } else {
         LOG_INFO("Using hardware accelerator: {} ({}), device index: {}", hwAccel_->getDeviceName(),
-                  hwAccel_->getDeviceDescription(), std::to_string(hwAccel_->getDeviceIndex()));
+                 hwAccel_->getDeviceDescription(), std::to_string(hwAccel_->getDeviceIndex()));
 
         // 设置解码器上下文使用硬件加速
         if (!hwAccel_->setupDecoder(codecCtx_)) {
@@ -430,16 +443,16 @@ bool VideoDecoder::shouldFallbackToSoftware(int errorCode) const
 bool VideoDecoder::reinitializeWithSoftwareDecoder()
 {
     LOG_INFO("Attempting to reinitialize decoder with software decoding");
-    
+
     // 关闭当前解码器
     if (codecCtx_) {
         avcodec_free_context(&codecCtx_);
         codecCtx_ = nullptr;
     }
-    
+
     // 重置硬件加速器
     hwAccel_.reset();
-    
+
     // 重新打开解码器（不使用硬件加速）
     auto *const formatContext = demuxer_->formatContext();
     if (!formatContext) {
@@ -456,7 +469,8 @@ bool VideoDecoder::reinitializeWithSoftwareDecoder()
     // 查找解码器（强制使用软件解码器）
     const AVCodec *codec = avcodec_find_decoder(stream_->codecpar->codec_id);
     if (!codec) {
-        LOG_ERROR("Software decoder not found for codec {}", static_cast<int>(stream_->codecpar->codec_id));
+        LOG_ERROR("Software decoder not found for codec {}",
+                  static_cast<int>(stream_->codecpar->codec_id));
         return false;
     }
 
@@ -488,10 +502,10 @@ bool VideoDecoder::reinitializeWithSoftwareDecoder()
     }
 
     LOG_INFO("Successfully switched to software decoding for codec: {}", codec->name);
-    
+
     // 刷新解码器缓冲区
     avcodec_flush_buffers(codecCtx_);
-    
+
     return true;
 }
 
