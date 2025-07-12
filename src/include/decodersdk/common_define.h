@@ -4,6 +4,7 @@
 #include <chrono>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -110,6 +111,7 @@ enum class EventType : uint32_t {
     kStreamReadError,    // 读取数据失败
     kStreamReadRecovery, // 读取恢复
     kStreamEnded,        // 流结束
+    kStreamLooped,       // 流循环播放（新增）
 
     // 解码相关事件
     kDecodeStarted = 20,   // 解码已开始（调用startDecode成功）
@@ -178,6 +180,8 @@ public:
     }
 
     std::string filePath; // 文件路径
+
+    std::optional<int> totalTime; // 文件总时长(s)，只会在kStreamOpened事件中携带，但也有可能为空
 };
 
 // 解码器事件参数
@@ -232,6 +236,29 @@ public:
 
     std::string outputPath; // 输出文件路径
     std::string format;     // 录制格式
+};
+
+// 循环播放模式枚举（新增）
+enum class LoopMode : uint8_t {
+    kNone = 0,     // 不循环
+    kSingle,       // 单次循环
+    kInfinite      // 无限循环
+};
+
+// 循环播放事件参数（新增）
+struct LoopEventArgs : public EventArgs {
+public:
+    LoopEventArgs(int currentLoop = 0, int maxLoops = 0, const std::string &source = "",
+                  const std::string &description = "", int errcode = 0,
+                  const std::string &errorMessage = "")
+        : EventArgs(source, description, errcode, errorMessage),
+          currentLoop(currentLoop),
+          maxLoops(maxLoops)
+    {
+    }
+
+    int currentLoop;  // 当前循环次数
+    int maxLoops;     // 最大循环次数（-1表示无限循环）
 };
 
 // 连接类型

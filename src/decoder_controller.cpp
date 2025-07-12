@@ -350,16 +350,13 @@ bool DecoderController::seek(double position)
     }
 
     // 暂停解码器
-    bool wasPaused = false;
+    /*bool wasPaused = false;
     if (videoDecoder_ || audioDecoder_) {
         wasPaused = demuxer_->isPaused();
         if (!wasPaused) {
-            demuxer_->pause();
+            pause();
         }
-    }
-
-    // 考虑倍速因素调整seek位置
-    // 注意：这里不需要调整position，因为position是目标时间点，与倍速无关
+    }*/
 
     // 执行seek操作
     bool result = demuxer_->seek(position);
@@ -378,9 +375,9 @@ bool DecoderController::seek(double position)
     }
 
     // 如果之前没有暂停，则恢复播放
-    if (!wasPaused) {
-        demuxer_->resume();
-    }
+    /*if (!wasPaused) {
+        resume();
+    }*/
 
     // 发送seek成功的事件
     event = std::make_shared<SeekEventArgs>(syncController_->getMasterClock(), position,
@@ -544,6 +541,47 @@ bool DecoderController::isReconnecting() const
 bool DecoderController::isRealTimeUrl() const
 {
     return demuxer_ ? demuxer_->isRealTime() : false;
+}
+
+bool DecoderController::setLoopMode(LoopMode mode, int maxLoops)
+{
+    if (!demuxer_) {
+        return false;
+    }
+
+    // 只有文件流才支持循环播放
+    if (isRealTimeUrl()) {
+        LOG_WARN("Loop mode is not supported for real-time streams");
+        return false;
+    }
+
+    demuxer_->setLoopMode(mode, maxLoops);
+    return true;
+}
+
+LoopMode DecoderController::getLoopMode() const
+{
+    if (!demuxer_) {
+        return LoopMode::kNone;
+    }
+    return demuxer_->getLoopMode();
+}
+
+int DecoderController::getCurrentLoopCount() const
+{
+    if (!demuxer_) {
+        return 0;
+    }
+    return demuxer_->getCurrentLoopCount();
+}
+
+bool DecoderController::resetLoopCount()
+{
+    if (!demuxer_) {
+        return false;
+    }
+    demuxer_->resetLoopCount();
+    return true;
 }
 
 PreBufferState DecoderController::getPreBufferState() const

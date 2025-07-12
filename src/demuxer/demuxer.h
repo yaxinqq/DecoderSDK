@@ -156,6 +156,30 @@ public:
      */
     void clearPreBufferCallback();
 
+    /**
+     * @brief 设置循环播放模式
+     * @param mode 循环模式
+     * @param maxLoops 最大循环次数（仅在kSingle模式下有效，-1表示无限循环）
+     */
+    void setLoopMode(LoopMode mode, int maxLoops = -1);
+
+    /**
+     * @brief 获取循环播放模式
+     * @return 当前循环模式
+     */
+    LoopMode getLoopMode() const;
+
+    /**
+     * @brief 获取当前循环次数
+     * @return 当前循环次数
+     */
+    int getCurrentLoopCount() const;
+
+    /**
+     * @brief 重置循环计数
+     */
+    void resetLoopCount();
+
 protected:
     /**
      * @brief 解复用线程
@@ -219,6 +243,12 @@ private:
      */
     void checkPreBufferStatus();
 
+    /**
+     * @brief 处理循环播放
+     * @return true 成功开始新的循环; false 不需要循环或循环失败
+     */
+    bool handleLoopPlayback();
+
 private:
     // 同步原语
     std::mutex mutex_;
@@ -239,6 +269,9 @@ private:
     std::thread thread_;
     std::atomic<bool> isRunning_{false};
     std::atomic<bool> isPaused_{false};
+    std::atomic<bool> isSeeking_{false};
+
+    // 是否循环播放
 
     // 录制器
     std::unique_ptr<RealTimeStreamRecorder> realTimeStreamRecorder_;
@@ -259,6 +292,12 @@ private:
     std::atomic<bool> preBufferEnabled_{false};
     std::atomic<bool> preBufferReady_{false};
     std::function<void()> preBufferReadyCallback_;
+
+    // 循环播放相关成员变量
+    std::atomic<LoopMode> loopMode_{LoopMode::kNone};
+    std::atomic<int> maxLoops_{-1};
+    std::atomic<int> currentLoopCount_{0};
+    std::mutex loopMutex_;
 };
 
 INTERNAL_NAMESPACE_END

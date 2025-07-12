@@ -257,6 +257,32 @@ public:
      */
     bool isRealTimeUrl() const;
 
+    /**
+     * @brief 设置循环播放模式
+     * @param mode 循环模式
+     * @param maxLoops 最大循环次数（仅在kSingle模式下有效，-1表示无限循环）
+     * @return true 成功; false 失败
+     */
+    bool setLoopMode(LoopMode mode, int maxLoops = -1);
+
+    /**
+     * @brief 获取循环播放模式
+     * @return 当前循环模式
+     */
+    LoopMode getLoopMode() const;
+
+    /**
+     * @brief 获取当前循环次数
+     * @return 当前循环次数
+     */
+    int getCurrentLoopCount() const;
+
+    /**
+     * @brief 重置循环计数
+     * @return true 成功; false 失败
+     */
+    bool resetLoopCount();
+
 public:
     /**
      * @brief 获取预缓冲状态

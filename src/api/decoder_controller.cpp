@@ -198,4 +198,24 @@ bool DecoderController::isRealTimeUrl() const
 {
     return impl_ ? impl_->isRealTimeUrl() : false;
 }
+
+bool DecoderController::setLoopMode(LoopMode mode, int maxLoops)
+{
+    return impl_ ? impl_->setLoopMode(mode, maxLoops) : false;
+}
+
+LoopMode DecoderController::getLoopMode() const
+{
+    return impl_ ? impl_->getLoopMode() : LoopMode::kNone;
+}
+
+int DecoderController::getCurrentLoopCount() const
+{
+    return impl_ ? impl_->getCurrentLoopCount() : 0;
+}
+
+bool DecoderController::resetLoopCount()
+{
+    return impl_ ? impl_->resetLoopCount() : false;
+}
 } // namespace decoder_sdk

@@ -213,6 +213,7 @@ void VideoDecoder::decodeLoop()
             frame.unref();
             continue;
         }
+        seekPos_ = -1.0;
 
         // 如果是第一帧，发出事件
         if (!readFirstFrame) {

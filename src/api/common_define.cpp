@@ -5,7 +5,6 @@
 #include "magic_enum/magic_enum.hpp"
 #endif
 
-
 namespace decoder_sdk {
 const char *getVersionString()
 {
@@ -50,9 +49,10 @@ std::vector<EventType> allEventTypes()
         EventType::kStreamReadError,      // 读取数据失败
         EventType::kStreamReadRecovery,   // 读取恢复
         EventType::kStreamEnded,          // 流结束
+        EventType::kStreamLooped,         // 流循环播放
         EventType::kDecodeStarted,        // 解码已开始（调用startDecode成功）
         EventType::kDecodeStopped,        // 解码已停止（调用stopDecode成功）
-        EventType::kDecodePaused,         // 解码已暂停（调用pauseDecode成功）  // Todo: 暂时不支持
+        EventType::kDecodePaused,         // 解码已暂停（调用pauseDecode成功）
         EventType::kCreateDecoderSuccess, // 创建解码器成功
         EventType::kCreateDecoderFailed,  // 创建解码器失败
         EventType::kDestoryDecoder,       // 销毁解码器
@@ -98,6 +98,8 @@ std::string getEventTypeName(EventType type)
             return "kStreamReadRecovery";
         case EventType::kStreamEnded:
             return "kStreamEnded";
+        case EventType::kStreamLooped:
+            return "kStreamLooped";
         case EventType::kDecodeStarted:
             return "kDecodeStarted";
         case EventType::kDecodeStopped:
