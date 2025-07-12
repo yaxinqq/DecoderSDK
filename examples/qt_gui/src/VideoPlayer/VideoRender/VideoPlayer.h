@@ -49,6 +49,8 @@ signals:
     void widgetRectChanged(const QRect &rect);
     void videoRectChanged(const QRect &rect);
     void playerStateChanged(Stream::PlayerState state);
+    void totalTimeRecved(int totalTime);
+    void ptsChanged(double pts);
 
     /*
      * @brief 流地址关闭，无法连接

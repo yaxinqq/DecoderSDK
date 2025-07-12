@@ -85,6 +85,11 @@ bool RtspStreamPlayer::isRecording() const
     return StreamManager::instance()->isRecoding(impl_);
 }
 
+bool RtspStreamPlayer::seek(double pts)
+{
+    return StreamManager::instance()->seek(impl_, pts);
+}
+
 bool RtspStreamPlayer::switchStream(const QString &url)
 {
 	// 如果当前没执行过open函数，则返回

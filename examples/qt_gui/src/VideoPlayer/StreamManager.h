@@ -94,6 +94,8 @@ public:
      */
     bool isRecoding(VideoPlayerImpl *player);
 
+    bool seek(VideoPlayerImpl *player, double pts);
+
     /*
      * @brief 获得默认录像文件名称
      *

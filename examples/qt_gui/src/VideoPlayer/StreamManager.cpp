@@ -29,7 +29,7 @@ QString StreamManager::openStream(VideoPlayerImpl *player, QString url, QString 
 
     // 开启解码
     decoder_sdk::Config config;
-    config.hwAccelType = decoder_sdk::HWAccelType::kCuda;
+    config.hwAccelType = decoder_sdk::HWAccelType::kD3d11va;
     config.swVideoOutFormat = decoder_sdk::ImageFormat::kRGB24;
     config.decodeMediaType = decoder_sdk::Config::DecodeMediaType::kVideo;
     config.enableFrameRateControl = true;
@@ -142,6 +142,17 @@ bool StreamManager::isRecoding(VideoPlayerImpl *player)
         return false;
 
     return worker->isRecodering();
+}
+
+bool StreamManager::seek(VideoPlayerImpl *player, double pts)
+{
+    // 获得player对应的decoder
+    StreamDecoderWorker *const worker = streamDecoderByPlayer(player);
+    if (!worker)
+        return false;
+
+    worker->needToSeek(pts);
+    return true;
 }
 
 QString StreamManager::defaultRecordFileName(VideoPlayerImpl *player)

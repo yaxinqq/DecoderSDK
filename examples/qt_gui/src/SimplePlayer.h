@@ -20,10 +20,19 @@ private slots:
     void onStartRecordBtnClicked();
     void onStopRecordBtnClicked();
 
+    void onTotalTimeRecved(int totalTime);
+    void onPtsChanged(double pts);
+    void onSliderValueChanged(int value);
+    void onSliderPressed();
+    void onSliderReleased();
+    void onSliderClicked();  // 新增：处理滑块点击事件
+
 private:
     void initUi();
     void initConnection();
 
 private:
     Ui::SimplePlayer *ui = nullptr;
+    bool isSliderPressed_ = false;  // 标记滑块是否被按下
+    int totalTime_ = 0;             // 总时长
 };

@@ -20,6 +20,8 @@ VideoPlayer::VideoPlayer(QWidget *parent) : QOpenGLWidget(parent)
     connect(impl_, &VideoPlayerImpl::playerStateChanged, this, &VideoPlayer::playerStateChanged);
     connect(impl_, &VideoPlayerImpl::aboutToUpdate, this, &VideoPlayer::aboutToRenderFrame);
     connect(impl_, &VideoPlayerImpl::streamClosed, this, &VideoPlayer::streamClosed);
+    connect(impl_, &VideoPlayerImpl::totalTimeRecved, this, &VideoPlayer::totalTimeRecved);
+    connect(impl_, &VideoPlayerImpl::ptsChanged, this, &VideoPlayer::ptsChanged);
 
     connect(this, &VideoPlayer::forceToRender, this, &VideoPlayer::aboutToRenderFrame);
 }

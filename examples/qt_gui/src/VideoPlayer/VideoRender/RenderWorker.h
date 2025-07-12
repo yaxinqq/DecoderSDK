@@ -27,7 +27,7 @@ public:
     }
 
 signals:
-    void textureReady(const QWeakPointer<VideoRender> &render);
+    void textureReady(const QWeakPointer<VideoRender> &render, double pts);
 
 public slots:
     void render(const decoder_sdk::Frame &frame);

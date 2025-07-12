@@ -34,10 +34,6 @@ void DecoderThread::run()
             break;
         }
 
-        if (pDecoder_->controller_.isDecodeStopped()) {
-            break;
-        }
-
         decoder_sdk::Frame frame;
         if ((pDecoder_ && !pDecoder_->controller_.videoQueue().tryPop(frame)) || !frame.isValid()) {
             QThread::msleep(1);
@@ -84,6 +80,7 @@ StreamDecoder::StreamDecoder(QObject *parent)
 {
     controller_.addGlobalEventListener(std::bind(&StreamDecoder::streamEventCallback, this,
                                                  std::placeholders::_1, std::placeholders::_2));
+    controller_.setLoopMode(decoder_sdk::LoopMode::kInfinite);
 
     decodeThread_ = new DecoderThread(this);
     safeDeleteThread_ = new SafeDeleteThread(this);
@@ -165,6 +162,11 @@ void StreamDecoder::onNeedToStopRecording()
         return;
 
     controller_.stopRecording();
+}
+
+void StreamDecoder::onNeedToSeek(double pos)
+{
+    controller_.seek(pos);
 }
 
 int StreamDecoder::close()
@@ -256,6 +258,8 @@ bool StreamDecoder::isDecoding() const
 {
     if (isOpening_.load())
         return false;
+    if (isSeeking_.load())
+        return true;
 
     return !controller_.isDecodeStopped() && !controller_.isDecodePaused();
 }
@@ -305,6 +309,13 @@ void StreamDecoder::streamEventCallback(decoder_sdk::EventType type,
         case decoder_sdk::EventType::kRecordingStopped:
             emit recordingStatusChanged(false);
             break;
+        case decoder_sdk::EventType::kSeekStarted:
+            isSeeking_.store(true);
+            break;
+        case decoder_sdk::EventType::kSeekSuccess:
+        case decoder_sdk::EventType::kSeekFailed:
+            isSeeking_.store(false);
+            break;
         default:
             isOpening_.store(false);
             break;
@@ -334,6 +345,7 @@ StreamDecoderWorker::StreamDecoderWorker(const QString &key, QObject *parent /*=
             &StreamDecoder::onNeedToStartRecoding);
     connect(this, &StreamDecoderWorker::needToStopRecording, decoder_,
             &StreamDecoder::onNeedToStopRecording);
+    connect(this, &StreamDecoderWorker::needToSeek, decoder_, &StreamDecoder::onNeedToSeek);
 
     connect(decoder_, &StreamDecoder::openResultReady, this,
             [this](bool res, const QString &errorMsg) {

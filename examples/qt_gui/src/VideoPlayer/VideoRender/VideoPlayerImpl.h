@@ -151,6 +151,9 @@ signals:
     void videoRectChanged(const QRect &rect);
     void playerStateChanged(Stream::PlayerState state);
 
+    void totalTimeRecved(int totalTime);
+    void ptsChanged(double pts);
+
     /*
      * @brief 录像已开启
      *

@@ -274,6 +274,7 @@ void Nv12Render_Cuda::drawFrame(GLuint idY, GLuint idUV)
 
     program_.setUniformValue("textureY", 1);
     program_.setUniformValue("textureUV", 0);
+    clearGL();
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
     program_.disableAttributeArray("vertexIn");
     program_.disableAttributeArray("textureIn");

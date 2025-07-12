@@ -97,12 +97,13 @@ void VideoPlayerImpl::initialize(QOpenGLContext *context, QSurface *surface)
 
 		renderWorkerThread_->start();
 
-		connect(renderWorker_, &RenderWorker::textureReady, [this](QWeakPointer<VideoRender> render)
+		connect(renderWorker_, &RenderWorker::textureReady, [this](QWeakPointer<VideoRender> render, double pts)
 				{
 			if (playerState_ == Stream::PlayerState::Playing)
 			{
 				render_ = render;
 				emit aboutToUpdate();
+                emit ptsChanged(pts);
 			} });
 	}
 }
@@ -341,12 +342,19 @@ void VideoPlayerImpl::onDecoderEventChanged(decoder_sdk::EventType type,
                 streamOpenErrorTimer_->start();
             break;
         case decoder_sdk::EventType::kStreamOpened:
+		{
             // 关闭超时计时器，并修改bool值
             if (streamOpenErrorTimer_->isActive())
                 streamOpenErrorTimer_->stop();
 
             streamOpenTimeout_.store(false);
+
+			if (auto *const streamEvent =
+                    dynamic_cast<decoder_sdk::StreamEventArgs *>(event.get())) {
+                emit totalTimeRecved(streamEvent->totalTime.value_or(-1));
+			}
             break;
+		}
         case decoder_sdk::EventType::kCreateDecoderFailed:
             strText_ = QStringLiteral("资源不足");
             qWarning() << QStringLiteral("播放失败，解码器资源不足。");

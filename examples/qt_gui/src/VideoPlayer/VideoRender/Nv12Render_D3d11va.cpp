@@ -442,6 +442,7 @@ bool Nv12Render_D3d11va::drawFrame(GLuint id)
     program_.setAttributeBuffer("textureIn", GL_FLOAT, 2 * 4 * sizeof(GLfloat), 2, 0);
 
     // 绘制
+    clearGL();
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 
     program_.disableAttributeArray("vertexIn");

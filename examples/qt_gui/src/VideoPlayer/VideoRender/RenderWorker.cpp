@@ -115,7 +115,7 @@ void RenderWorker::render(const decoder_sdk::Frame &frame)
 
     if (render_) {
         render_->render(frame);
-        emit textureReady(render_);
+        emit textureReady(render_, frame.secPts());
     }
 }
 

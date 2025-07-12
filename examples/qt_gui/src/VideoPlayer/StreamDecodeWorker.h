@@ -107,6 +107,8 @@ public slots:
     // 关闭录像，结果根据event变更进行处理
     void onNeedToStopRecording();
 
+    void onNeedToSeek(double pos);
+
 signals:
     // 录像状态变更  isRecoding - 是否正在录像
     void recordingStatusChanged(bool isRecoding);
@@ -147,6 +149,8 @@ private:
 
     std::atomic_bool isOpening_ = false; // 流正在打开中
     QMutex mutex_;                       // "完成任务"的状态锁
+
+    std::atomic_bool isSeeking_ = false;
 
     // 提取解码帧的线程
     DecoderThread *decodeThread_ = nullptr;
@@ -208,6 +212,8 @@ signals:
      *
      */
     void needToStopRecording();
+
+    void needToSeek(double pos);
 
 protected:
     void run() override;
