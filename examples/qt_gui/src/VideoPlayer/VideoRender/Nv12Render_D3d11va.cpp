@@ -42,8 +42,7 @@ const char *fsrc = R"(
 } // namespace
 
 Nv12Render_D3d11va::Nv12Render_D3d11va()
-    : VideoRender() 
-    , d3d11Device_(d3d11_utils::getD3D11Device())
+    : VideoRender(), d3d11Device_(d3d11_utils::getD3D11Device())
 {
     if (d3d11Device_) {
         d3d11Device_->GetImmediateContext(&d3d11Context_);
@@ -150,7 +149,8 @@ bool Nv12Render_D3d11va::initializeWGLInterop()
     wglD3DDevice_ = wglDXOpenDeviceNV(d3d11Device_.Get());
     if (!wglD3DDevice_) {
         DWORD error = GetLastError();
-        qWarning() << "[Nv12Render_D3d11va] Failed to open D3D device for WGL interop, error:" << error;
+        qWarning() << "[Nv12Render_D3d11va] Failed to open D3D device for WGL interop, error:"
+                   << error;
         return false;
     }
 
@@ -290,6 +290,9 @@ bool Nv12Render_D3d11va::processNV12ToRGB(const decoder_sdk::Frame &frame)
 
     // 创建或更新InputView
     if (!inputView_ || inputNV12Texture_.Get() != sharedSourceTexture.Get()) {
+        if (inputNV12Texture_)
+            inputNV12Texture_.Reset();
+
         inputNV12Texture_ = sharedSourceTexture;
 
         D3D11_VIDEO_PROCESSOR_INPUT_VIEW_DESC inputViewDesc = {};
@@ -298,6 +301,9 @@ bool Nv12Render_D3d11va::processNV12ToRGB(const decoder_sdk::Frame &frame)
         inputViewDesc.Texture2D.MipSlice = 0;
         inputViewDesc.Texture2D.ArraySlice =
             static_cast<UINT>(reinterpret_cast<intptr_t>(frame.data(1)));
+
+        if (inputView_)
+            inputView_.Reset();
 
         hr = videoDevice_->CreateVideoProcessorInputView(
             inputNV12Texture_.Get(), videoProcessorEnum_.Get(), &inputViewDesc, &inputView_);
@@ -405,7 +411,8 @@ bool Nv12Render_D3d11va::registerTextureWithOpenGL(int width, int height)
                                               GL_TEXTURE_2D, WGL_ACCESS_READ_ONLY_NV);
     if (!wglTextureHandle_) {
         DWORD error = GetLastError();
-        qWarning() << "[Nv12Render_D3d11va] Failed to register RGB texture with WGL, error:" << error;
+        qWarning() << "[Nv12Render_D3d11va] Failed to register RGB texture with WGL, error:"
+                   << error;
         return false;
     }
 
@@ -442,7 +449,6 @@ bool Nv12Render_D3d11va::drawFrame(GLuint id)
     program_.setAttributeBuffer("textureIn", GL_FLOAT, 2 * 4 * sizeof(GLfloat), 2, 0);
 
     // 绘制
-    clearGL();
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 
     program_.disableAttributeArray("vertexIn");

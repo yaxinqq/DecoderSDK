@@ -43,11 +43,8 @@ const char *fsrc = R"(
 )";
 } // namespace
 
-Nv12Render_Dxva2::Nv12Render_Dxva2()
-    : VideoRender()
-    , d3d9Device_(dxva2_utils::getDXVA2Device())
+Nv12Render_Dxva2::Nv12Render_Dxva2() : VideoRender(), d3d9Device_(dxva2_utils::getDXVA2Device())
 {
-
 }
 
 Nv12Render_Dxva2::~Nv12Render_Dxva2()
@@ -75,7 +72,7 @@ bool Nv12Render_Dxva2::initRenderShader(const decoder_sdk::Frame &frame)
     program_.addCacheableShaderFromSourceCode(QOpenGLShader::Vertex, vsrc);
     program_.addCacheableShaderFromSourceCode(QOpenGLShader::Fragment, fsrc);
     program_.link();
-    
+
     return true;
 }
 
@@ -146,7 +143,8 @@ bool Nv12Render_Dxva2::initializeWGLInterop()
     wglD3DDevice_ = wglDXOpenDeviceNV(d3d9Device_.Get());
     if (!wglD3DDevice_) {
         DWORD error = GetLastError();
-        qWarning() << "[Nv12Render_Dxva2] Failed to open D3D device for WGL interop, error:" << error;
+        qWarning() << "[Nv12Render_Dxva2] Failed to open D3D device for WGL interop, error:"
+                   << error;
         return false;
     }
 
@@ -175,8 +173,8 @@ bool Nv12Render_Dxva2::loadWGLExtensions()
     // 加载函数指针
     wglDXOpenDeviceNV = (PFNWGLDXOPENDEVICENVPROC)wglGetProcAddress("wglDXOpenDeviceNV");
     wglDXCloseDeviceNV = (PFNWGLDXCLOSEDEVICENVPROC)wglGetProcAddress("wglDXCloseDeviceNV");
-    wglDXSetResourceShareHandleNV = (PFNWGLDXSETRESOURCESHAREHANDLENVPROC)wglGetProcAddress(
-        "wglDXSetResourceShareHandleNV");
+    wglDXSetResourceShareHandleNV =
+        (PFNWGLDXSETRESOURCESHAREHANDLENVPROC)wglGetProcAddress("wglDXSetResourceShareHandleNV");
     wglDXRegisterObjectNV =
         (PFNWGLDXREGISTEROBJECTNVPROC)wglGetProcAddress("wglDXRegisterObjectNV");
     wglDXUnregisterObjectNV =
@@ -184,10 +182,9 @@ bool Nv12Render_Dxva2::loadWGLExtensions()
     wglDXLockObjectsNV = (PFNWGLDXLOCKOBJECTSNVPROC)wglGetProcAddress("wglDXLockObjectsNV");
     wglDXUnlockObjectsNV = (PFNWGLDXUNLOCKOBJECTSNVPROC)wglGetProcAddress("wglDXUnlockObjectsNV");
 
-    const bool success = wglDXOpenDeviceNV && wglDXCloseDeviceNV &&
-                   wglDXSetResourceShareHandleNV &&
-                   wglDXRegisterObjectNV && wglDXUnregisterObjectNV && wglDXLockObjectsNV &&
-                   wglDXUnlockObjectsNV;
+    const bool success = wglDXOpenDeviceNV && wglDXCloseDeviceNV && wglDXSetResourceShareHandleNV &&
+                         wglDXRegisterObjectNV && wglDXUnregisterObjectNV && wglDXLockObjectsNV &&
+                         wglDXUnlockObjectsNV;
 
     if (!success) {
         qDebug() << "Failed to load WGL function pointers:";
@@ -234,8 +231,8 @@ bool Nv12Render_Dxva2::convertNv12ToRgbStretchRect(LPDIRECT3DSURFACE9 nv12Surfac
     // 使用StretchRect进行格式转换和拷贝
     // 注意：这个方法依赖于D3D9驱动程序的内部转换能力
     // 某些驱动程序可能不支持从NV12直接转换到RGB
-    const HRESULT hr = d3d9Device_->StretchRect(nv12Surface, nullptr, rgbRenderTarget_.Get(), nullptr,
-                                          D3DTEXF_LINEAR);
+    const HRESULT hr = d3d9Device_->StretchRect(nv12Surface, nullptr, rgbRenderTarget_.Get(),
+                                                nullptr, D3DTEXF_LINEAR);
 
     if (!wglDXUnlockObjectsNV(wglD3DDevice_, 1, &wglTextureHandle_)) {
         qWarning() << "[Nv12Render_Dxva2] Failed to unlock WGL objects!";
@@ -290,20 +287,20 @@ bool Nv12Render_Dxva2::registerTextureWithOpenGL(int width, int height)
     // 设置共享句柄
     if (sharedHandle_ && !wglDXSetResourceShareHandleNV(rgbRenderTarget_.Get(), sharedHandle_)) {
         DWORD error = GetLastError();
-        qWarning() << "[Nv12Render_Dxva2] Failed setting Direct3D/OpenGL share handle for surface, error:" << error;
+        qWarning()
+            << "[Nv12Render_Dxva2] Failed setting Direct3D/OpenGL share handle for surface, error:"
+            << error;
 
         return false;
     }
 
     // 注册RGB渲染目标表面
-    wglTextureHandle_ =
-        wglDXRegisterObjectNV(wglD3DDevice_,
-                              rgbRenderTarget_.Get(),
-                              sharedTexture_, GL_TEXTURE_2D, WGL_ACCESS_READ_ONLY_NV);
+    wglTextureHandle_ = wglDXRegisterObjectNV(wglD3DDevice_, rgbRenderTarget_.Get(), sharedTexture_,
+                                              GL_TEXTURE_2D, WGL_ACCESS_READ_ONLY_NV);
     if (!wglTextureHandle_) {
         DWORD error = GetLastError();
         qWarning() << "[Nv12Render_Dxva2] Failed to register texture, error:" << error;
-        
+
         return false;
     }
 
@@ -340,7 +337,6 @@ bool Nv12Render_Dxva2::drawFrame(GLuint id)
     program_.setAttributeBuffer("textureIn", GL_FLOAT, 2 * 4 * sizeof(GLfloat), 2, 0);
 
     // 绘制
-    clearGL();
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 
     // 清理
