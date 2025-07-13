@@ -223,6 +223,8 @@ bool Demuxer::seek(double position)
         return false;
     }
 
+    avformat_flush(formatContext_);
+
     // 刷新队列
     if (videoPacketQueue_) {
         videoPacketQueue_->flush();
@@ -455,11 +457,9 @@ void Demuxer::fileStreamDemuxLoop(AVPacket *pkt)
         }
 
         // 读取并处理数据包
-        int result = readAndProcessPacket(pkt, errorCount, readFirstPacket);
+        int result = readAndProcessPacket(pkt, errorCount, readFirstPacket, isEof.value_or(false));
         if (result == 1) {
-            if (!isEof.has_value()) {
-                isEof = true;
-            }
+            isEof = true;
             // 文件结束
             if ((!videoPacketQueue_ || videoPacketQueue_->isEmpty()) &&
                 (!audioPacketQueue_ || audioPacketQueue_->isEmpty()) && isEof.value_or(false)) {
@@ -471,6 +471,7 @@ void Demuxer::fileStreamDemuxLoop(AVPacket *pkt)
                     // 成功开始新的循环，不发送结束包
                     av_packet_unref(pkt);
                 }
+                isEof.reset();
             }
             continue;
         } else if (result == -2) {
@@ -527,7 +528,7 @@ bool Demuxer::handleFileStreamPause()
     return true;
 }
 
-int Demuxer::readAndProcessPacket(AVPacket *pkt, int &errorCount, bool &readFirstPacket)
+int Demuxer::readAndProcessPacket(AVPacket *pkt, int &errorCount, bool &readFirstPacket, bool isEof)
 {
     // 读取数据包
     int ret;
@@ -539,7 +540,9 @@ int Demuxer::readAndProcessPacket(AVPacket *pkt, int &errorCount, bool &readFirs
     if (ret < 0) {
         if (ret == AVERROR_EOF || avio_feof(formatContext_->pb)) {
             // 文件结束
-            handleEndOfFile(pkt);
+            if (!isEof) {
+                handleEndOfFile(pkt);
+            }
             return 1; // EOF
         } else if (ret != AVERROR(EAGAIN)) {
             // 如果是实时流，且在暂停状态，则先不处理错误
@@ -686,6 +689,13 @@ bool Demuxer::handleLoopPlayback()
 
     // 执行seek到文件开头
     seek(0.0);
+    // 重置到文件开始位置
+    if (formatContext_->pb && formatContext_->pb->seekable) {
+        avio_seek(formatContext_->pb, 0, SEEK_SET);
+    }
+
+    // lazy, 消除竞态条件，等待同步
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
 
     // 增加循环计数
     currentLoopCount_.fetch_add(1);

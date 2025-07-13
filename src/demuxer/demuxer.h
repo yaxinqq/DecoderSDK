@@ -234,9 +234,11 @@ private:
      * @param pkt 数据包
      * @param errorCount 错误计数引用
      * @param readFirstPacket 是否已读取首包引用
+     * @param isEof 是否已经处理过eof
      * @return 读取结果：0=成功，1=EOF，-1=错误需要继续，-2=严重错误需要退出
      */
-    int readAndProcessPacket(AVPacket *pkt, int &errorCount, bool &readFirstPacket);
+    int readAndProcessPacket(AVPacket *pkt, int &errorCount, bool &readFirstPacket,
+                             bool isEof = false);
 
     /**
      * @brief 检查预缓冲状态
