@@ -108,10 +108,13 @@ void VideoDecoder::decodeLoop()
         // 处理暂停状态
         if (isPaused_.load()) {
             std::unique_lock<std::mutex> lock(pauseMutex_);
-            pauseCv_.wait(lock, [this] { return !isPaused_.load() || !isRunning_.load(); });
+            pauseCv_.wait_for(lock, std::chrono::milliseconds(10), [this] { return !isPaused_.load() || !isRunning_.load(); });
             if (!isRunning_.load()) {
                 break;
             }
+            if (isPaused_.load())
+                continue;
+
             // 重置最后帧时间
             lastFrameTime_ = std::nullopt;
             // 重置第一帧读取状态
@@ -397,6 +400,13 @@ bool VideoDecoder::setupHardwareDecode()
             hwAccel_.reset();
             return false;
         }
+    }
+
+    // 如果是D3D11 VA解码，则额外设置16帧
+    const auto hwType = hwAccel_->getType();
+    if (hwType == HWAccelType::kD3d11va 
+        || hwType == HWAccelType::kDxva2) {
+        codecCtx_->extra_hw_frames = 16;
     }
 
     return true;

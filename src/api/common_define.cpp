@@ -1,7 +1,7 @@
 #include "include/decodersdk/common_define.h"
 #include "version.h"
 
-#ifdef DECODER_SDK_MAGIC_ENUM_SUPPORTED
+#ifdef MAGIC_ENUM_SUPPORTED
 #include "magic_enum/magic_enum.hpp"
 #endif
 

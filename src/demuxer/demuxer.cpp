@@ -12,7 +12,7 @@ extern "C" {
 #include "utils/common_utils.h"
 
 namespace {
-constexpr int kReadErrorMaxCount = 5;
+constexpr int kReadErrorMaxCount = 25;
 }
 
 DECODER_SDK_NAMESPACE_BEGIN
@@ -530,52 +530,47 @@ bool Demuxer::handleFileStreamPause()
 
 int Demuxer::readAndProcessPacket(AVPacket *pkt, int &errorCount, bool &readFirstPacket, bool isEof)
 {
-    // 读取数据包
-    int ret;
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        // 在锁保护下读取数据包
-        ret = av_read_frame(formatContext_, pkt);
-    }
-    if (ret < 0) {
-        if (ret == AVERROR_EOF || avio_feof(formatContext_->pb)) {
-            // 文件结束
-            if (!isEof) {
-                handleEndOfFile(pkt);
-            }
-            return 1; // EOF
-        } else if (ret != AVERROR(EAGAIN)) {
-            // 如果是实时流，且在暂停状态，则先不处理错误
-            if (isRealTime_.load() && isPaused_.load()) {
-                return -1; // 需要继续
-            }
-
-            // 读取错误
-            if (++errorCount >= kReadErrorMaxCount) {
-                LOG_ERROR("Too many read errors ({}) in {}, stopping", url_, errorCount);
-
-                auto event =
-                    std::make_shared<StreamEventArgs>(url_, "Demuxer", "Stream Read Error");
-                eventDispatcher_->triggerEvent(EventType::kStreamReadError, event);
-                return -2; // 严重错误
-            }
-            std::this_thread::sleep_for(std::chrono::milliseconds(10));
-            return -1; // 需要继续
+    const int ret = av_read_frame(formatContext_, pkt);
+    
+    // 成功读取数据包
+    if (ret >= 0) {
+        errorCount = 0;
+        
+        if (!readFirstPacket) {
+            readFirstPacket = true;
+            auto event = std::make_shared<StreamEventArgs>(url_, "Demuxer", "Stream Read Data");
+            eventDispatcher_->triggerEvent(EventType::kStreamReadData, event);
         }
-        return -1; // 需要继续
+        
+        return 0;
     }
 
-    // 重置错误计数
-    errorCount = 0;
-
-    // 发送首包事件
-    if (!readFirstPacket) {
-        readFirstPacket = true;
-        auto event = std::make_shared<StreamEventArgs>(url_, "Demuxer", "Stream Read Data");
-        eventDispatcher_->triggerEvent(EventType::kStreamReadData, event);
+    // 实时流暂停状态下不处理其他错误
+    if (isRealTime_.load() && isPaused_.load()) {
+        return -1;
     }
-
-    return 0; // 成功
+    
+    // 处理EOF（对所有流类型都适用）
+    if (ret == AVERROR_EOF || avio_feof(formatContext_->pb)) {
+        if (!isEof) {
+            handleEndOfFile(pkt);
+        }
+        
+        // 实时流的EOF可能是临时的，应该累计错误计数
+        if (isRealTime_.load()) {
+            return handleReadError(errorCount, "EOF in real-time stream");
+        }
+        
+        return 1; // 非实时流的正常EOF
+    }
+    
+    // 处理EAGAIN（需要重试）
+    if (ret == AVERROR(EAGAIN)) {
+        return -1;
+    }
+    
+    // 处理其他读取错误
+    return handleReadError(errorCount, "Stream read error");
 }
 
 void Demuxer::handleEndOfFile(AVPacket *pkt)
@@ -707,6 +702,20 @@ bool Demuxer::handleLoopPlayback()
 
     LOG_INFO("Stream looped: current={}, max={}", currentLoopCount_.load(), maxLoops_.load());
     return true;
+}
+
+int Demuxer::handleReadError(int &errorCount, const std::string& errorType)
+{
+    if (++errorCount >= kReadErrorMaxCount) {
+        LOG_ERROR("Too many {} ({}) in {}, stopping", errorType, errorCount, url_);
+        
+        auto event = std::make_shared<StreamEventArgs>(url_, "Demuxer", "Stream Read Error");
+        eventDispatcher_->triggerEvent(EventType::kStreamReadError, event);
+        return -2; // 严重错误
+    }
+    
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    return -1; // 需要继续
 }
 
 void Demuxer::clearPreBufferCallback()

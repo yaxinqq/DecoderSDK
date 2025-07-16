@@ -251,6 +251,14 @@ private:
      */
     bool handleLoopPlayback();
 
+    /**
+     * @brief 处理读取错误
+     * @param errorCount 错误计数引用
+     * @param errorType 错误类型
+     * @return 处理结果：11=需要继续，-2=严重错误
+     */
+    int handleReadError(int &errorCount, const std::string& errorType);
+
 private:
     // 同步原语
     std::mutex mutex_;
