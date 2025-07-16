@@ -104,7 +104,7 @@ public:
     }
 
 public:
-    void videoFrameReady(const decoder_sdk::Frame &frame);
+    void videoFrameReady(const std::shared_ptr<decoder_sdk::Frame>& frame);
 
     void setMasks(QList<QImage *> masks)
     {
@@ -143,7 +143,7 @@ public slots:
                                const std::shared_ptr<decoder_sdk::EventArgs> &event);
 
 signals:
-    void renderRequested(const decoder_sdk::Frame &frame);
+    void renderRequested(const std::shared_ptr<decoder_sdk::Frame>& frame);
     void prepareStop();
     void preparePause();
     void preparePlaying();
@@ -198,7 +198,7 @@ private:
     int frameHeight_ = -1;
 
     // FPS
-    bool fpsVisible_ = false;
+    bool fpsVisible_ = true;
     int frameCount_ = 0;
     int fps_ = 0;
     int fpsTextWidth_;

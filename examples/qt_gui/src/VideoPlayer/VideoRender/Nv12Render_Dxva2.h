@@ -3,6 +3,7 @@
 #ifdef DXVA2_AVAILABLE
 
 #include "VideoRender.h"
+#include "Commonutils.h"
 
 #include <QDebug>
 #include <QOpenGLBuffer>
@@ -15,25 +16,6 @@
 #include <dxva2api.h>
 #include <wrl/client.h>
 using Microsoft::WRL::ComPtr;
-
-// WGL-DX interop definitions
-#define WGL_ACCESS_READ_ONLY_NV 0x00000000
-#define WGL_ACCESS_READ_WRITE_NV 0x00000001
-#define WGL_ACCESS_WRITE_DISCARD_NV 0x00000002
-
-// 在现有的WGL函数指针定义中添加
-typedef BOOL(WINAPI *PFNWGLDXSETRESOURCESHAREHANDLENVPROC)(void *dxObject, HANDLE shareHandle);
-typedef HANDLE(WINAPI *PFNWGLDXOPENDEVICENVPROC)(void *dxDevice);
-typedef BOOL(WINAPI *PFNWGLDXCLOSEDEVICENVPROC)(HANDLE hDevice);
-typedef HANDLE(WINAPI *PFNWGLDXREGISTEROBJECTNVPROC)(HANDLE hDevice, void *dxObject, GLuint name,
-                                                     GLenum type, GLenum access);
-typedef BOOL(WINAPI *PFNWGLDXUNREGISTEROBJECTNVPROC)(HANDLE hDevice, HANDLE hObject);
-typedef BOOL(WINAPI *PFNWGLDXOBJECTACCESSNVPROC)(HANDLE hObject, GLenum access);
-typedef BOOL(WINAPI *PFNWGLDXLOCKOBJECTSNVPROC)(HANDLE hDevice, GLint count, HANDLE *hObjects);
-typedef BOOL(WINAPI *PFNWGLDXUNLOCKOBJECTSNVPROC)(HANDLE hDevice, GLint count, HANDLE *hObjects);
-
-// 在WGL扩展定义部分添加
-typedef const char *(WINAPI *PFNWGLGETEXTENSIONSSTRINGARBPROC)(HDC hdc);
 
 #endif
 
@@ -84,10 +66,6 @@ private:
      */
     void cleanup();
     /*
-     * @brief 加载WDG扩展
-     */
-    bool loadWGLExtensions();
-    /*
      * @brief 创建RGB纹理（D3D9输出纹理）
      */
     bool createRgbRenderTarget();
@@ -120,17 +98,8 @@ private:
     ComPtr<IDirect3DSurface9> rgbRenderTarget_;
     HANDLE sharedHandle_ = nullptr;
 
-    // WGL extension function pointers
-    PFNWGLDXSETRESOURCESHAREHANDLENVPROC wglDXSetResourceShareHandleNV = nullptr;
-    PFNWGLDXOPENDEVICENVPROC wglDXOpenDeviceNV = nullptr;
-    PFNWGLDXCLOSEDEVICENVPROC wglDXCloseDeviceNV = nullptr;
-    PFNWGLDXREGISTEROBJECTNVPROC wglDXRegisterObjectNV = nullptr;
-    PFNWGLDXUNREGISTEROBJECTNVPROC wglDXUnregisterObjectNV = nullptr;
-    PFNWGLDXLOCKOBJECTSNVPROC wglDXLockObjectsNV = nullptr;
-    PFNWGLDXUNLOCKOBJECTSNVPROC wglDXUnlockObjectsNV = nullptr;
-
     // WGL interop handles
-    HANDLE wglD3DDevice_ = nullptr;
+	wgl::WglDeviceRef wglD3DDevice_;
     HANDLE wglTextureHandle_ = nullptr;
 
     // OpenGL resources

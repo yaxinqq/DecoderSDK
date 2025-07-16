@@ -1,6 +1,7 @@
 #pragma once
 #ifdef D3D11VA_AVAILABLE
 #include "VideoRender.h"
+#include "Commonutils.h"
 
 #include <QOpenGLBuffer>
 #include <QOpenGLFramebufferObject>
@@ -17,24 +18,6 @@
 #include <wrl/client.h>
 
 using Microsoft::WRL::ComPtr;
-
-// 手动定义 WGL 扩展，避免依赖 wglext.h
-#ifndef WGL_NV_DX_interop
-#define WGL_ACCESS_READ_ONLY_NV 0x00000000
-#define WGL_ACCESS_READ_WRITE_NV 0x00000001
-#define WGL_ACCESS_WRITE_DISCARD_NV 0x00000002
-
-typedef BOOL(WINAPI *PFNWGLDXSETRESOURCESHAREHANDLENVPROC)(void *dxObject, HANDLE shareHandle);
-typedef HANDLE(WINAPI *PFNWGLDXOPENDEVICENVPROC)(void *dxDevice);
-typedef BOOL(WINAPI *PFNWGLDXCLOSEDEVICENVPROC)(HANDLE hDevice);
-typedef HANDLE(WINAPI *PFNWGLDXREGISTEROBJECTNVPROC)(HANDLE hDevice, void *dxObject, GLuint name,
-                                                     GLenum type, GLenum access);
-typedef BOOL(WINAPI *PFNWGLDXUNREGISTEROBJECTNVPROC)(HANDLE hDevice, HANDLE hObject);
-typedef BOOL(WINAPI *PFNWGLDXOBJECTACCESSNVPROC)(HANDLE hObject, GLenum access);
-typedef BOOL(WINAPI *PFNWGLDXLOCKOBJECTSNVPROC)(HANDLE hDevice, GLint count, HANDLE *hObjects);
-typedef BOOL(WINAPI *PFNWGLDXUNLOCKOBJECTSNVPROC)(HANDLE hDevice, GLint count, HANDLE *hObjects);
-#endif
-
 #endif
 
 class Nv12Render_D3d11va : public VideoRender {
@@ -81,7 +64,7 @@ private:
     bool initializeWGLInterop();
     /*
      * @brief 初始化视频帧处理工具
-     * 
+     *
      * @param width 视频帧宽
      * @param height 视频帧高
      */
@@ -90,10 +73,6 @@ private:
      * @brief 清理申请的资源
      */
     void cleanup();
-    /*
-     * @brief 加载WDG扩展
-     */
-    bool loadWGLExtensions();
     /*
      * @brief 创建OpenGL纹理
      */
@@ -127,16 +106,8 @@ private:
     ComPtr<ID3D11VideoProcessor> videoProcessor_;
     ComPtr<ID3D11VideoProcessorEnumerator> videoProcessorEnum_;
 
-    // WGL互操作扩展函数指针
-    PFNWGLDXOPENDEVICENVPROC wglDXOpenDeviceNV = nullptr;
-    PFNWGLDXCLOSEDEVICENVPROC wglDXCloseDeviceNV = nullptr;
-    PFNWGLDXREGISTEROBJECTNVPROC wglDXRegisterObjectNV = nullptr;
-    PFNWGLDXUNREGISTEROBJECTNVPROC wglDXUnregisterObjectNV = nullptr;
-    PFNWGLDXLOCKOBJECTSNVPROC wglDXLockObjectsNV = nullptr;
-    PFNWGLDXUNLOCKOBJECTSNVPROC wglDXUnlockObjectsNV = nullptr;
-
     // WGL设备句柄
-    HANDLE wglD3DDevice_ = nullptr;
+    wgl::WglDeviceRef wglD3DDevice_;
 
     // 输入NV12纹理
     ComPtr<ID3D11Texture2D> inputNV12Texture_ = nullptr;
@@ -154,6 +125,14 @@ private:
     // OpenGL资源
     QOpenGLShaderProgram program_;
     QOpenGLBuffer vbo_;
+
+    // 资源缓存结构
+    struct ResourceCacheEntry {
+        ComPtr<ID3D11Texture2D> inputTexture;
+        ComPtr<ID3D11VideoProcessorInputView> inputView;
+    };
+
+    std::map<std::pair<uintptr_t, UINT>, ResourceCacheEntry> resourceCache_;
 };
 
 #endif

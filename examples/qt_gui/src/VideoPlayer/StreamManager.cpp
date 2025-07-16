@@ -29,8 +29,8 @@ QString StreamManager::openStream(VideoPlayerImpl *player, QString url, QString 
 
     // 开启解码
     decoder_sdk::Config config;
-    config.hwAccelType = decoder_sdk::HWAccelType::kD3d11va;
-    config.swVideoOutFormat = decoder_sdk::ImageFormat::kRGB24;
+    config.hwAccelType = decoder_sdk::HWAccelType::kDxva2;
+    config.swVideoOutFormat = decoder_sdk::ImageFormat::kYUV444P;
     config.decodeMediaType = decoder_sdk::Config::DecodeMediaType::kVideo;
     config.enableFrameRateControl = true;
     config.createHwContextCallback =
@@ -287,12 +287,21 @@ void *StreamManager::createHwContextCallback(decoder_sdk::HWAccelType type)
     switch (type) {
 #ifdef D3D11VA_AVAILABLE
         case decoder_sdk::HWAccelType::kD3d11va:
-            return d3d11_utils::getD3D11Device().Get();
+            // 缓存ComPtr避免悬空指针
+            if (!cachedD3D11Device_) {
+                cachedD3D11Device_ = d3d11_utils::getD3D11Device();
+            }
+            return cachedD3D11Device_.Get();
 #endif
 
 #ifdef DXVA2_AVAILABLE
         case decoder_sdk::HWAccelType::kDxva2:
             return dxva2_utils::getDXVA2DeviceManager().Get();
+#endif
+
+#ifdef CUDA_AVAILABLE
+        case decoder_sdk::HWAccelType::kCuda:
+			return cuda_utils::getCudaContext();
 #endif
 
 #ifdef VAAPI_AVAILABLE
@@ -313,4 +322,19 @@ StreamManager::StreamManager(QObject *parent /*= nullptr*/) : QObject(parent)
 
 StreamManager::~StreamManager()
 {
+    // 清理所有的解码器
+    for (auto it = mapDecoderByKey_.begin(); it != mapDecoderByKey_.end(); ++it) {
+        StreamDecoderWorker *worker = it.value();
+        if (worker) {
+			delete worker;
+			worker = nullptr;
+        }
+    }
+    mapDecoderByKey_.clear();
+    // 清理所有的播放器映射
+	mapDecoderByWidget_.clear();
+
+#ifdef D3D11VA_AVAILABLE
+    cachedD3D11Device_.Reset();
+#endif
 }

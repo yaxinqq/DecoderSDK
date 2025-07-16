@@ -67,19 +67,19 @@ QSharedPointer<VideoRender> RenderWorker::createRenderer(decoder_sdk::ImageForma
     }
 }
 
-void RenderWorker::render(const decoder_sdk::Frame &frame)
+void RenderWorker::render(const std::shared_ptr<decoder_sdk::Frame>& frame)
 {
-    if (!frame.isValid())
+    if (!frame || !frame->isValid())
         return;
 
-    const auto width = frame.width();
-    const auto height = frame.height();
-    const auto pixelFormat = frame.pixelFormat();
+    const auto width = frame->width();
+    const auto height = frame->height();
+    const auto pixelFormat = frame->pixelFormat();
 
     // 检查是否需要重新创建渲染器
     bool needRecreateRenderer = false;
 
-    if (!render_) {
+    if (!render_ || !render_->isValid()) {
         needRecreateRenderer = true;
     } else if (renderWidth_ != width || renderHeight_ != height) {
         needRecreateRenderer = true;
@@ -113,10 +113,10 @@ void RenderWorker::render(const decoder_sdk::Frame &frame)
         }
     }
 
-    if (render_) {
-        render_->render(frame);
-        emit textureReady(render_, frame.secPts());
-    }
+	if (render_) {
+		render_->render(frame);
+		emit textureReady(render_, frame->secPts());
+	}
 }
 
 void RenderWorker::prepareStop()

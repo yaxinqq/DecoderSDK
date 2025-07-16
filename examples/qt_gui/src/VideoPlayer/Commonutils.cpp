@@ -12,6 +12,7 @@
 void registerVideoMetaType()
 {
     qRegisterMetaType<decoder_sdk::Frame>("decoder_sdk::Frame");
+    qRegisterMetaType<std::shared_ptr<decoder_sdk::Frame>>("std::shared_ptr<decoder_sdk::Frame>");
     qRegisterMetaType<decoder_sdk::Config>("decoder_sdk::Config");
     qRegisterMetaType<std::shared_ptr<decoder_sdk::EventArgs>>(
         "std::shared_ptr<decoder_sdk::EventArgs>");
@@ -112,6 +113,324 @@ bool isCudaAvailable()
 } // namespace cuda_utils
 #endif
 
+#if defined(DXVA2_AVAILABLE) || defined(D3D11VA_AVAILABLE)
+namespace wgl {
+    // 在现有的WGL函数指针定义中添加
+	typedef BOOL(WINAPI *PFNWGLDXSETRESOURCESHAREHANDLENVPROC)(void *dxObject, HANDLE shareHandle);
+	typedef HANDLE(WINAPI *PFNWGLDXOPENDEVICENVPROC)(void *dxDevice);
+	typedef BOOL(WINAPI *PFNWGLDXCLOSEDEVICENVPROC)(HANDLE hDevice);
+	typedef HANDLE(WINAPI *PFNWGLDXREGISTEROBJECTNVPROC)(HANDLE hDevice, void *dxObject, GLuint name,
+		GLenum type, GLenum access);
+	typedef BOOL(WINAPI *PFNWGLDXUNREGISTEROBJECTNVPROC)(HANDLE hDevice, HANDLE hObject);
+	typedef BOOL(WINAPI *PFNWGLDXLOCKOBJECTSNVPROC)(HANDLE hDevice, GLint count, HANDLE *hObjects);
+	typedef BOOL(WINAPI *PFNWGLDXUNLOCKOBJECTSNVPROC)(HANDLE hDevice, GLint count, HANDLE *hObjects);
+
+	struct FuncTable
+	{
+		PFNWGLDXSETRESOURCESHAREHANDLENVPROC wglDXSetResourceShareHandleNV = nullptr;
+		PFNWGLDXOPENDEVICENVPROC wglDXOpenDeviceNV = nullptr;
+		PFNWGLDXCLOSEDEVICENVPROC wglDXCloseDeviceNV = nullptr;
+		PFNWGLDXREGISTEROBJECTNVPROC wglDXRegisterObjectNV = nullptr;
+		PFNWGLDXUNREGISTEROBJECTNVPROC wglDXUnregisterObjectNV = nullptr;
+		PFNWGLDXLOCKOBJECTSNVPROC wglDXLockObjectsNV = nullptr;
+		PFNWGLDXUNLOCKOBJECTSNVPROC wglDXUnlockObjectsNV = nullptr;
+	};
+	static struct FuncTable g_funcTable;
+	static bool g_funcTableLoaded = false;
+
+    // WglDeviceRef::ControlBlock 实现
+    WglDeviceRef::ControlBlock::ControlBlock(HANDLE handle)
+        : wglHandle(handle) 
+    {
+    }
+
+    WglDeviceRef::ControlBlock::~ControlBlock() 
+    {
+        if (wglHandle && g_funcTable.wglDXCloseDeviceNV) {
+            g_funcTable.wglDXCloseDeviceNV(wglHandle);
+            wglHandle = nullptr;
+        }
+    }
+
+    // WglDeviceRef 实现
+    WglDeviceRef::WglDeviceRef(void *dxObject)
+    {
+        if (!dxObject) {
+            return;
+        }
+
+        HANDLE wglHandle = createWglDevice(dxObject);
+        if (wglHandle) {
+            control_ = new ControlBlock(wglHandle);
+        }
+    }
+
+    WglDeviceRef::WglDeviceRef(const WglDeviceRef& other) noexcept
+    {
+        acquire(other.control_);
+    }
+
+    WglDeviceRef& WglDeviceRef::operator=(const WglDeviceRef& other) noexcept
+    {
+        if (control_ == other.control_) {
+            return *this;
+        }
+        release();
+        acquire(other.control_);
+        return *this;
+    }
+
+    WglDeviceRef::WglDeviceRef(WglDeviceRef&& other) noexcept
+    {
+        control_ = other.control_;
+        other.control_ = nullptr;
+    }
+
+    WglDeviceRef& WglDeviceRef::operator=(WglDeviceRef&& other) noexcept 
+    {
+        if (control_ == other.control_) {
+            return *this;
+        }
+        release();
+        control_ = other.control_;
+        other.control_ = nullptr;
+        return *this;
+    }
+
+    WglDeviceRef::~WglDeviceRef() 
+    {
+        release();
+    }
+
+    HANDLE WglDeviceRef::get() const noexcept 
+    {
+        return control_ ? control_->wglHandle : nullptr;
+    }
+
+    void WglDeviceRef::reset(HANDLE new_handle)
+    {
+        release();
+        if (new_handle) {
+            control_ = new ControlBlock(new_handle);
+        }
+    }
+
+    int WglDeviceRef::use_count() const noexcept 
+    {
+        return control_ ? control_->refCount.load(std::memory_order_relaxed) : 0;
+    }
+
+    bool WglDeviceRef::isValid() const noexcept
+    {
+		return control_ && control_->wglHandle;
+    }
+
+    WglDeviceRef::operator bool() const noexcept 
+    {
+        return get() != nullptr;
+    }
+
+    bool WglDeviceRef::operator==(const WglDeviceRef& other) const noexcept 
+    {
+        return get() == other.get();
+    }
+
+    bool WglDeviceRef::operator!=(const WglDeviceRef& other) const noexcept
+    {
+        return !(*this == other);
+    }
+
+    HANDLE WglDeviceRef::wglDXRegisterObjectNV(void *dxObject, GLuint name, GLenum type, GLenum access)
+    {
+        if (!control_ || !control_->wglHandle) {
+            return nullptr;
+        }
+        
+        HANDLE hObject = g_funcTable.wglDXRegisterObjectNV(control_->wglHandle, dxObject, name, type, access);
+        if (!hObject) {
+            qWarning() << QStringLiteral("Failed to register WGL object");
+        }
+        return hObject;
+    }
+
+	BOOL WglDeviceRef::wglDXUnregisterObjectNV(HANDLE hObject)
+    {
+        if (!control_ || !control_->wglHandle) {
+            return FALSE;
+        }
+
+        BOOL ret = g_funcTable.wglDXUnregisterObjectNV(control_->wglHandle, hObject);
+        if (!ret) {
+            qWarning() << QStringLiteral("Failed to unregister WGL object");
+        }
+        return ret;
+    }
+
+	BOOL WglDeviceRef::wglDXLockObjectsNV(GLint count, HANDLE *hObjects)
+    {
+        if (!control_ || !control_->wglHandle) {
+            return FALSE;
+        }
+        BOOL ret = g_funcTable.wglDXLockObjectsNV(control_->wglHandle, count, hObjects);
+        if (!ret) {
+            qWarning() << QStringLiteral("Failed to lock WGL objects");
+        }
+        return ret;
+    }
+
+	BOOL WglDeviceRef::wglDXUnlockObjectsNV(GLint count, HANDLE *hObjects)
+    {
+        if (!control_ || !control_->wglHandle) {
+            return FALSE;
+        }
+        BOOL ret = g_funcTable.wglDXUnlockObjectsNV(control_->wglHandle, count, hObjects);
+        if (!ret) {
+            qWarning() << QStringLiteral("Failed to unlock WGL objects");
+        }
+        return ret;
+    }
+
+    void WglDeviceRef::acquire(ControlBlock* ctrl) noexcept 
+    {
+        control_ = ctrl;
+        if (control_) {
+            control_->refCount.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+
+    void WglDeviceRef::release() noexcept 
+    {
+        if (control_ && control_->refCount.fetch_sub(1, std::memory_order_acq_rel) == 1) {
+            delete control_;
+        }
+        control_ = nullptr;
+    }
+
+    HANDLE WglDeviceRef::createWglDevice(void* device)
+    {
+        if (!device || !g_funcTable.wglDXOpenDeviceNV) {
+            return nullptr;
+        }
+
+        HANDLE wglHandle = g_funcTable.wglDXOpenDeviceNV(device);
+        if (!wglHandle) {
+            DWORD error = GetLastError();
+            qWarning() << QStringLiteral("Failed to open WGL device, error: %1").arg(QString::number(error));
+        }
+
+        return wglHandle;
+    }
+
+	bool loadFuncTable()
+	{
+        if (g_funcTableLoaded) {
+            return true;
+        }
+
+		// 加载函数指针
+        g_funcTable.wglDXOpenDeviceNV = (PFNWGLDXOPENDEVICENVPROC)wglGetProcAddress("wglDXOpenDeviceNV");
+        g_funcTable.wglDXCloseDeviceNV = (PFNWGLDXCLOSEDEVICENVPROC)wglGetProcAddress("wglDXCloseDeviceNV");
+        g_funcTable.wglDXSetResourceShareHandleNV =
+			(PFNWGLDXSETRESOURCESHAREHANDLENVPROC)wglGetProcAddress("wglDXSetResourceShareHandleNV");
+        g_funcTable.wglDXRegisterObjectNV =
+			(PFNWGLDXREGISTEROBJECTNVPROC)wglGetProcAddress("wglDXRegisterObjectNV");
+        g_funcTable.wglDXUnregisterObjectNV =
+			(PFNWGLDXUNREGISTEROBJECTNVPROC)wglGetProcAddress("wglDXUnregisterObjectNV");
+        g_funcTable.wglDXLockObjectsNV = (PFNWGLDXLOCKOBJECTSNVPROC)wglGetProcAddress("wglDXLockObjectsNV");
+        g_funcTable.wglDXUnlockObjectsNV = (PFNWGLDXUNLOCKOBJECTSNVPROC)wglGetProcAddress("wglDXUnlockObjectsNV");
+
+		const bool success = g_funcTable.wglDXOpenDeviceNV && g_funcTable.wglDXCloseDeviceNV && g_funcTable.wglDXSetResourceShareHandleNV &&
+            g_funcTable.wglDXRegisterObjectNV && g_funcTable.wglDXUnregisterObjectNV && g_funcTable.wglDXLockObjectsNV &&
+            g_funcTable.wglDXUnlockObjectsNV;
+
+		if (!success) {
+			qWarning() << "Failed to load WGL function pointers:";
+            qWarning() << "wglDXOpenDeviceNV:" << (g_funcTable.wglDXOpenDeviceNV ? "OK" : "FAIL");
+            qWarning() << "wglDXCloseDeviceNV:" << (g_funcTable.wglDXCloseDeviceNV ? "OK" : "FAIL");
+            qWarning() << "wglDXSetResourceShareHandleNV:"
+				<< (g_funcTable.wglDXSetResourceShareHandleNV ? "OK" : "FAIL");
+            qWarning() << "wglDXRegisterObjectNV:" << (g_funcTable.wglDXRegisterObjectNV ? "OK" : "FAIL");
+            qWarning() << "wglDXUnregisterObjectNV:" << (g_funcTable.wglDXUnregisterObjectNV ? "OK" : "FAIL");
+            qWarning() << "wglDXLockObjectsNV:" << (g_funcTable.wglDXLockObjectsNV ? "OK" : "FAIL");
+            qWarning() << "wglDXUnlockObjectsNV:" << (g_funcTable.wglDXUnlockObjectsNV ? "OK" : "FAIL");
+		}
+
+        g_funcTableLoaded = true;
+		return success;
+	}
+
+    BOOL wglDXSetResourceShareHandleNV(void *dxObject, HANDLE shareHandle)
+    {
+		if (!g_funcTable.wglDXSetResourceShareHandleNV) {
+			qCritical() << QStringLiteral("Can not get wglDXSetResourceShareHandleNV proc address!");
+			return FALSE;
+		}
+
+		return g_funcTable.wglDXSetResourceShareHandleNV(dxObject, shareHandle);
+    }
+
+    HANDLE wglDXOpenDeviceNV(void *dxDevice)
+    {
+		if (!g_funcTable.wglDXOpenDeviceNV) {
+			qCritical() << QStringLiteral("Can not get wglDXOpenDeviceNV proc address!");
+			return nullptr;
+		}
+
+		return g_funcTable.wglDXOpenDeviceNV(dxDevice);
+    }
+
+    BOOL wglDXCloseDeviceNV(HANDLE hDevice)
+    {
+		if (!g_funcTable.wglDXCloseDeviceNV) {
+			qCritical() << QStringLiteral("Can not get wglDXCloseDeviceNV proc address!");
+			return FALSE;
+		}
+
+		return g_funcTable.wglDXCloseDeviceNV(hDevice);
+    }
+
+    HANDLE wglDXRegisterObjectNV(HANDLE hDevice, void *dxObject, GLuint name, GLenum type, GLenum access)
+    {
+		if (!g_funcTable.wglDXRegisterObjectNV) {
+			qCritical() << QStringLiteral("Can not get wglDXRegisterObjectNV proc address!");
+			return FALSE;
+		}
+
+		return g_funcTable.wglDXRegisterObjectNV(hDevice, dxObject, name, type, access);
+    }
+
+    BOOL wglDXUnregisterObjectNV(HANDLE hDevice, HANDLE hObject)
+    {
+		if (!g_funcTable.wglDXUnregisterObjectNV) {
+			qCritical() << QStringLiteral("Can not get wglDXUnregisterObjectNV proc address!");
+			return FALSE;
+		}
+
+		return g_funcTable.wglDXUnregisterObjectNV(hDevice, hObject);
+    }
+
+    BOOL wglDXLockObjectsNV(HANDLE hDevice, GLint count, HANDLE *hObjects)
+    {
+		if (!g_funcTable.wglDXLockObjectsNV) {
+			qCritical() << QStringLiteral("Can not get wglDXLockObjectsNV proc address!");
+			return FALSE;
+		}
+
+		return g_funcTable.wglDXLockObjectsNV(hDevice, count, hObjects);
+    }
+
+    BOOL wglDXUnlockObjectsNV(HANDLE hDevice, GLint count, HANDLE *hObjects)
+    {
+		if (!g_funcTable.wglDXUnlockObjectsNV) {
+			qCritical() << QStringLiteral("Can not get wglDXUnlockObjectsNV proc address!");
+			return FALSE;
+		}
+
+		return g_funcTable.wglDXUnlockObjectsNV(hDevice, count, hObjects);
+    }
+}
+#endif
+
 #ifdef D3D11VA_AVAILABLE
 #include <mutex>
 
@@ -126,8 +445,14 @@ public:
 
     Microsoft::WRL::ComPtr<ID3D11Device> getDevice()
     {
-        std::call_once(init_flag_, [this]() { initialize(); });
+        std::call_once(initFlag_, [this]() { initialize(); });
         return device_;
+    }
+
+    wgl::WglDeviceRef getWglDeviceRef()
+    {
+        std::call_once(initWglFlag_, [this]() { initializeWgl(); });
+        return wglD3DDevice_;
     }
 
     bool isInitialized() const
@@ -141,14 +466,25 @@ public:
 
 private:
     D3D11Manager() = default;
-    ~D3D11Manager() = default;
+    ~D3D11Manager()
+    {
+        /*Microsoft::WRL::ComPtr<ID3D11Debug> debug;
+        device_.As(&debug);*/
+
+        wglD3DDevice_.reset();
+        device_.Reset();
+
+        /*if (debug) {
+            debug->ReportLiveDeviceObjects(D3D11_RLDO_IGNORE_INTERNAL);
+        }*/
+    }
 
     void initialize()
     {
         UINT createDeviceFlags = D3D11_CREATE_DEVICE_VIDEO_SUPPORT;
-#ifdef _DEBUG
-        createDeviceFlags |= D3D11_CREATE_DEVICE_DEBUG;
-#endif
+//#ifdef _DEBUG
+//        createDeviceFlags |= D3D11_CREATE_DEVICE_DEBUG;
+//#endif
 
         D3D_FEATURE_LEVEL featureLevels[] = {
             D3D_FEATURE_LEVEL_11_1,
@@ -187,14 +523,35 @@ private:
         }
     }
 
+    void initializeWgl()
+    {
+		if (!wgl::loadFuncTable()) {
+			qWarning() << "Failed to load WGL function table!";
+		}
+
+        if (!device_) {
+            getDevice();
+        }
+
+		// 得到WGL互操作设备
+        wglD3DDevice_ = wgl::WglDeviceRef(device_.Get());
+	}
+
     Microsoft::WRL::ComPtr<ID3D11Device> device_;
-    std::once_flag init_flag_;
+	wgl::WglDeviceRef wglD3DDevice_; // WGL设备句柄
+    std::once_flag initFlag_;
+    std::once_flag initWglFlag_;
 };
 
 // 全局访问函数
 Microsoft::WRL::ComPtr<ID3D11Device> getD3D11Device()
 {
     return D3D11Manager::getInstance().getDevice();
+}
+
+wgl::WglDeviceRef getWglDeviceRef()
+{
+	return D3D11Manager::getInstance().getWglDeviceRef();
 }
 
 bool isD3D11Available()
@@ -218,15 +575,21 @@ public:
 
     Microsoft::WRL::ComPtr<IDirect3DDeviceManager9> getDeviceManager()
     {
-        std::call_once(init_flag_, [this]() { initialize(); });
+        std::call_once(initFlag_, [this]() { initialize(); });
         return deviceManager_;
     }
 
     Microsoft::WRL::ComPtr<IDirect3DDevice9Ex> getDevice()
     {
-        std::call_once(init_flag_, [this]() { initialize(); });
+        std::call_once(initFlag_, [this]() { initialize(); });
         return device_;
     }
+
+	wgl::WglDeviceRef getWglDeviceRef()
+	{
+		std::call_once(initWglFlag_, [this]() { initializeWgl(); });
+		return wglD3DDevice_;
+	}
 
     bool isInitialized() const
     {
@@ -239,7 +602,12 @@ public:
 
 private:
     DXVA2Manager() = default;
-    ~DXVA2Manager() = default;
+    ~DXVA2Manager()
+    {
+        wglD3DDevice_.reset();
+        device_.Reset();
+        deviceManager_.Reset();
+    }
 
     void initialize()
     {
@@ -311,9 +679,25 @@ private:
         qDebug() << "DXVA2 device manager initialized successfully with multithread support";
     }
 
+	void initializeWgl()
+	{
+		if (!wgl::loadFuncTable()) {
+			qWarning() << "Failed to load WGL function table!";
+		}
+
+        if (!device_) {
+            getDevice();
+        }
+
+		// 得到WGL互操作设备
+		wglD3DDevice_ = wgl::WglDeviceRef(device_.Get());
+	}
+
     Microsoft::WRL::ComPtr<IDirect3DDeviceManager9> deviceManager_;
     Microsoft::WRL::ComPtr<IDirect3DDevice9Ex> device_;
-    std::once_flag init_flag_;
+    wgl::WglDeviceRef wglD3DDevice_; // WGL设备句柄
+	std::once_flag initFlag_;
+	std::once_flag initWglFlag_;
 };
 
 // 全局访问函数
@@ -325,6 +709,11 @@ Microsoft::WRL::ComPtr<IDirect3DDeviceManager9> getDXVA2DeviceManager()
 Microsoft::WRL::ComPtr<IDirect3DDevice9Ex> getDXVA2Device()
 {
     return DXVA2Manager::getInstance().getDevice();
+}
+
+wgl::WglDeviceRef getWglDeviceRef()
+{
+    return DXVA2Manager::getInstance().getWglDeviceRef();
 }
 
 bool isDXVA2Available()

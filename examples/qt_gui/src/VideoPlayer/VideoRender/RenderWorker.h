@@ -30,7 +30,7 @@ signals:
     void textureReady(const QWeakPointer<VideoRender> &render, double pts);
 
 public slots:
-    void render(const decoder_sdk::Frame &frame);
+    void render(const std::shared_ptr<decoder_sdk::Frame>& frame);
     void prepareStop();
     void preparePause();
     void preparePlaying();

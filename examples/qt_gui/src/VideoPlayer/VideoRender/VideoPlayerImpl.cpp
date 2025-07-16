@@ -224,20 +224,23 @@ void VideoPlayerImpl::paintCommon(QPainter *painter, const QRect &widgetRect)
 	painter->restore();
 }
 
-void VideoPlayerImpl::videoFrameReady(const decoder_sdk::Frame &frame)
+void VideoPlayerImpl::videoFrameReady(const std::shared_ptr<decoder_sdk::Frame>& frame)
 {
+	if (!frame)
+		return;
+
 	if (playerState_ == Stream::PlayerState::Stop || playerState_ == Stream::PlayerState::Pause)
 		return;
 
-	if ((playerState_ == Stream::PlayerState::Start || playerState_ == Stream::PlayerState::Resume) && frame.isValid())
+	if ((playerState_ == Stream::PlayerState::Start || playerState_ == Stream::PlayerState::Resume) && frame->isValid())
 	{
 		setPlayerState(Stream::PlayerState::Playing);
 	}
 
-	if (playerState_ == Stream::PlayerState::Playing && frame.isValid())
+	if (playerState_ == Stream::PlayerState::Playing && frame->isValid())
 	{
-		frameWidth_ = frame.width();
-		frameHeight_ = frame.height();
+		frameWidth_ = frame->width();
+		frameHeight_ = frame->height();
 
 		emit renderRequested(frame);
 		strText_.clear();

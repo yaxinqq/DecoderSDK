@@ -137,7 +137,7 @@ signals:
     // 发送流打开结果
     void openResultReady(bool success, const QString &errorMsg);
     // 发送帧
-    void videoFrameReady(const decoder_sdk::Frame &frame);
+    void videoFrameReady(const std::shared_ptr<decoder_sdk::Frame> &frame);
     // 发送销毁信号
     void aboutToDelete();
     // 发送流事件通知

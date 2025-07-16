@@ -10,6 +10,11 @@
 #include <QQueue>
 #include <QThread>
 
+#ifdef D3D11VA_AVAILABLE
+#include <wrl/client.h>
+#include <d3d11.h>
+#endif
+
 class VideoPlayerImpl;
 class StreamDecoderWorker;
 
@@ -169,4 +174,9 @@ private:
     QMap<VideoPlayerImpl *, QPointer<StreamDecoderWorker>> mapDecoderByWidget_;
     // Decoder的SourceKey和Decoder之间的映射
     QMap<QString, StreamDecoderWorker *> mapDecoderByKey_;
+
+private:
+#ifdef D3D11VA_AVAILABLE
+    Microsoft::WRL::ComPtr<ID3D11Device> cachedD3D11Device_;
+#endif
 };

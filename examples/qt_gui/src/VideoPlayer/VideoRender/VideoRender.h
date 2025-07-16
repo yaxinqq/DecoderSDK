@@ -25,18 +25,18 @@ public:
      * @param horizontal 是否水平镜像
      * @param vertical	 是否垂直镜像
      */
-    void initialize(const decoder_sdk::Frame &frame, const bool horizontal = false,
-                    const bool vertical = false);
+    void initialize(const std::shared_ptr<decoder_sdk::Frame> &frame, const bool horizontal = false,
+        const bool vertical = false);
 
     /**
      * @brief 渲染
      */
-    void render(const decoder_sdk::Frame &frame);
+    void render(const std::shared_ptr<decoder_sdk::Frame> &frame);
 
     /**
      * @brief 绘制
      */
-    void draw();
+    virtual void draw();
 
     /**
      * @brief 将图像渲染到缓存帧中，外部负责释放QOpenGLFramebufferObject
@@ -85,7 +85,9 @@ protected:
     /**
      * @brief 清理渲染资源。会在OpenGL同步后调用，可以清理本轮次渲染视频帧的相关资源。
      */
-    virtual void cleanupRenderResources() {}
+    virtual void cleanupRenderResources()
+    {
+    }
 
 protected:
     /*
@@ -103,16 +105,25 @@ private:
     bool initializeFboDrawResources(const QSize &size);
     void drawFbo(QSharedPointer<QOpenGLFramebufferObject> fbo);
     QSharedPointer<QOpenGLFramebufferObject> createFbo(const QSize &size,
-                                                       const QOpenGLFramebufferObjectFormat &fmt);
+        const QOpenGLFramebufferObjectFormat &fmt);
 
+
+    void pollGpuFence();
+    int getFreeFboIndex() const;
 private:
     // 纹理交换锁
     QMutex mutex_;
 
-    // 处于后台更新状态的FBO
-    QSharedPointer<QOpenGLFramebufferObject> nextFbo_;
-    // 处于绘制状态的FBO
-    QSharedPointer<QOpenGLFramebufferObject> curFbo_;
+    // // 处于后台更新状态的FBO
+    // QSharedPointer<QOpenGLFramebufferObject> nextFbo_;
+    // // 处于绘制状态的FBO
+    // QSharedPointer<QOpenGLFramebufferObject> curFbo_;
+
+    // 三缓冲结构
+    QSharedPointer<QOpenGLFramebufferObject> fbos_[3];
+    bool fboUsed_[3];
+    int curFboIndex_ = 0;
+    int nextFboIndex_ = -1;
 
     // 用于绘制FBO到屏幕的资源
     QOpenGLShaderProgram fboDrawProgram_;
@@ -121,6 +132,11 @@ private:
 
     // 是否初始化完成
     std::atomic_bool initialized_;
+
+    // 是否支持glSync
+    bool supportsGlFenceSync_ = false;
+    // 当前等待同步的fence
+    GLsync pendingFence_ = nullptr;
 };
 
 #endif // VIDEORENDER_H

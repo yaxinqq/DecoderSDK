@@ -34,20 +34,20 @@ void DecoderThread::run()
             break;
         }
 
-        decoder_sdk::Frame frame;
-        if ((pDecoder_ && !pDecoder_->controller_.videoQueue().tryPop(frame)) || !frame.isValid()) {
+        std::shared_ptr pFrame = std::make_shared<decoder_sdk::Frame>();
+        if ((pDecoder_ && !pDecoder_->controller_.videoQueue().tryPop(*pFrame)) || !pFrame->isValid()) {
             QThread::msleep(1);
             continue;
         }
 
         if (!decodeKeyFrame_) {
-            if (frame.keyFrame() == 1)
+            if (pFrame->keyFrame() == 1)
                 decodeKeyFrame_ = true;
             else
                 continue;
         }
 
-        emit pDecoder_->videoFrameReady(frame);
+        emit pDecoder_->videoFrameReady(pFrame);
     }
 }
 #pragma endregion
@@ -298,7 +298,7 @@ void StreamDecoder::streamEventCallback(decoder_sdk::EventType type,
             decode();
             break;
         case decoder_sdk::EventType::kStreamClosed: {
-            decoder_sdk::Frame nullFrame;
+            std::shared_ptr<decoder_sdk::Frame> nullFrame = std::make_shared<decoder_sdk::Frame>();
             emit videoFrameReady(nullFrame);
             isOpening_.store(false);
             break;
@@ -360,6 +360,8 @@ StreamDecoderWorker::StreamDecoderWorker(const QString &key, QObject *parent /*=
             thread_->quit();
             thread_->wait();
         }
+
+        emit aboutToDelete(key_);
     });
     connect(this, &StreamDecoderWorker::openAsync, decoder_, &StreamDecoder::openAsync);
     connect(this, &StreamDecoderWorker::task, decoder_, &StreamDecoder::doTask,
@@ -394,6 +396,11 @@ StreamDecoderWorker::~StreamDecoderWorker()
     qDebug()
         << QStringLiteral("****** existing decoder count: %1 ******").arg(g_existingDecoder.load());
 #endif
+
+    if (decoder_) {
+        delete decoder_;
+        decoder_ = nullptr;
+	}
 }
 
 void StreamDecoderWorker::appendTask(StreamDecoder::Task task)
@@ -419,7 +426,6 @@ void StreamDecoderWorker::appendTask(StreamDecoder::Task task)
     // 如果当前的任务是关闭，则通知外部
     if (task == StreamDecoder::Task::kClose) {
         decoderPreparingToClose_ = true;
-        emit aboutToDelete(key_);
     }
 
     // 唤醒消费者
@@ -457,8 +463,8 @@ void StreamDecoderWorker::registerPlayer(VideoPlayerImpl *player)
     if (!player || refPlayers_.contains(player) || decoder_.isNull())
         return;
 
-    connect(decoder_, &StreamDecoder::videoFrameReady, player, &VideoPlayerImpl::videoFrameReady,
-            Qt::UniqueConnection);
+	connect(decoder_, &StreamDecoder::videoFrameReady, player, &VideoPlayerImpl::videoFrameReady,
+		Qt::UniqueConnection);
     connect(decoder_, &StreamDecoder::eventUpdated, player, &VideoPlayerImpl::onDecoderEventChanged,
             Qt::UniqueConnection);
     refPlayers_ << player;
@@ -488,9 +494,9 @@ void StreamDecoderWorker::run()
             break;
 
         const auto t = tasks_.takeFirst();
-        emit task(t);
-
         l.unlock();
+
+        emit task(t);
     }
 }
 
