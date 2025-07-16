@@ -6,7 +6,12 @@ include(CMakePackageConfigHelpers)
 # 包含目标文件
 include("${CMAKE_CURRENT_LIST_DIR}/DecoderSDKTargets.cmake")
 
+# 推导安装前缀
+get_filename_component(_prefix "${CMAKE_CURRENT_LIST_DIR}" DIRECTORY)
+get_filename_component(_prefix "${_prefix}" DIRECTORY)
+get_filename_component(DecoderSDK_INSTALL_PREFIX "${_prefix}" DIRECTORY)
+
 # 设置变量
 set(DecoderSDK_LIBRARIES DecoderSDK::DecoderSDK)
-set(DecoderSDK_INCLUDE_DIRS "${PACKAGE_PREFIX_DIR}/include")
-set(DecoderSDK_BIN_DIRS "${PACKAGE_PREFIX_DIR}/bin")
+set(DecoderSDK_INCLUDE_DIRS "${DecoderSDK_INSTALL_PREFIX}/include")
+set(DecoderSDK_BIN_DIRS "${DecoderSDK_INSTALL_PREFIX}/bin")
