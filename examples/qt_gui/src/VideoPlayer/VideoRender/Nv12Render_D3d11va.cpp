@@ -325,6 +325,7 @@ bool Nv12Render_D3d11va::processNV12ToRGB(const decoder_sdk::Frame &frame)
     inputColorSpace.Nominal_Range = D3D11_VIDEO_PROCESSOR_NOMINAL_RANGE_16_235;
 
     D3D11_VIDEO_PROCESSOR_COLOR_SPACE outputColorSpace = {};
+	outputColorSpace.YCbCr_Matrix = 0; // 不使用 YCbCr
     outputColorSpace.RGB_Range = D3D11_VIDEO_PROCESSOR_NOMINAL_RANGE_0_255;
 
     videoContext_->VideoProcessorSetStreamColorSpace(videoProcessor_.Get(), 0, &inputColorSpace);

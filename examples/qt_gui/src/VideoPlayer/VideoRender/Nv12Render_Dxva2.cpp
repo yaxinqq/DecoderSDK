@@ -8,8 +8,7 @@
 #include <dxva2api.h>
 #endif
 
-#include <QDebug>
-#include <iostream>
+#include <QThread>
 
 namespace {
 // 顶点着色器源码
@@ -107,11 +106,20 @@ bool Nv12Render_Dxva2::renderFrame(const decoder_sdk::Frame &frame)
         return false;
     }
 
+	ComPtr<IDirect3DQuery9> query;
+    HRESULT hr = d3d9Device_->CreateQuery(D3DQUERYTYPE_EVENT, &query);
+
     // 使用StretchRect转换NV12到RGB
     if (!convertNv12ToRgbStretchRect(sourceSurface)) {
         qWarning() << "[Nv12Render_Dxva2] Failed to convert NV12 to RGB!";
         return false;
     }
+    if (SUCCEEDED(hr) && query) {
+        query->Issue(D3DISSUE_END);
+        while (query->GetData(nullptr, 0, D3DGETDATA_FLUSH) != S_OK) {
+            QThread::msleep(1);
+        }
+	}
 
     // 绘制
     return drawFrame(sharedTexture_);
