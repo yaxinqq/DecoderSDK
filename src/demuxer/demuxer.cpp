@@ -12,7 +12,8 @@ extern "C" {
 #include "utils/common_utils.h"
 
 namespace {
-constexpr int kReadErrorMaxCount = 25;
+// 读取错误出现的最长时限（单位：s）
+constexpr int kReadErrorMaxInterval = 3;
 }
 
 DECODER_SDK_NAMESPACE_BEGIN
@@ -446,7 +447,7 @@ void Demuxer::demuxLoop()
 
 void Demuxer::fileStreamDemuxLoop(AVPacket *pkt)
 {
-    int errorCount = 0;
+    std::optional<std::chrono::high_resolution_clock::time_point> occuredErrorTime;
     bool readFirstPacket = false;
     std::optional<bool> isEof = std::nullopt;
 
@@ -457,7 +458,7 @@ void Demuxer::fileStreamDemuxLoop(AVPacket *pkt)
         }
 
         // 读取并处理数据包
-        int result = readAndProcessPacket(pkt, errorCount, readFirstPacket, isEof.value_or(false));
+        int result = readAndProcessPacket(pkt, occuredErrorTime, readFirstPacket, isEof.value_or(false));
         if (result == 1) {
             isEof = true;
             // 文件结束
@@ -491,12 +492,12 @@ void Demuxer::fileStreamDemuxLoop(AVPacket *pkt)
 
 void Demuxer::realTimeStreamDemuxLoop(AVPacket *pkt)
 {
-    int errorCount = 0;
+    std::optional<std::chrono::high_resolution_clock::time_point> occuredErrorTime;
     bool readFirstPacket = false;
 
     while (isRunning_.load()) {
         // 读取并处理数据包
-        int result = readAndProcessPacket(pkt, errorCount, readFirstPacket);
+        int result = readAndProcessPacket(pkt, occuredErrorTime, readFirstPacket);
         if (result == 1) {
             // 实时流EOF，短暂等待后继续
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
@@ -528,13 +529,13 @@ bool Demuxer::handleFileStreamPause()
     return true;
 }
 
-int Demuxer::readAndProcessPacket(AVPacket *pkt, int &errorCount, bool &readFirstPacket, bool isEof)
+int Demuxer::readAndProcessPacket(AVPacket *pkt, std::optional<std::chrono::high_resolution_clock::time_point> &occuredErrorTime, bool &readFirstPacket, bool isEof)
 {
     const int ret = av_read_frame(formatContext_, pkt);
     
     // 成功读取数据包
     if (ret >= 0) {
-        errorCount = 0;
+        occuredErrorTime.reset();
         
         if (!readFirstPacket) {
             readFirstPacket = true;
@@ -558,7 +559,7 @@ int Demuxer::readAndProcessPacket(AVPacket *pkt, int &errorCount, bool &readFirs
         
         // 实时流的EOF可能是临时的，应该累计错误计数
         if (isRealTime_.load()) {
-            return handleReadError(errorCount, "EOF in real-time stream");
+            return handleReadError(occuredErrorTime);
         }
         
         return 1; // 非实时流的正常EOF
@@ -570,7 +571,7 @@ int Demuxer::readAndProcessPacket(AVPacket *pkt, int &errorCount, bool &readFirs
     }
     
     // 处理其他读取错误
-    return handleReadError(errorCount, "Stream read error");
+    return handleReadError(occuredErrorTime);
 }
 
 void Demuxer::handleEndOfFile(AVPacket *pkt)
@@ -704,11 +705,16 @@ bool Demuxer::handleLoopPlayback()
     return true;
 }
 
-int Demuxer::handleReadError(int &errorCount, const std::string& errorType)
+int Demuxer::handleReadError(std::optional<std::chrono::high_resolution_clock::time_point> &occuredErrorTime)
 {
-    if (++errorCount >= kReadErrorMaxCount) {
-        LOG_ERROR("Too many {} ({}) in {}, stopping", errorType, errorCount, url_);
+    const auto now = std::chrono::high_resolution_clock::now();
+    if (!occuredErrorTime.has_value())
+        occuredErrorTime = now;
+
+    if (std::chrono::duration_cast<std::chrono::seconds>(now - occuredErrorTime.value()).count() >= kReadErrorMaxInterval) {
+        LOG_ERROR("Has accumulated errors for more than {}s in {}, stopping", kReadErrorMaxInterval, url_);
         
+        occuredErrorTime.reset();
         auto event = std::make_shared<StreamEventArgs>(url_, "Demuxer", "Stream Read Error");
         eventDispatcher_->triggerEvent(EventType::kStreamReadError, event);
         return -2; // 严重错误

@@ -232,12 +232,12 @@ private:
     /**
      * @brief 读取并处理数据包
      * @param pkt 数据包
-     * @param errorCount 错误计数引用
+     * @param occuredErrorTime 出错时间
      * @param readFirstPacket 是否已读取首包引用
      * @param isEof 是否已经处理过eof
      * @return 读取结果：0=成功，1=EOF，-1=错误需要继续，-2=严重错误需要退出
      */
-    int readAndProcessPacket(AVPacket *pkt, int &errorCount, bool &readFirstPacket,
+    int readAndProcessPacket(AVPacket *pkt, std::optional<std::chrono::high_resolution_clock::time_point> &occuredErrorTime, bool &readFirstPacket,
                              bool isEof = false);
 
     /**
@@ -253,11 +253,10 @@ private:
 
     /**
      * @brief 处理读取错误
-     * @param errorCount 错误计数引用
-     * @param errorType 错误类型
-     * @return 处理结果：11=需要继续，-2=严重错误
+     * @param occuredErrorTime 出错时间s
+     * @return 处理结果：-1=需要继续，-2=严重错误
      */
-    int handleReadError(int &errorCount, const std::string& errorType);
+    int handleReadError(std::optional<std::chrono::high_resolution_clock::time_point> &occuredErrorTime);
 
 private:
     // 同步原语
