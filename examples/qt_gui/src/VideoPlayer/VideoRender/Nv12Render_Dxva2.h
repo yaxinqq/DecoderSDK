@@ -74,7 +74,7 @@ private:
      *
      * @param nv12Surface D3D9 Surface
      */
-    bool convertNv12ToRgbStretchRect(LPDIRECT3DSURFACE9 nv12Surface);
+    bool convertNv12ToRgbStretchRect(LPDIRECT3DSURFACE9 nv12Surface, const decoder_sdk::Frame &frame);
     /*
      * @brief D3D Texture 和 OpenGL Texture 互注册（Zero-copy）
      * 

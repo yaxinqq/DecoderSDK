@@ -8,9 +8,6 @@
 #include <d3dcompiler.h>
 #endif
 
-#include <QDebug>
-#include <QThread>
-
 namespace {
 	const char *vsrc = R"(
 #ifdef GL_ES
@@ -112,21 +109,9 @@ bool Nv12Render_D3d11va::renderFrame(const decoder_sdk::Frame &frame)
 	if (!frame.isValid())
 		return false;
 
-	ComPtr<ID3D11Query> query;
-	D3D11_QUERY_DESC desc = { D3D11_QUERY_EVENT, 0 };
-	const auto hr = d3d11Device_->CreateQuery(&desc, &query);
-
 	if (!processNV12ToRGB(frame)) {
 		qWarning() << "[Nv12Render_D3d11va] Failed to process NV12 to RGB!";
 		return false;
-	}
-
-	if (SUCCEEDED(hr) && query) {
-		d3d11Context_->End(query.Get());
-
-		while (d3d11Context_->GetData(query.Get(), nullptr, 0, 0) != S_OK) {
-			QThread::usleep(500);
-		}
 	}
 
 	return drawFrame(glRGBTexture_);
@@ -263,10 +248,8 @@ bool Nv12Render_D3d11va::processNV12ToRGB(const decoder_sdk::Frame &frame)
 	auto cacheKey = std::make_pair(reinterpret_cast<uintptr_t>(sourceTexture),
 		static_cast<UINT>(reinterpret_cast<intptr_t>(frame.data(1))));
 
-	auto it = resourceCache_.find(cacheKey);
-	if (it == resourceCache_.end() || !it->second.inputView) {
-		// 需要创建新的InputView
-		ResourceCacheEntry entry;
+	ResourceCacheEntry entry;
+	if (1) {
 
 		// 检查设备是否相同
 		ComPtr<ID3D11Device> sourceDevice;
@@ -312,29 +295,28 @@ bool Nv12Render_D3d11va::processNV12ToRGB(const decoder_sdk::Frame &frame)
 			qWarning() << "[Nv12Render_D3d11va] Failed to create VideoProcessorInputView, HRESULT:" << hr;
 			return false;
 		}
-
-		// 缓存资源
-		resourceCache_[cacheKey] = std::move(entry);
-		it = resourceCache_.find(cacheKey);
 	}
 
-	// 设置颜色空间
-    D3D11_VIDEO_PROCESSOR_COLOR_SPACE inputColorSpace = {};
-    inputColorSpace.YCbCr_Matrix = 1; // BT.709
-    inputColorSpace.YCbCr_xvYCC = 0;
-    inputColorSpace.Nominal_Range = D3D11_VIDEO_PROCESSOR_NOMINAL_RANGE_16_235;
+	// 设置颜色空间 - 修复版本
+	D3D11_VIDEO_PROCESSOR_COLOR_SPACE inputColorSpace = {};
+	inputColorSpace.YCbCr_Matrix = 1; // BT.709
+	inputColorSpace.YCbCr_xvYCC = 0;
+	inputColorSpace.Nominal_Range = D3D11_VIDEO_PROCESSOR_NOMINAL_RANGE_16_235;
+	inputColorSpace.Usage = 0; // 视频内容
 
-    D3D11_VIDEO_PROCESSOR_COLOR_SPACE outputColorSpace = {};
-	outputColorSpace.YCbCr_Matrix = 0; // 不使用 YCbCr
-    outputColorSpace.RGB_Range = D3D11_VIDEO_PROCESSOR_NOMINAL_RANGE_0_255;
+	D3D11_VIDEO_PROCESSOR_COLOR_SPACE outputColorSpace = {};
+	outputColorSpace.YCbCr_Matrix = 0; // RGB矩阵
+	outputColorSpace.RGB_Range = D3D11_VIDEO_PROCESSOR_NOMINAL_RANGE_0_255;
+	outputColorSpace.Nominal_Range = D3D11_VIDEO_PROCESSOR_NOMINAL_RANGE_0_255;
+	outputColorSpace.Usage = 0; // 视频内容
 
-    videoContext_->VideoProcessorSetStreamColorSpace(videoProcessor_.Get(), 0, &inputColorSpace);
-    videoContext_->VideoProcessorSetOutputColorSpace(videoProcessor_.Get(), &outputColorSpace);
+	videoContext_->VideoProcessorSetStreamColorSpace(videoProcessor_.Get(), 0, &inputColorSpace);
+	videoContext_->VideoProcessorSetOutputColorSpace(videoProcessor_.Get(), &outputColorSpace);
 
     // 添加源矩形和目标矩形设置
     // 获取源纹理描述
     D3D11_TEXTURE2D_DESC sourceDesc;
-    it->second.inputTexture->GetDesc(&sourceDesc);
+	entry.inputTexture->GetDesc(&sourceDesc);
     
     // 获取输出纹理描述
     D3D11_TEXTURE2D_DESC outputDesc;
@@ -355,14 +337,11 @@ bool Nv12Render_D3d11va::processNV12ToRGB(const decoder_sdk::Frame &frame)
         static_cast<LONG>(outputDesc.Height)
     };
     videoContext_->VideoProcessorSetStreamDestRect(videoProcessor_.Get(), 0, TRUE, &destRect);
-    
-    // 设置输出目标矩形
-    videoContext_->VideoProcessorSetOutputTargetRect(videoProcessor_.Get(), TRUE, &destRect);
 
     // 执行颜色空间转换
     D3D11_VIDEO_PROCESSOR_STREAM stream = {};
     stream.Enable = TRUE;
-    stream.pInputSurface = it->second.inputView.Get();
+    stream.pInputSurface = entry.inputView.Get();
     
     HRESULT hr = videoContext_->VideoProcessorBlt(videoProcessor_.Get(), outputView_.Get(), 0, 1, &stream);
 
@@ -370,6 +349,9 @@ bool Nv12Render_D3d11va::processNV12ToRGB(const decoder_sdk::Frame &frame)
 		qWarning() << "[Nv12Render_D3d11va] VideoProcessorBlt failed, HRESULT:" << hr;
 		return false;
 	}
+
+	entry.inputTexture.Reset();
+	entry.inputView.Reset();
 
 	return true;
 }
@@ -480,6 +462,9 @@ bool Nv12Render_D3d11va::drawFrame(GLuint id)
 	program_.disableAttributeArray("vertexIn");
 	program_.disableAttributeArray("textureIn");
 	program_.release();
+
+	// 等待OpenGL渲染完成
+	syncOpenGL();
 
 	return lockSuccess;
 }

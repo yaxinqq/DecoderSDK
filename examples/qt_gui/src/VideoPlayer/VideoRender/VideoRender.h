@@ -36,7 +36,7 @@ public:
     /**
      * @brief 绘制
      */
-    virtual void draw();
+    void draw();
 
     /**
      * @brief 将图像渲染到缓存帧中，外部负责释放QOpenGLFramebufferObject
@@ -101,29 +101,43 @@ protected:
      */
     void clearGL();
 
+    /**
+     * @brief 同步OpenGL，并轮询当前任务是否完成，会阻塞当前线程，直到OpenGL命令执行完成
+     * @param sleepInterval 睡眠间隔，单位毫秒，默认5毫秒
+     */
+    void syncOpenGL(int sleepInterval = 5);
+
 private:
+    /**
+     * @brief 初始化FBO绘制资源
+     * @param size FBO的大小
+     * @retur 是否成功
+     */
     bool initializeFboDrawResources(const QSize &size);
+    
+    /**
+     * @brief 绘制FBO到屏幕
+     * @param fbo 要绘制的FBO
+     */
     void drawFbo(QSharedPointer<QOpenGLFramebufferObject> fbo);
+
+    /**
+     * @brief 创建一个FBO
+     * @param size FBO的大小
+     * @param fmt FBO的格式
+     * @return 创建的FBO指针
+     */
     QSharedPointer<QOpenGLFramebufferObject> createFbo(const QSize &size,
         const QOpenGLFramebufferObjectFormat &fmt);
 
-
-    void pollGpuFence();
-    int getFreeFboIndex() const;
 private:
     // 纹理交换锁
     QMutex mutex_;
 
-    // // 处于后台更新状态的FBO
-    // QSharedPointer<QOpenGLFramebufferObject> nextFbo_;
-    // // 处于绘制状态的FBO
-    // QSharedPointer<QOpenGLFramebufferObject> curFbo_;
-
-    // 三缓冲结构
-    QSharedPointer<QOpenGLFramebufferObject> fbos_[3];
-    bool fboUsed_[3];
-    int curFboIndex_ = 0;
-    int nextFboIndex_ = -1;
+    // 处于后台更新状态的FBO
+    QSharedPointer<QOpenGLFramebufferObject> nextFbo_;
+    // 处于绘制状态的FBO
+    QSharedPointer<QOpenGLFramebufferObject> curFbo_;
 
     // 用于绘制FBO到屏幕的资源
     QOpenGLShaderProgram fboDrawProgram_;
@@ -132,11 +146,8 @@ private:
 
     // 是否初始化完成
     std::atomic_bool initialized_;
-
-    // 是否支持glSync
-    bool supportsGlFenceSync_ = false;
-    // 当前等待同步的fence
-    GLsync pendingFence_ = nullptr;
+    // 是否支持glFence
+    bool supportsGlFence_ = false;
 };
 
 #endif // VIDEORENDER_H

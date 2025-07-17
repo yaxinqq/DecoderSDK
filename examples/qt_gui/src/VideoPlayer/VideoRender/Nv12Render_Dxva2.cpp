@@ -8,8 +8,6 @@
 #include <dxva2api.h>
 #endif
 
-#include <QThread>
-
 namespace {
 // 顶点着色器源码
 const char *vsrc = R"(
@@ -106,20 +104,11 @@ bool Nv12Render_Dxva2::renderFrame(const decoder_sdk::Frame &frame)
         return false;
     }
 
-	ComPtr<IDirect3DQuery9> query;
-    HRESULT hr = d3d9Device_->CreateQuery(D3DQUERYTYPE_EVENT, &query);
-
     // 使用StretchRect转换NV12到RGB
-    if (!convertNv12ToRgbStretchRect(sourceSurface)) {
+    if (!convertNv12ToRgbStretchRect(sourceSurface, frame)) {
         qWarning() << "[Nv12Render_Dxva2] Failed to convert NV12 to RGB!";
         return false;
     }
-    if (SUCCEEDED(hr) && query) {
-        query->Issue(D3DISSUE_END);
-        while (query->GetData(nullptr, 0, D3DGETDATA_FLUSH) != S_OK) {
-            QThread::msleep(1);
-        }
-	}
 
     // 绘制
     return drawFrame(sharedTexture_);
@@ -172,18 +161,32 @@ bool Nv12Render_Dxva2::createRgbRenderTarget()
     return true;
 }
 
-bool Nv12Render_Dxva2::convertNv12ToRgbStretchRect(LPDIRECT3DSURFACE9 nv12Surface)
+bool Nv12Render_Dxva2::convertNv12ToRgbStretchRect(LPDIRECT3DSURFACE9 nv12Surface, const decoder_sdk::Frame &frame)
 {
     if (!nv12Surface || !rgbRenderTarget_) {
         qWarning() << "[Nv12Render_Dxva2] Missing surfaces for StretchRect conversion!";
         return false;
     }
 
+	// 设置源矩形（实际视频内容区域）
+	RECT sourceRect = {
+		0, 0,
+		static_cast<LONG>(frame.width()),   // 使用实际视频宽度
+		static_cast<LONG>(frame.height())   // 使用实际视频高度
+	};
+
+	// 设置目标矩形（输出纹理区域）
+	RECT destRect = {
+		0, 0,
+		static_cast<LONG>(frame.width()),
+		static_cast<LONG>(frame.height())
+	};
+
     // 使用StretchRect进行格式转换和拷贝
     // 注意：这个方法依赖于D3D9驱动程序的内部转换能力
     // 某些驱动程序可能不支持从NV12直接转换到RGB
-    const HRESULT hr = d3d9Device_->StretchRect(nv12Surface, nullptr, rgbRenderTarget_.Get(),
-                                                nullptr, D3DTEXF_LINEAR);
+    const HRESULT hr = d3d9Device_->StretchRect(nv12Surface, &sourceRect, rgbRenderTarget_.Get(),
+                                                &destRect, D3DTEXF_LINEAR);
 
     if (FAILED(hr)) {
         qWarning() << "[Nv12Render_Dxva2] StretchRect conversion failed, HRESULT:" << hr;
@@ -296,6 +299,9 @@ bool Nv12Render_Dxva2::drawFrame(GLuint id)
     vbo_.release();
     glBindTexture(GL_TEXTURE_2D, 0);
     program_.release();
+
+	// 等待OpenGL渲染完成
+    syncOpenGL();
 
     return lockSuccess;
 }
