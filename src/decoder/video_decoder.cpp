@@ -402,13 +402,6 @@ bool VideoDecoder::setupHardwareDecode()
         }
     }
 
-    // 如果是D3D11 VA解码，则额外设置16帧
-    const auto hwType = hwAccel_->getType();
-    if (hwType == HWAccelType::kD3d11va 
-        || hwType == HWAccelType::kDxva2) {
-        codecCtx_->extra_hw_frames = 16;
-    }
-
     return true;
 }
 
