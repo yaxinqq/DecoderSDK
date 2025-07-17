@@ -116,6 +116,7 @@ void initLoggerWithConfig(const LogConfig &cfg, std::shared_ptr<spdlog::logger> 
         spdlog::register_logger(logger);
         logger->set_level(lvl);
         logger->flush_on(spdlog::level::warn);
+        spdlog::flush_every(std::chrono::seconds(1));        
     } catch (const std::exception &e) {
         std::cerr << "Logger 初始化失败: " << e.what() << std::endl;
     }
@@ -161,6 +162,15 @@ void Logger::ensureInitialized()
 
             initLoggerWithConfig(cfg, logger_);
             initialized_ = true;
+
+            // 注册程序退出时的清理函数
+            static bool cleanup_registered = false;
+            if (!cleanup_registered) {
+                std::atexit([]() {
+                    Logger::shutdown();
+                });
+                cleanup_registered = true;
+            }
         }
     }
 }
@@ -174,6 +184,19 @@ std::shared_ptr<spdlog::logger> Logger::getLogger()
 void Logger::setDefaultConfigPath(const std::string &configPath)
 {
     defaultConfigPath_ = configPath;
+}
+
+void Logger::shutdown()
+{
+    std::lock_guard<std::mutex> lock(initMutex_);
+    if (initialized_ && logger_) {
+        // 刷新所有待写入的日志
+        logger_->flush();
+        // 关闭spdlog系统
+        spdlog::shutdown();
+        logger_ = nullptr;
+        initialized_ = false;
+    }
 }
 
 INTERNAL_NAMESPACE_END

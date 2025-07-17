@@ -40,6 +40,11 @@ private:
      */
     static void ensureInitialized();
 
+    /**
+     * @brief 刷新并关闭日志系统（程序退出前调用）
+     */
+    static void shutdown();
+
 private:
     // 日志指针
     static std::shared_ptr<spdlog::logger> logger_;
