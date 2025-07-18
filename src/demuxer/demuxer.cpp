@@ -630,8 +630,8 @@ void Demuxer::checkPreBufferStatus()
         return;
     }
 
-    bool videoReady = true;
-    bool audioReady = true;
+    bool videoReady = false;
+    bool audioReady = false;
 
     // 检查视频缓冲
     if (videoStreamIndex_ >= 0 && preBufferVideoFrames_ > 0) {

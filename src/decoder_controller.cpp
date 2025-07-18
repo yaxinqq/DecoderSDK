@@ -278,29 +278,6 @@ bool DecoderController::startDecode()
         return false;
     }
 
-    // 如果启用了预缓冲，设置等待状态
-    if (config_.preBufferConfig.enablePreBuffer) {
-        preBufferState_ = PreBufferState::kWaitingBuffer;
-
-        // 设置解码器等待预缓冲
-        if (videoDecoder_) {
-            videoDecoder_->setWaitingForPreBuffer(true);
-        }
-        if (audioDecoder_) {
-            audioDecoder_->setWaitingForPreBuffer(true);
-        }
-
-        // 设置预缓冲配置和完成回调
-        demuxer_->setPreBufferConfig(config_.preBufferConfig.videoPreBufferFrames,
-                                     config_.preBufferConfig.audioPreBufferPackets,
-                                     config_.preBufferConfig.requireBothStreams, [this]() {
-                                         // 预缓冲完成回调
-                                         this->onPreBufferReady();
-                                     });
-
-        LOG_INFO("Decoder started, waiting for pre-buffer to complete...");
-    }
-
     // 启动解码器（非阻塞）
     bool success = startDecodeInternal(false);
     if (!success) {
@@ -712,6 +689,29 @@ bool DecoderController::startDecodeInternal(bool reopen)
         syncController_->setMaster(MasterClock::kAudio);
     } else if (demuxer_->hasVideo() && videoDecoder_) {
         syncController_->setMaster(MasterClock::kVideo);
+    }
+
+    // 如果启用了预缓冲，设置等待状态
+    if (config_.preBufferConfig.enablePreBuffer) {
+        preBufferState_ = PreBufferState::kWaitingBuffer;
+
+        // 设置解码器等待预缓冲
+        if (videoDecoder_) {
+            videoDecoder_->setWaitingForPreBuffer(true);
+        }
+        if (audioDecoder_) {
+            audioDecoder_->setWaitingForPreBuffer(true);
+        }
+
+        // 设置预缓冲配置和完成回调
+        demuxer_->setPreBufferConfig(config_.preBufferConfig.videoPreBufferFrames,
+                                     config_.preBufferConfig.audioPreBufferPackets,
+                                     config_.preBufferConfig.requireBothStreams, [this]() {
+                                         // 预缓冲完成回调
+                                         this->onPreBufferReady();
+                                     });
+
+        LOG_INFO("Decoder started, waiting for pre-buffer to complete...");
     }
 
     // 启动解码器
