@@ -536,7 +536,7 @@ int Demuxer::readAndProcessPacket(AVPacket *pkt, std::optional<std::chrono::high
     // 成功读取数据包
     if (ret >= 0) {
         occuredErrorTime.reset();
-        
+
         if (!readFirstPacket) {
             readFirstPacket = true;
             auto event = std::make_shared<StreamEventArgs>(url_, "Demuxer", "Stream Read Data");
@@ -619,6 +619,9 @@ void Demuxer::distributePacket(AVPacket *pkt)
             realTimeStreamRecorder_->writePacket(packet, AVMEDIA_TYPE_AUDIO);
         }
     }
+
+    // 检查预缓冲状态
+    checkPreBufferStatus();
 }
 
 void Demuxer::checkPreBufferStatus()

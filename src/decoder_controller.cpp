@@ -278,12 +278,6 @@ bool DecoderController::startDecode()
         return false;
     }
 
-    // 启动解码器（非阻塞）
-    bool success = startDecodeInternal(false);
-    if (!success) {
-        return false;
-    }
-
     // 如果启用了预缓冲，设置等待状态
     if (config_.preBufferConfig.enablePreBuffer) {
         preBufferState_ = PreBufferState::kWaitingBuffer;
@@ -305,6 +299,12 @@ bool DecoderController::startDecode()
                                      });
 
         LOG_INFO("Decoder started, waiting for pre-buffer to complete...");
+    }
+
+    // 启动解码器（非阻塞）
+    bool success = startDecodeInternal(false);
+    if (!success) {
+        return false;
     }
 
     return true;
