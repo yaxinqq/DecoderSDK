@@ -685,5 +685,8 @@ bool SoftwareRender::drawFrame(const TextureSet &textures, decoder_sdk::ImageFor
     vbo_.release();
 
     checkGLError("draw");
+
+    syncOpenGL();
+
     return true;
 }
