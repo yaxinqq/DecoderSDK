@@ -14,4 +14,5 @@ get_filename_component(DecoderSDK_INSTALL_PREFIX "${_prefix}" DIRECTORY)
 # 设置变量
 set(DecoderSDK_LIBRARIES DecoderSDK::DecoderSDK)
 set(DecoderSDK_INCLUDE_DIRS "${DecoderSDK_INSTALL_PREFIX}/include")
+set(DecoderSDK_LIB_DIRS "${DecoderSDK_INSTALL_PREFIX}/lib")
 set(DecoderSDK_BIN_DIRS "${DecoderSDK_INSTALL_PREFIX}/bin")

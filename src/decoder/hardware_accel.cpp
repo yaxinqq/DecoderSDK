@@ -707,10 +707,10 @@ int HardwareAccel::createHWDeviceFromUserContext(void *userContext, AVHWDeviceTy
 
 AVHWDeviceType HardwareAccel::findBestHWAccelType()
 {
-    // 优先级顺序：D3D11VA > DXVA2 > QSV > CUDA > VAAPI > VDPAU > VIDEOTOOLBOX
+    // 优先级顺序：CUDA > D3D11VA > DXVA2 > QSV > VAAPI > VDPAU > VIDEOTOOLBOX
     std::vector<AVHWDeviceType> priorityList = {
-        AV_HWDEVICE_TYPE_D3D11VA,     AV_HWDEVICE_TYPE_DXVA2, AV_HWDEVICE_TYPE_CUDA,
-        AV_HWDEVICE_TYPE_QSV,         AV_HWDEVICE_TYPE_VAAPI, AV_HWDEVICE_TYPE_VDPAU,
+        AV_HWDEVICE_TYPE_CUDA,        AV_HWDEVICE_TYPE_D3D11VA, AV_HWDEVICE_TYPE_DXVA2,
+        AV_HWDEVICE_TYPE_QSV,         AV_HWDEVICE_TYPE_VAAPI,   AV_HWDEVICE_TYPE_VDPAU,
         AV_HWDEVICE_TYPE_VIDEOTOOLBOX};
 
     for (const AVHWDeviceType &type : priorityList) {

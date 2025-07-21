@@ -208,7 +208,7 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Windows")
 endif ()
 
 set(SPDLOG_LIB spdlog)
-set(FMT_LIB spdlog)
+set(FMT_LIB fmt)
 
 # 硬件加速相关库
 set(HARDWARE_ACCEL_LIBS)

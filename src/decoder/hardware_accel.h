@@ -115,24 +115,6 @@ public:
     }
 
     /**
-     * @brief 是否需要将硬件帧转换到主机内存
-     * @return 是否需要转换
-     */
-    bool isTransferToHostRequired() const
-    {
-        return transferToHostRequired_;
-    }
-
-    /**
-     * @brief 设置是否需要将硬件帧转换到主机内存
-     * @param required 是否需要转换
-     */
-    void setTransferToHostRequired(bool required)
-    {
-        transferToHostRequired_ = required;
-    }
-
-    /**
      * @brief 获取支持的硬件加速类型列表
      * @return 硬件加速类型列表
      */
@@ -222,13 +204,12 @@ private:
     static AVPixelFormat getHWPixelFormatForDevice(AVHWDeviceType deviceType);
 
 private:
-    HWAccelType type_;                    // 硬件加速类型
-    AVBufferRef *hwDeviceCtx_;            // 硬件设备上下文
-    AVPixelFormat hwPixFmt_;              // 硬件像素格式
-    bool initialized_;                    // 是否已初始化
-    bool transferToHostRequired_ = false; // 是否需要将硬件帧转换到主机内存
-    int deviceIndex_;                     // 设备索引
-    std::mutex mutex_;                    // 互斥锁
+    HWAccelType type_;         // 硬件加速类型
+    AVBufferRef *hwDeviceCtx_; // 硬件设备上下文
+    AVPixelFormat hwPixFmt_;   // 硬件像素格式
+    bool initialized_;         // 是否已初始化
+    int deviceIndex_;          // 设备索引
+    std::mutex mutex_;         // 互斥锁
 
     // 静态成员，用于存储硬件加速上下文
     static std::map<AVCodecContext *, HardwareAccel *> hwAccelMap_;
