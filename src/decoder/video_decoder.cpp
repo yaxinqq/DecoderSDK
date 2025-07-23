@@ -15,15 +15,197 @@ extern "C" {
 #include "stream_sync/stream_sync_manager.h"
 #include "utils/common_utils.h"
 
+DECODER_SDK_NAMESPACE_BEGIN
+INTERNAL_NAMESPACE_BEGIN
+
 namespace {
 const std::string kVideoDecoderName = "Video Decoder";
 
 // 硬解出错，降级到软解的容忍时间
-constexpr int kDefaultFallbackToleranceTime = 1000; // 单位：毫秒
-} // namespace
+constexpr int kDefaultFallbackToleranceTime = 2000; // 单位：毫秒
 
-DECODER_SDK_NAMESPACE_BEGIN
-INTERNAL_NAMESPACE_BEGIN
+/**
+ * @brief 获取合法的H264 profile列表
+ * @return 合法的H264 profile列表
+ */
+const std::vector<uint8_t> &getValidH264Profiles()
+{
+    static const std::vector<uint8_t> validProfiles = {
+        66,  // Baseline
+        77,  // Main
+        88,  // Extended
+        100, // High
+        110, // High 10
+        118, // Multiview High
+        122, // High 422
+        128, // Stereo High
+        144, // High 444
+        244, // High 444 Predictive
+        44   // CAVLC 444
+    };
+    return validProfiles;
+}
+
+/**
+ * @brief 在AnnexB格式数据中查找SPS NAL单元
+ * @param data 数据指针
+ * @param size 数据大小
+ * @param sps_profile_ptr 输出参数：SPS profile_idc字段的指针
+ * @param sps_constraint_ptr 输出参数：SPS constraint字段的指针
+ * @return true 如果找到SPS，false 如果未找到
+ */
+bool findSPSInAnnexB(const uint8_t *data, int size, uint8_t **sps_profile_ptr,
+                     uint8_t **sps_constraint_ptr)
+{
+    if (!data || size < 8) {
+        return false;
+    }
+
+    const uint8_t *end = data + size;
+    const uint8_t *current = data;
+
+    while (current < end - 4) {
+        // 查找起始码 (0x000001 或 0x00000001)
+        if (current[0] == 0x00 && current[1] == 0x00 &&
+            ((current[2] == 0x01) || (current[2] == 0x00 && current[3] == 0x01))) {
+            const int offset = (current[2] == 0x01) ? 3 : 4;
+            const uint8_t *nal_start = current + offset;
+
+            if (nal_start >= end)
+                break;
+
+            // 检查NAL类型是否为SPS (type = 7)
+            uint8_t nal_type = nal_start[0] & 0x1F;
+            if (nal_type == 7 && nal_start + 2 < end) {
+                // 找到SPS
+                *sps_profile_ptr = const_cast<uint8_t *>(&nal_start[1]);
+                *sps_constraint_ptr = const_cast<uint8_t *>(&nal_start[2]);
+                return true;
+            }
+
+            // 移动到下一个可能的起始码位置
+            current = nal_start;
+        } else {
+            ++current;
+        }
+    }
+
+    return false;
+}
+
+/**
+ * @brief 检查并修正H264 profile
+ * @param profile_idc 当前profile值
+ * @param sps_profile_ptr profile_idc字段的指针
+ * @param sps_constraint_ptr constraint字段的指针
+ * @param format_name 格式名称（用于日志）
+ * @param showLog 是否输出日志
+ * @return true 如果进行了修正，false 如果无需修正
+ */
+bool fixH264ProfileCommon(uint8_t profile_idc, uint8_t *sps_profile_ptr,
+                          uint8_t *sps_constraint_ptr, const char *format_name,
+                          bool showLog = false)
+{
+    if (!sps_profile_ptr || !sps_constraint_ptr) {
+        return false;
+    }
+
+    const auto &validProfiles = getValidH264Profiles();
+
+    // 检查当前profile是否在合法列表中
+    const bool isValidProfile =
+        std::find(validProfiles.begin(), validProfiles.end(), profile_idc) != validProfiles.end();
+
+    if (isValidProfile) {
+        return false; // profile合法，无需修正
+    }
+
+    // profile不合法，强制改为baseline profile (66)
+    *sps_profile_ptr = 66; // FF_PROFILE_H264_BASELINE
+
+    // 同时更新profile_compatibility字段为baseline兼容
+    // baseline profile的constraint_set0_flag + constraint_set1_flag应该设置为1
+    *sps_constraint_ptr = 0xc0;
+
+    // 记录日志
+    if (showLog) {
+        LOG_WARN("H264 profile {} is invalid, forced to baseline profile (66) in {} format",
+                 profile_idc, format_name);
+    }
+
+    return true;
+}
+
+/**
+ * @brief 检查并修正AnnexB格式AVPacket中SPS的profile
+ * @param pkt AVPacket指针
+ * @return true 如果进行了修正，false 如果无需修正或修正失败
+ */
+bool fixAnnexBSPSProfileInPacket(AVPacket *pkt)
+{
+    if (!pkt || !pkt->data || pkt->size < 8) {
+        return false;
+    }
+
+    uint8_t *sps_profile_ptr = nullptr;
+    uint8_t *sps_constraint_ptr = nullptr;
+
+    // 查找SPS NAL单元
+    if (!findSPSInAnnexB(pkt->data, pkt->size, &sps_profile_ptr, &sps_constraint_ptr)) {
+        return false;
+    }
+
+    const uint8_t profile_idc = *sps_profile_ptr;
+    return fixH264ProfileCommon(profile_idc, sps_profile_ptr, sps_constraint_ptr, "AnnexB packet");
+}
+
+/**
+ * @brief 检查H264 SPS中的profile是否合法，如果不合法则强制改为baseline profile
+ * @param codecCtx 解码器上下文
+ * @return true 如果进行了修正，false 如果无需修正或修正失败
+ */
+bool fixH264ProfileIfNeeded(AVCodecContext *codecCtx)
+{
+    if (!codecCtx || codecCtx->codec_id != AV_CODEC_ID_H264 || !codecCtx->extradata ||
+        codecCtx->extradata_size < 8) {
+        return false;
+    }
+
+    const uint8_t *data = codecCtx->extradata;
+    const int size = codecCtx->extradata_size;
+    const bool isAVCC = (data[0] == 0x01);
+
+    uint8_t profile_idc = 0;
+    uint8_t *sps_profile_ptr = nullptr;
+    uint8_t *sps_constraint_ptr = nullptr;
+
+    if (isAVCC) {
+        // AVCC格式处理
+        if (size < 8)
+            return false;
+        profile_idc = data[1];
+        sps_profile_ptr = const_cast<uint8_t *>(&data[1]);
+        sps_constraint_ptr = const_cast<uint8_t *>(&data[2]);
+    } else {
+        // AnnexB格式处理 - 查找SPS NAL单元
+        if (!findSPSInAnnexB(data, size, &sps_profile_ptr, &sps_constraint_ptr)) {
+            return false; // 未找到SPS
+        }
+        profile_idc = *sps_profile_ptr;
+    }
+
+    return fixH264ProfileCommon(profile_idc, sps_profile_ptr, sps_constraint_ptr,
+                                isAVCC ? "AVCC" : "AnnexB", true);
+}
+
+bool isAnnexBFormat(const uint8_t *data, size_t size)
+{
+    if (size >= 4) {
+        return (data[0] == 0 && data[1] == 0 && ((data[2] == 0 && data[3] == 1) || data[2] == 1));
+    }
+    return false;
+}
+} // namespace
 
 VideoDecoder::VideoDecoder(std::shared_ptr<Demuxer> demuxer,
                            std::shared_ptr<StreamSyncManager> StreamSyncManager,
@@ -95,7 +277,11 @@ void VideoDecoder::decodeLoop()
     bool hasKeyFrame = false;
     bool readFirstFrame = false;
     bool occuredError = false;
+    bool transToAVCC = false;
     std::optional<std::chrono::high_resolution_clock::time_point> errorStartTime;
+
+    std::vector<uint8_t> sps;
+    std::vector<uint8_t> pps;
 
     resetStatistics();
     while (isRunning_.load()) {
@@ -108,7 +294,8 @@ void VideoDecoder::decodeLoop()
         // 处理暂停状态
         if (isPaused_.load()) {
             std::unique_lock<std::mutex> lock(pauseMutex_);
-            pauseCv_.wait_for(lock, std::chrono::milliseconds(10), [this] { return !isPaused_.load() || !isRunning_.load(); });
+            pauseCv_.wait_for(lock, std::chrono::milliseconds(10),
+                              [this] { return !isPaused_.load() || !isRunning_.load(); });
             if (!isRunning_.load()) {
                 break;
             }
@@ -157,6 +344,20 @@ void VideoDecoder::decodeLoop()
             continue;
         }
         hasKeyFrame = true;
+
+        if (codecCtx_->codec_id == AV_CODEC_ID_H264 && hwAccel_ &&
+            (hwAccel_->getType() == HWAccelType::kD3d11va ||
+             hwAccel_->getType() == HWAccelType::kDxva2)) {
+            if (isAnnexBFormat(packet.get()->data, packet.get()->size)) {
+                // 检查是否是IDR帧（关键帧）
+                bool isIDRFrame = (packet.get()->flags & AV_PKT_FLAG_KEY) != 0;
+
+                // 如果是关键帧，检查并修正SPS profile
+                if (isIDRFrame) {
+                    fixAnnexBSPSProfileInPacket(packet.get());
+                }
+            }
+        }
 
         // 发送包到解码器
         int ret = avcodec_send_packet(codecCtx_, packet.get());
@@ -400,6 +601,14 @@ bool VideoDecoder::setupHardwareDecode()
             hwAccel_.reset();
             return false;
         }
+    }
+
+    // 如果创建的是D3D11、DXVA2类型的硬解码器，且是H264编码，则修复异常的SPS profile
+    if ((hwAccel_->getType() == HWAccelType::kD3d11va ||
+         hwAccel_->getType() == HWAccelType::kDxva2) &&
+        codecCtx_->codec_id == AV_CODEC_ID_H264 && codecCtx_->extradata &&
+        codecCtx_->extradata_size > 0) {
+        fixH264ProfileIfNeeded(codecCtx_);
     }
 
     return true;
