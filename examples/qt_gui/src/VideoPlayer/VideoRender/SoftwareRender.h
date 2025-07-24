@@ -75,7 +75,7 @@ private:
 
     // OpenGL错误检查
     bool checkGLError(const char *operation);
-    
+
     // 纹理对象
     struct TextureSet {
         GLuint yTexture = 0;  // Y分量或RGB纹理

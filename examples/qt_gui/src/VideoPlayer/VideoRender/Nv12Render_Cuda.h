@@ -54,7 +54,7 @@ protected:
 private:
     /*
      * @brief 绘制视频帧
-     * 
+     *
      * @prarm idY Y纹理
      * @param idUV UV纹理
      */

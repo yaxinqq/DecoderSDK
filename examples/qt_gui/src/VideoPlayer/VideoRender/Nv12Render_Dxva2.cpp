@@ -40,7 +40,10 @@ const char *fsrc = R"(
 )";
 } // namespace
 
-Nv12Render_Dxva2::Nv12Render_Dxva2() : VideoRender(), d3d9Device_(dxva2_utils::getDXVA2Device()), wglD3DDevice_(dxva2_utils::getWglDeviceRef())
+Nv12Render_Dxva2::Nv12Render_Dxva2()
+    : VideoRender(),
+      d3d9Device_(dxva2_utils::getDXVA2Device()),
+      wglD3DDevice_(dxva2_utils::getWglDeviceRef())
 {
 }
 
@@ -161,26 +164,23 @@ bool Nv12Render_Dxva2::createRgbRenderTarget()
     return true;
 }
 
-bool Nv12Render_Dxva2::convertNv12ToRgbStretchRect(LPDIRECT3DSURFACE9 nv12Surface, const decoder_sdk::Frame &frame)
+bool Nv12Render_Dxva2::convertNv12ToRgbStretchRect(LPDIRECT3DSURFACE9 nv12Surface,
+                                                   const decoder_sdk::Frame &frame)
 {
     if (!nv12Surface || !rgbRenderTarget_) {
         qWarning() << "[Nv12Render_Dxva2] Missing surfaces for StretchRect conversion!";
         return false;
     }
 
-	// 设置源矩形（实际视频内容区域）
-	RECT sourceRect = {
-		0, 0,
-		static_cast<LONG>(frame.width()),   // 使用实际视频宽度
-		static_cast<LONG>(frame.height())   // 使用实际视频高度
-	};
+    // 设置源矩形（实际视频内容区域）
+    RECT sourceRect = {
+        0, 0,
+        static_cast<LONG>(frame.width()), // 使用实际视频宽度
+        static_cast<LONG>(frame.height()) // 使用实际视频高度
+    };
 
-	// 设置目标矩形（输出纹理区域）
-	RECT destRect = {
-		0, 0,
-		static_cast<LONG>(frame.width()),
-		static_cast<LONG>(frame.height())
-	};
+    // 设置目标矩形（输出纹理区域）
+    RECT destRect = {0, 0, static_cast<LONG>(frame.width()), static_cast<LONG>(frame.height())};
 
     // 使用StretchRect进行格式转换和拷贝
     // 注意：这个方法依赖于D3D9驱动程序的内部转换能力
@@ -235,7 +235,8 @@ bool Nv12Render_Dxva2::registerTextureWithOpenGL(int width, int height)
     }
 
     // 设置共享句柄
-    if (sharedHandle_ && !wgl::wglDXSetResourceShareHandleNV(rgbRenderTarget_.Get(), sharedHandle_)) {
+    if (sharedHandle_ &&
+        !wgl::wglDXSetResourceShareHandleNV(rgbRenderTarget_.Get(), sharedHandle_)) {
         DWORD error = GetLastError();
         qWarning()
             << "[Nv12Render_Dxva2] Failed setting Direct3D/OpenGL share handle for surface, error:"
@@ -246,7 +247,7 @@ bool Nv12Render_Dxva2::registerTextureWithOpenGL(int width, int height)
 
     // 注册RGB渲染目标表面
     wglTextureHandle_ = wglD3DDevice_.wglDXRegisterObjectNV(rgbRenderTarget_.Get(), sharedTexture_,
-                                              GL_TEXTURE_2D, WGL_ACCESS_READ_ONLY_NV);
+                                                            GL_TEXTURE_2D, WGL_ACCESS_READ_ONLY_NV);
     if (!wglTextureHandle_) {
         DWORD error = GetLastError();
         qWarning() << "[Nv12Render_Dxva2] Failed to register texture, error:" << error;
@@ -264,8 +265,6 @@ bool Nv12Render_Dxva2::drawFrame(GLuint id)
         return false;
     }
 
-    clearGL();
-
     // 使用着色器程序
     program_.bind();
 
@@ -281,17 +280,16 @@ bool Nv12Render_Dxva2::drawFrame(GLuint id)
     program_.setAttributeBuffer("vertexIn", GL_FLOAT, 0, 2, 0);
     program_.setAttributeBuffer("textureIn", GL_FLOAT, 2 * 4 * sizeof(GLfloat), 2, 0);
 
-	bool lockSuccess = false;
-	if (wglD3DDevice_.isValid() && wglTextureHandle_) {
-		lockSuccess = wglD3DDevice_.wglDXLockObjectsNV(1, &wglTextureHandle_);
-		if (lockSuccess) {
-			glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-			wglD3DDevice_.wglDXUnlockObjectsNV(1, &wglTextureHandle_);
-		}
-		else {
-			qWarning() << "[Nv12Render_Dxva2] Failed to lock WGL objects!";
-		}
-	}
+    bool lockSuccess = false;
+    if (wglD3DDevice_.isValid() && wglTextureHandle_) {
+        lockSuccess = wglD3DDevice_.wglDXLockObjectsNV(1, &wglTextureHandle_);
+        if (lockSuccess) {
+            glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+            wglD3DDevice_.wglDXUnlockObjectsNV(1, &wglTextureHandle_);
+        } else {
+            qWarning() << "[Nv12Render_Dxva2] Failed to lock WGL objects!";
+        }
+    }
 
     // 清理
     program_.disableAttributeArray("vertexIn");
@@ -299,9 +297,6 @@ bool Nv12Render_Dxva2::drawFrame(GLuint id)
     vbo_.release();
     glBindTexture(GL_TEXTURE_2D, 0);
     program_.release();
-
-	// 等待OpenGL渲染完成
-    syncOpenGL();
 
     return lockSuccess;
 }

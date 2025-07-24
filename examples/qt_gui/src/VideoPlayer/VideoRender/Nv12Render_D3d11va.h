@@ -1,7 +1,7 @@
 #pragma once
 #ifdef D3D11VA_AVAILABLE
-#include "VideoRender.h"
 #include "Commonutils.h"
+#include "VideoRender.h"
 
 #include <QOpenGLBuffer>
 #include <QOpenGLFramebufferObject>

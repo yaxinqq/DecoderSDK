@@ -1,6 +1,7 @@
-﻿#ifndef VIDEORENDER_H
+#ifndef VIDEORENDER_H
 #define VIDEORENDER_H
 
+#include "RenderBufferQueue.h"
 #include "decodersdk/frame.h"
 
 #include <QMutex>
@@ -11,8 +12,8 @@
 #include <QOpenGLShaderProgram>
 #include <QScopedPointer>
 #include <QSharedPointer>
+#include <memory>
 
-class FboQueue;
 class VideoRender : protected QOpenGLExtraFunctions {
 public:
     VideoRender();
@@ -26,10 +27,11 @@ public:
      * @param vertical	 是否垂直镜像
      */
     void initialize(const std::shared_ptr<decoder_sdk::Frame> &frame, const bool horizontal = false,
-        const bool vertical = false);
+                    const bool vertical = false);
 
     /**
-     * @brief 渲染
+     * @brief 渲染（非阻塞）
+     * @param frame 视频帧
      */
     void render(const std::shared_ptr<decoder_sdk::Frame> &frame);
 
@@ -40,6 +42,7 @@ public:
 
     /**
      * @brief 将图像渲染到缓存帧中，外部负责释放QOpenGLFramebufferObject
+     * @return 当前显示的FBO，如果没有可用的FBO则返回nullptr
      */
     QSharedPointer<QOpenGLFramebufferObject> getFrameBuffer();
 
@@ -49,6 +52,11 @@ public:
      * @return 是否有效
      */
     bool isValid() const;
+
+    /**
+     * @brief 获取缓冲队列统计信息
+     */
+    RenderBufferQueue::Statistics getStatistics() const;
 
 protected:
     /**
@@ -101,12 +109,6 @@ protected:
      */
     void clearGL();
 
-    /**
-     * @brief 同步OpenGL，并轮询当前任务是否完成，会阻塞当前线程，直到OpenGL命令执行完成
-     * @param sleepInterval 睡眠间隔，单位毫秒，默认5毫秒
-     */
-    void syncOpenGL(int sleepInterval = 5);
-
 private:
     /**
      * @brief 初始化FBO绘制资源
@@ -114,7 +116,7 @@ private:
      * @retur 是否成功
      */
     bool initializeFboDrawResources(const QSize &size);
-    
+
     /**
      * @brief 绘制FBO到屏幕
      * @param fbo 要绘制的FBO
@@ -128,16 +130,14 @@ private:
      * @return 创建的FBO指针
      */
     QSharedPointer<QOpenGLFramebufferObject> createFbo(const QSize &size,
-        const QOpenGLFramebufferObjectFormat &fmt);
+                                                       const QOpenGLFramebufferObjectFormat &fmt);
 
 private:
-    // 纹理交换锁
-    QMutex mutex_;
+    // 循环缓冲渲染队列
+    std::unique_ptr<RenderBufferQueue> bufferQueue_;
 
-    // 处于后台更新状态的FBO
-    QSharedPointer<QOpenGLFramebufferObject> nextFbo_;
-    // 处于绘制状态的FBO
-    QSharedPointer<QOpenGLFramebufferObject> curFbo_;
+    // 当前正在显示的buffer
+    RenderBuffer *currentDisplayBuffer_ = nullptr;
 
     // 用于绘制FBO到屏幕的资源
     QOpenGLShaderProgram fboDrawProgram_;

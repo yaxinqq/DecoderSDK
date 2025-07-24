@@ -632,8 +632,6 @@ bool SoftwareRender::checkGLError(const char *operation)
 
 bool SoftwareRender::drawFrame(const TextureSet &textures, decoder_sdk::ImageFormat format)
 {
-    clearGL();
-
     program_.bind();
     vbo_.bind();
 
@@ -685,8 +683,6 @@ bool SoftwareRender::drawFrame(const TextureSet &textures, decoder_sdk::ImageFor
     vbo_.release();
 
     checkGLError("draw");
-
-    syncOpenGL();
 
     return true;
 }

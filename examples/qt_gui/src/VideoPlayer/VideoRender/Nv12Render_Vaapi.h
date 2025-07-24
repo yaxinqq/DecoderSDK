@@ -56,7 +56,7 @@ protected:
 private:
     /*
      * @brief 绘制视频帧
-     * 
+     *
      * @prarm idY Y纹理
      * @param idUV UV纹理
      */
@@ -70,7 +70,7 @@ private:
 private:
     // EGL图像相关资源。fd在不使用后一定要关掉
     struct EGLImage {
-        void* imageKHR = nullptr;
+        void *imageKHR = nullptr;
         int fd = -1;
     };
 

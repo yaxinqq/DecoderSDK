@@ -2,8 +2,8 @@
 #define NV12RENDER_DXVA2_H
 #ifdef DXVA2_AVAILABLE
 
-#include "VideoRender.h"
 #include "Commonutils.h"
+#include "VideoRender.h"
 
 #include <QDebug>
 #include <QOpenGLBuffer>
@@ -74,10 +74,11 @@ private:
      *
      * @param nv12Surface D3D9 Surface
      */
-    bool convertNv12ToRgbStretchRect(LPDIRECT3DSURFACE9 nv12Surface, const decoder_sdk::Frame &frame);
+    bool convertNv12ToRgbStretchRect(LPDIRECT3DSURFACE9 nv12Surface,
+                                     const decoder_sdk::Frame &frame);
     /*
      * @brief D3D Texture 和 OpenGL Texture 互注册（Zero-copy）
-     * 
+     *
      * @param width 视频帧宽
      * @param height 视频帧高
      */
@@ -99,7 +100,7 @@ private:
     HANDLE sharedHandle_ = nullptr;
 
     // WGL interop handles
-	wgl::WglDeviceRef wglD3DDevice_;
+    wgl::WglDeviceRef wglD3DDevice_;
     HANDLE wglTextureHandle_ = nullptr;
 
     // OpenGL resources

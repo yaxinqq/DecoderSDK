@@ -56,7 +56,8 @@ const char *fsrc = R"(
 )";
 } // namespace
 
-inline bool checkError(const char* msg,int iLine, const char* szFile) {
+inline bool checkError(const char *msg, int iLine, const char *szFile)
+{
     EGLint err = eglGetError();
     if (err != EGL_SUCCESS) {
         qDebug() << "ERROR: " << msg << err << " at line " << iLine << " in file " << szFile;
@@ -66,9 +67,8 @@ inline bool checkError(const char* msg,int iLine, const char* szFile) {
 }
 #define ck(call) checkError(call, __LINE__, __FILE__)
 
-Nv12Render_Vaapi::Nv12Render_Vaapi(QOpenGLContext *ctx) 
-    : VideoRender()
-    , vaDisplay_(vaapi_utils::getVADisplayDRM())
+Nv12Render_Vaapi::Nv12Render_Vaapi(QOpenGLContext *ctx)
+    : VideoRender(), vaDisplay_(vaapi_utils::getVADisplayDRM())
 {
     if (ctx && ctx->isValid()) {
         nativeEglHandle_ = ctx->nativeHandle();
@@ -79,10 +79,10 @@ Nv12Render_Vaapi::Nv12Render_Vaapi(QOpenGLContext *ctx)
 }
 
 Nv12Render_Vaapi::~Nv12Render_Vaapi()
-{	
+{
     cleanupEGLTextures();
 
-    for (auto *id: {&idY_, &idUV_}) {
+    for (auto *id : {&idY_, &idUV_}) {
         glDeleteTextures(1, id);
     }
 
@@ -160,32 +160,43 @@ bool Nv12Render_Vaapi::renderFrame(const decoder_sdk::Frame &frame)
 
     // zero copy
     const auto desc = decoder_sdk::exportVASurfaceHandle(vaDisplay_, surfaceID);
-    
-    EGLint yAttrs[] = {
-        EGL_LINUX_DRM_FOURCC_EXT, static_cast<EGLint>(desc.layers[0].drm_format),
-        EGL_WIDTH, frame.width(),
-        EGL_HEIGHT, frame.height(),
-        EGL_DMA_BUF_PLANE0_FD_EXT, desc.objects[0].fd,
-        EGL_DMA_BUF_PLANE0_OFFSET_EXT, desc.layers[0].offset[0],
-        EGL_DMA_BUF_PLANE0_PITCH_EXT, desc.layers[0].pitch[0],
-        EGL_NONE
-    };
-    yImage_.imageKHR = egl::egl_create_image_KHR(eglContext.display(), EGL_NO_CONTEXT, EGL_LINUX_DMA_BUF_EXT, (EGLClientBuffer)NULL, yAttrs);
+
+    EGLint yAttrs[] = {EGL_LINUX_DRM_FOURCC_EXT,
+                       static_cast<EGLint>(desc.layers[0].drm_format),
+                       EGL_WIDTH,
+                       frame.width(),
+                       EGL_HEIGHT,
+                       frame.height(),
+                       EGL_DMA_BUF_PLANE0_FD_EXT,
+                       desc.objects[0].fd,
+                       EGL_DMA_BUF_PLANE0_OFFSET_EXT,
+                       desc.layers[0].offset[0],
+                       EGL_DMA_BUF_PLANE0_PITCH_EXT,
+                       desc.layers[0].pitch[0],
+                       EGL_NONE};
+    yImage_.imageKHR = egl::egl_create_image_KHR(
+        eglContext.display(), EGL_NO_CONTEXT, EGL_LINUX_DMA_BUF_EXT, (EGLClientBuffer)NULL, yAttrs);
     if (!yImage_.imageKHR) {
         qWarning() << QStringLiteral("egl_create_image_KHR to create yImageKHR failed!");
     }
     yImage_.fd = desc.objects[0].fd;
 
-    EGLint uvAttrs[] = {
-        EGL_LINUX_DRM_FOURCC_EXT, static_cast<EGLint>(desc.layers[1].drm_format),
-        EGL_WIDTH, frame.width() / 2,
-        EGL_HEIGHT, frame.height() / 2,
-        EGL_DMA_BUF_PLANE0_FD_EXT, desc.objects[0].fd,
-        EGL_DMA_BUF_PLANE0_OFFSET_EXT, desc.layers[1].offset[0],
-        EGL_DMA_BUF_PLANE0_PITCH_EXT, desc.layers[1].pitch[0],
-        EGL_NONE
-    };
-    uvImage_.imageKHR = egl::egl_create_image_KHR(eglContext.display(), EGL_NO_CONTEXT, EGL_LINUX_DMA_BUF_EXT, (EGLClientBuffer)NULL, uvAttrs);
+    EGLint uvAttrs[] = {EGL_LINUX_DRM_FOURCC_EXT,
+                        static_cast<EGLint>(desc.layers[1].drm_format),
+                        EGL_WIDTH,
+                        frame.width() / 2,
+                        EGL_HEIGHT,
+                        frame.height() / 2,
+                        EGL_DMA_BUF_PLANE0_FD_EXT,
+                        desc.objects[0].fd,
+                        EGL_DMA_BUF_PLANE0_OFFSET_EXT,
+                        desc.layers[1].offset[0],
+                        EGL_DMA_BUF_PLANE0_PITCH_EXT,
+                        desc.layers[1].pitch[0],
+                        EGL_NONE};
+    uvImage_.imageKHR =
+        egl::egl_create_image_KHR(eglContext.display(), EGL_NO_CONTEXT, EGL_LINUX_DMA_BUF_EXT,
+                                  (EGLClientBuffer)NULL, uvAttrs);
     if (!uvImage_.imageKHR) {
         qWarning() << QStringLiteral("egl_create_image_KHR to create uvImageKHR failed!");
     }
@@ -209,8 +220,6 @@ void Nv12Render_Vaapi::cleanupRenderResources()
 
 void Nv12Render_Vaapi::drawFrame(GLuint idY, GLuint idUV)
 {
-    clearGL();
-
     program_.bind();
     vbo_.bind();
     program_.enableAttributeArray("vertexIn");
@@ -236,7 +245,7 @@ void Nv12Render_Vaapi::drawFrame(GLuint idY, GLuint idUV)
 void Nv12Render_Vaapi::cleanupEGLTextures()
 {
     QEGLNativeContext eglContext = nativeEglHandle_.value<QEGLNativeContext>();
-    const auto clearFunction = [](EGLImage &image, const QEGLNativeContext &eglContext){
+    const auto clearFunction = [](EGLImage &image, const QEGLNativeContext &eglContext) {
         if (image.imageKHR && eglContext.display()) {
             egl::egl_destroy_image_KHR(eglContext.display(), image.imageKHR);
         }

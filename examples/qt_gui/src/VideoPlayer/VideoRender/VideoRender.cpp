@@ -1,9 +1,11 @@
 #include "VideoRender.h"
 
+#include <QDateTime>
+#include <QOpenGLContext>
 #include <QThread>
 
 namespace {
-	const char *vsrc = R"(
+const char *vsrc = R"(
     #ifdef GL_ES
         precision mediump float;
     #endif
@@ -17,7 +19,7 @@ namespace {
         }
     )";
 
-	const char *fsrc = R"(
+const char *fsrc = R"(
     #ifdef GL_ES
         precision mediump float;
     #endif
@@ -30,231 +32,270 @@ namespace {
     )";
 } // namespace
 
-VideoRender::VideoRender() : initialized_{ false }, fboDrawResourcesInitialized_{ false }
+VideoRender::VideoRender() : initialized_{false}, fboDrawResourcesInitialized_{false}
 {
+    bufferQueue_ = std::make_unique<RenderBufferQueue>(10); // 增加到6个缓冲区
 }
 
 VideoRender::~VideoRender()
 {
-	curFbo_.reset();
-	nextFbo_.reset();
+    // 释放当前显示buffer
+    if (currentDisplayBuffer_) {
+        bufferQueue_->releaseDisplayBuffer(currentDisplayBuffer_);
+        currentDisplayBuffer_ = nullptr;
+    }
 
-	fboDrawVbo_.destroy();
+    // 清理缓冲队列
+    if (bufferQueue_) {
+        bufferQueue_->cleanup();
+    }
+
+    fboDrawVbo_.destroy();
 }
 
-void VideoRender::initialize(const std::shared_ptr<decoder_sdk::Frame> &frame, const bool horizontal,
-	const bool vertical)
+void VideoRender::initialize(const std::shared_ptr<decoder_sdk::Frame> &frame,
+                             const bool horizontal, const bool vertical)
 {
     QOpenGLContext *context = QOpenGLContext::currentContext();
-	if (initialized_.load() || !frame || !frame->isValid() || !context) {
-		return;
-	}
+    if (initialized_.load() || !frame || !frame->isValid() || !context) {
+        return;
+    }
 
-	initializeOpenGLFunctions();
+    initializeOpenGLFunctions();
 
-	// 初始化FBO绘制资源
-	if (!fboDrawResourcesInitialized_.load()) {
-		fboDrawResourcesInitialized_ =
-			initializeFboDrawResources(QSize(frame->width(), frame->height()));
-	}
-	if (!fboDrawResourcesInitialized_.load())
-		return;
+    // 初始化循环缓冲队列
+    if (!bufferQueue_->initialize(QSize(frame->width(), frame->height()))) {
+        qWarning() << "[VideoRender] Failed to initialize buffer queue";
+        return;
+    }
 
-	// 调用子类的初始化方法
-	if (!initRenderVbo(horizontal, vertical))
-		return;
+    // 初始化FBO绘制资源
+    if (!fboDrawResourcesInitialized_.load()) {
+        fboDrawResourcesInitialized_ =
+            initializeFboDrawResources(QSize(frame->width(), frame->height()));
+    }
+    if (!fboDrawResourcesInitialized_.load())
+        return;
 
-	if (!initRenderShader(*frame))
-		return;
+    // 调用子类的初始化方法
+    if (!initRenderVbo(horizontal, vertical))
+        return;
 
-	if (!initRenderTexture(*frame))
-		return;
+    if (!initRenderShader(*frame))
+        return;
 
-	if (!initInteropsResource(*frame))
-		return;
+    if (!initRenderTexture(*frame))
+        return;
 
-	// 查询是否支持glFence
+    if (!initInteropsResource(*frame))
+        return;
+
+    // 查询是否支持glFence
     supportsGlFence_ = context->hasExtension(QByteArrayLiteral("GL_ARB_sync")) ||
                        context->hasExtension("GL_OES_EGL_sync");
 
-	initialized_.store(true);
+    initialized_.store(true);
 }
 
 void VideoRender::render(const std::shared_ptr<decoder_sdk::Frame> &frame)
 {
-	if (!frame || !frame->isValid() || !isValid()) {
-		return;
-	}
+    if (!frame || !frame->isValid() || !isValid()) {
+        return;
+    }
 
-	// 绑定FBO并让子类渲染到其中
-	nextFbo_->bind();
-	glViewport(0, 0, frame->width(), frame->height());
-	const bool success = renderFrame(*frame);
-	nextFbo_->release();
+    // 获取一个空闲的buffer用于渲染
+    RenderBuffer *buffer = bufferQueue_->acquireForRender();
+    if (!buffer) {
+        // 没有可用buffer，丢弃此帧
+        return;
+    }
 
-	// 更新当前FBO
-	if (success) {
-		glFlush();
-		QMutexLocker l(&mutex_);
-		std::swap(curFbo_, nextFbo_);
-	}
-	cleanupRenderResources();
+    // 绑定FBO并让子类渲染到其中
+    buffer->fbo->bind();
+    glViewport(0, 0, frame->width(), frame->height());
+    const bool success = renderFrame(*frame);
+    buffer->fbo->release();
+
+    if (success) {
+        GLsync fence = nullptr;
+
+        // 如果支持fence，创建fence对象进行异步同步
+        if (supportsGlFence_) {
+            fence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+            if (!fence) {
+                qWarning() << "[VideoRender] Failed to create fence";
+            } else {
+                glClientWaitSync(fence, GL_SYNC_FLUSH_COMMANDS_BIT, 10000);
+            }
+        } else {
+            // 不支持fence时，使用glFlush确保命令提交
+            glFlush();
+        }
+
+        // 标记渲染完成，不阻塞等待
+        bufferQueue_->markRenderFinished(buffer, fence);
+    } else {
+        // 渲染失败，释放buffer
+        buffer->inUse.store(false);
+        qWarning() << "[VideoRender] Frame render failed";
+    }
+
+    // 清理渲染资源
+    cleanupRenderResources();
 }
 
 void VideoRender::draw()
 {
-	if (!isValid()) {
-		return;
-	}
+    if (!isValid()) {
+        return;
+    }
 
-	QMutexLocker l(&mutex_);
-	if (curFbo_ && curFbo_->isValid()) {
-		drawFbo(curFbo_);
-	}
+    // 高性能显示策略：智能buffer管理
+    RenderBuffer *newDisplayBuffer = bufferQueue_->acquireForDisplay();
+
+    if (newDisplayBuffer && newDisplayBuffer->fbo && newDisplayBuffer->fbo->isValid()) {
+        // 有新的buffer可用
+        if (currentDisplayBuffer_ != newDisplayBuffer) {
+            // 释放旧buffer
+            if (currentDisplayBuffer_) {
+                bufferQueue_->releaseDisplayBuffer(currentDisplayBuffer_);
+            }
+            currentDisplayBuffer_ = newDisplayBuffer;
+        }
+    }
+
+    // 绘制当前buffer
+    if (currentDisplayBuffer_ && currentDisplayBuffer_->fbo &&
+        currentDisplayBuffer_->fbo->isValid()) {
+        drawFbo(currentDisplayBuffer_->fbo);
+    } else {
+        // 完全没有可用buffer时，清屏
+        clearGL();
+    }
 }
 
 QSharedPointer<QOpenGLFramebufferObject> VideoRender::getFrameBuffer()
 {
-	if (!curFbo_) {
-		return nullptr;
-	}
+    // 获取当前显示的buffer进行深拷贝
+    if (!currentDisplayBuffer_ || !currentDisplayBuffer_->fbo) {
+        return nullptr;
+    }
 
-	// 深拷贝当前FBO
-	auto copyFbo = createFbo(curFbo_->size(), curFbo_->format());
-	if (!copyFbo) {
-		return nullptr;
-	}
+    // 深拷贝当前FBO
+    auto copyFbo =
+        createFbo(currentDisplayBuffer_->fbo->size(), currentDisplayBuffer_->fbo->format());
+    if (!copyFbo) {
+        return nullptr;
+    }
 
-	// 使用blit进行深拷贝
-	QOpenGLFramebufferObject::blitFramebuffer(copyFbo.get(), curFbo_.get());
+    // 使用blit进行深拷贝
+    QOpenGLFramebufferObject::blitFramebuffer(copyFbo.get(), currentDisplayBuffer_->fbo.get());
 
-	return copyFbo;
+    return copyFbo;
 }
 
 bool VideoRender::isValid() const
 {
-	return initialized_.load() && fboDrawResourcesInitialized_.load();
+    return initialized_.load() && fboDrawResourcesInitialized_.load();
+}
+
+RenderBufferQueue::Statistics VideoRender::getStatistics() const
+{
+    if (bufferQueue_) {
+        return bufferQueue_->getStatistics();
+    }
+    return {};
 }
 
 void VideoRender::initDefaultVBO(QOpenGLBuffer &vbo, const bool horizontal,
-	const bool vertical) const
+                                 const bool vertical) const
 {
-	// 设置顶点数据
-	const GLfloat points[] = {
-		// 位置坐标
-		-1.0f,
-		1.0f,
-		1.0f,
-		1.0f,
-		-1.0f,
-		-1.0f,
-		1.0f,
-		-1.0f,
+    // 设置顶点数据
+    const GLfloat points[] = {
+        // 位置坐标
+        -1.0f,
+        1.0f,
+        1.0f,
+        1.0f,
+        -1.0f,
+        -1.0f,
+        1.0f,
+        -1.0f,
 
-		// 纹理坐标
-		horizontal ? 1.0f : 0.0f,
-		vertical ? 1.0f : 0.0f,
-		horizontal ? 0.0f : 1.0f,
-		vertical ? 1.0f : 0.0f,
-		horizontal ? 1.0f : 0.0f,
-		vertical ? 0.0f : 1.0f,
-		horizontal ? 0.0f : 1.0f,
-		vertical ? 0.0f : 1.0f,
-	};
+        // 纹理坐标
+        horizontal ? 1.0f : 0.0f,
+        vertical ? 1.0f : 0.0f,
+        horizontal ? 0.0f : 1.0f,
+        vertical ? 1.0f : 0.0f,
+        horizontal ? 1.0f : 0.0f,
+        vertical ? 0.0f : 1.0f,
+        horizontal ? 0.0f : 1.0f,
+        vertical ? 0.0f : 1.0f,
+    };
 
-	vbo.create();
-	vbo.bind();
-	vbo.allocate(points, sizeof(points));
-	vbo.release();
+    vbo.create();
+    vbo.bind();
+    vbo.allocate(points, sizeof(points));
+    vbo.release();
 }
 
 void VideoRender::clearGL()
 {
-    glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f); // 改为不透明黑色
     glClear(GL_COLOR_BUFFER_BIT);
-}
-
-void VideoRender::syncOpenGL(int sleepInterval)
-{
-    // 检查是否支持fence同步（OpenGL 3.2+）
-    QOpenGLContext *context = QOpenGLContext::currentContext();
-    if (context && supportsGlFence_) {
-        // 插入fence，异步等待渲染完成
-        GLsync fence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
-        // 轮询
-        while (true) {
-            const GLenum status = glClientWaitSync(fence, GL_SYNC_FLUSH_COMMANDS_BIT, 0);
-            if (status == GL_ALREADY_SIGNALED || status == GL_CONDITION_SATISFIED) {
-                break; // 渲染完成
-            } else if (status == GL_TIMEOUT_EXPIRED) {
-                QThread::msleep(5); // 继续轮询
-            } else if (status == GL_WAIT_FAILED) {
-                qWarning() << "[VideoRender] Fence wait failed!";
-                break; // 等待失败，退出轮询
-            }
-        }
-        glDeleteSync(fence);
-    } else {
-        // 退化策略：使用glFinish确保渲染完成
-        glFinish();
-    }
 }
 
 bool VideoRender::initializeFboDrawResources(const QSize &size)
 {
-	fboDrawProgram_.addCacheableShaderFromSourceCode(QOpenGLShader::Vertex, vsrc);
-	fboDrawProgram_.addCacheableShaderFromSourceCode(QOpenGLShader::Fragment, fsrc);
-	fboDrawProgram_.link();
+    fboDrawProgram_.addCacheableShaderFromSourceCode(QOpenGLShader::Vertex, vsrc);
+    fboDrawProgram_.addCacheableShaderFromSourceCode(QOpenGLShader::Fragment, fsrc);
+    fboDrawProgram_.link();
 
-	// 全屏quad的顶点数据（交错式布局）
-	const GLfloat vertices[] = {// 位置坐标               // 纹理坐标
-								-1.0f, 1.0f,  0.0f, 1.0f, 1.0f, 1.0f,  1.0f, 1.0f,
-								-1.0f, -1.0f, 0.0f, 0.0f, 1.0f, -1.0f, 1.0f, 0.0f };
+    // 全屏quad的顶点数据（交错式布局）
+    const GLfloat vertices[] = {// 位置坐标               // 纹理坐标
+                                -1.0f, 1.0f,  0.0f, 1.0f, 1.0f, 1.0f,  1.0f, 1.0f,
+                                -1.0f, -1.0f, 0.0f, 0.0f, 1.0f, -1.0f, 1.0f, 0.0f};
 
-	fboDrawVbo_.create();
-	fboDrawVbo_.bind();
-	fboDrawVbo_.allocate(vertices, sizeof(vertices));
-	fboDrawVbo_.release();
+    fboDrawVbo_.create();
+    fboDrawVbo_.bind();
+    fboDrawVbo_.allocate(vertices, sizeof(vertices));
+    fboDrawVbo_.release();
 
-	// 创建FBO
-	curFbo_ = createFbo(size, {});
-	nextFbo_ = createFbo(size, {});
-
-	return !curFbo_.isNull() && !nextFbo_.isNull();
+    return true;
 }
 
 void VideoRender::drawFbo(QSharedPointer<QOpenGLFramebufferObject> fbo)
 {
-	if (!fbo || !fboDrawResourcesInitialized_.load()) {
-		return;
-	}
+    if (!fbo || !fboDrawResourcesInitialized_.load()) {
+        return;
+    }
 
-	fboDrawProgram_.bind();
-	fboDrawVbo_.bind();
+    fboDrawProgram_.bind();
+    fboDrawVbo_.bind();
 
-	fboDrawProgram_.enableAttributeArray("position");
-	fboDrawProgram_.enableAttributeArray("texCoord");
-	fboDrawProgram_.setAttributeBuffer("position", GL_FLOAT, 0, 2, 4 * sizeof(GLfloat));
-	fboDrawProgram_.setAttributeBuffer("texCoord", GL_FLOAT, 2 * sizeof(GLfloat), 2,
-		4 * sizeof(GLfloat));
+    fboDrawProgram_.enableAttributeArray("position");
+    fboDrawProgram_.enableAttributeArray("texCoord");
+    fboDrawProgram_.setAttributeBuffer("position", GL_FLOAT, 0, 2, 4 * sizeof(GLfloat));
+    fboDrawProgram_.setAttributeBuffer("texCoord", GL_FLOAT, 2 * sizeof(GLfloat), 2,
+                                       4 * sizeof(GLfloat));
 
-	glActiveTexture(GL_TEXTURE0);
-	glBindTexture(GL_TEXTURE_2D, fbo->texture());
-	fboDrawProgram_.setUniformValue("texture", 0);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, fbo->texture());
+    fboDrawProgram_.setUniformValue("texture", 0);
 
-	glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 
-	fboDrawProgram_.disableAttributeArray("position");
-	fboDrawProgram_.disableAttributeArray("texCoord");
-	fboDrawVbo_.release();
-	fboDrawProgram_.release();
+    fboDrawProgram_.disableAttributeArray("position");
+    fboDrawProgram_.disableAttributeArray("texCoord");
+    fboDrawVbo_.release();
+    fboDrawProgram_.release();
 }
 
 QSharedPointer<QOpenGLFramebufferObject> VideoRender::createFbo(
-	const QSize &size, const QOpenGLFramebufferObjectFormat &fmt)
+    const QSize &size, const QOpenGLFramebufferObjectFormat &fmt)
 {
-	if (!size.isValid()) {
-		return nullptr;
-	}
-	return QSharedPointer<QOpenGLFramebufferObject>::create(size, fmt);
+    if (!size.isValid()) {
+        return nullptr;
+    }
+    return QSharedPointer<QOpenGLFramebufferObject>::create(size, fmt);
 }

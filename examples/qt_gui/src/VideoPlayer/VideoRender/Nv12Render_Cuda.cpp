@@ -257,8 +257,6 @@ bool Nv12Render_Cuda::renderFrame(const decoder_sdk::Frame &frame)
 
 void Nv12Render_Cuda::drawFrame(GLuint idY, GLuint idUV)
 {
-    clearGL();
-
     program_.bind();
     vbo_.bind();
     program_.enableAttributeArray("vertexIn");
