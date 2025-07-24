@@ -131,7 +131,10 @@ private:
 
     // 硬件解码退化相关
     // 是否启用硬件解码退化
-    bool enableHardwareFallback_ = true;       
+    bool enableHardwareFallback_ = true; 
+
+    // 是否需要手动修改SPS profile
+    bool needFixSPSProfile_ = false;
 };
 
 INTERNAL_NAMESPACE_END

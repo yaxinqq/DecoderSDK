@@ -347,7 +347,8 @@ void VideoDecoder::decodeLoop()
 
         if (codecCtx_->codec_id == AV_CODEC_ID_H264 && hwAccel_ &&
             (hwAccel_->getType() == HWAccelType::kD3d11va ||
-             hwAccel_->getType() == HWAccelType::kDxva2)) {
+             hwAccel_->getType() == HWAccelType::kDxva2) &&
+            needFixSPSProfile_) {
             if (isAnnexBFormat(packet.get()->data, packet.get()->size)) {
                 // 检查是否是IDR帧（关键帧）
                 bool isIDRFrame = (packet.get()->flags & AV_PKT_FLAG_KEY) != 0;
@@ -579,6 +580,8 @@ Frame VideoDecoder::convertSoftwareFrame(const Frame &frame)
 
 bool VideoDecoder::setupHardwareDecode()
 {
+    needFixSPSProfile_ = false; // 重置SPS修正标志
+
     // 创建硬件加速器（默认尝试自动选择最佳硬件加速方式）
     hwAccel_ = HardwareAccelFactory::getInstance().createHardwareAccel(hwAccelType_, deviceIndex_,
                                                                        hwContextCallbeck_);
@@ -608,7 +611,7 @@ bool VideoDecoder::setupHardwareDecode()
          hwAccel_->getType() == HWAccelType::kDxva2) &&
         codecCtx_->codec_id == AV_CODEC_ID_H264 && codecCtx_->extradata &&
         codecCtx_->extradata_size > 0) {
-        fixH264ProfileIfNeeded(codecCtx_);
+        needFixSPSProfile_ = fixH264ProfileIfNeeded(codecCtx_);
     }
 
     return true;
@@ -667,6 +670,7 @@ bool VideoDecoder::reinitializeWithSoftwareDecoder()
 
     // 重置硬件加速器
     hwAccel_.reset();
+    needFixSPSProfile_ = false; // 重置SPS修正标志
 
     // 重新打开解码器（不使用硬件加速）
     auto *const formatContext = demuxer_->formatContext();
