@@ -34,20 +34,33 @@ void DecoderThread::run()
             break;
         }
 
-        std::shared_ptr pFrame = std::make_shared<decoder_sdk::Frame>();
-        if ((pDecoder_ && !pDecoder_->controller_.videoQueue().tryPop(*pFrame)) || !pFrame->isValid()) {
+        bool shouldSleep = true;
+        {
+            // 视频，需要验证视频帧有效，且（是关键帧 或 decodeKeyFrame_为true）
+            std::shared_ptr pFrame = std::make_shared<decoder_sdk::Frame>();
+            if (pDecoder_ && pDecoder_->controller_.videoQueue().tryPop(*pFrame) &&
+                pFrame->isValid() && (pFrame->keyFrame() == 1 || decodeKeyFrame_)) {
+                emit pDecoder_->videoFrameReady(pFrame);
+                if (!decodeKeyFrame_)
+                    decodeKeyFrame_ = true;
+
+                shouldSleep = false;
+            }
+        }
+         
+        {
+            // 音频。需要验证音频帧有效
+            std::shared_ptr pFrame = std::make_shared<decoder_sdk::Frame>();
+            if (pDecoder_ && pDecoder_->controller_.audioQueue().tryPop(*pFrame) &&
+                pFrame->isValid()) {
+                emit pDecoder_->videoFrameReady(pFrame);
+                shouldSleep = false;
+            }
+        }
+
+        if (shouldSleep) {
             QThread::msleep(1);
-            continue;
         }
-
-        if (!decodeKeyFrame_) {
-            if (pFrame->keyFrame() == 1)
-                decodeKeyFrame_ = true;
-            else
-                continue;
-        }
-
-        emit pDecoder_->videoFrameReady(pFrame);
     }
 }
 #pragma endregion
@@ -167,6 +180,11 @@ void StreamDecoder::onNeedToStopRecording()
 void StreamDecoder::onNeedToSeek(double pos)
 {
     controller_.seek(pos);
+}
+
+void StreamDecoder::onNeedToSpeed(double speed)
+{
+    controller_.setSpeed(speed);
 }
 
 int StreamDecoder::close()
@@ -346,6 +364,7 @@ StreamDecoderWorker::StreamDecoderWorker(const QString &key, QObject *parent /*=
     connect(this, &StreamDecoderWorker::needToStopRecording, decoder_,
             &StreamDecoder::onNeedToStopRecording);
     connect(this, &StreamDecoderWorker::needToSeek, decoder_, &StreamDecoder::onNeedToSeek);
+    connect(this, &StreamDecoderWorker::needToSpeed, decoder_, &StreamDecoder::onNeedToSpeed);
 
     connect(decoder_, &StreamDecoder::openResultReady, this,
             [this](bool res, const QString &errorMsg) {
@@ -400,7 +419,7 @@ StreamDecoderWorker::~StreamDecoderWorker()
     if (decoder_) {
         delete decoder_;
         decoder_ = nullptr;
-	}
+    }
 }
 
 void StreamDecoderWorker::appendTask(StreamDecoder::Task task)
@@ -463,8 +482,8 @@ void StreamDecoderWorker::registerPlayer(VideoPlayerImpl *player)
     if (!player || refPlayers_.contains(player) || decoder_.isNull())
         return;
 
-	connect(decoder_, &StreamDecoder::videoFrameReady, player, &VideoPlayerImpl::videoFrameReady,
-		Qt::UniqueConnection);
+    connect(decoder_, &StreamDecoder::videoFrameReady, player, &VideoPlayerImpl::videoFrameReady,
+            Qt::UniqueConnection);
     connect(decoder_, &StreamDecoder::eventUpdated, player, &VideoPlayerImpl::onDecoderEventChanged,
             Qt::UniqueConnection);
     refPlayers_ << player;

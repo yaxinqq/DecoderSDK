@@ -29,12 +29,13 @@ QString StreamManager::openStream(VideoPlayerImpl *player, QString url, QString 
 
     // 开启解码
     decoder_sdk::Config config;
-    config.hwAccelType = decoder_sdk::HWAccelType::kDxva2;
+    config.hwAccelType = decoder_sdk::HWAccelType::kCuda;
     config.swVideoOutFormat = decoder_sdk::ImageFormat::kYUV444P;
-    config.decodeMediaType = decoder_sdk::Config::DecodeMediaType::kVideo;
+    config.decodeMediaType = decoder_sdk::Config::DecodeMediaType::kAll;
     config.enableFrameRateControl = true;
     config.createHwContextCallback =
         std::bind(&StreamManager::createHwContextCallback, this, std::placeholders::_1);
+    config.audioInterleaved = true;
     worker->open(url, config);
 
     return key;
@@ -152,6 +153,17 @@ bool StreamManager::seek(VideoPlayerImpl *player, double pts)
         return false;
 
     worker->needToSeek(pts);
+    return true;
+}
+
+bool StreamManager::setSpeed(VideoPlayerImpl *player, double speed)
+{
+    // 获得player对应的decoder
+    StreamDecoderWorker *const worker = streamDecoderByPlayer(player);
+    if (!worker)
+        return false;
+
+    worker->needToSpeed(speed);
     return true;
 }
 
@@ -301,7 +313,7 @@ void *StreamManager::createHwContextCallback(decoder_sdk::HWAccelType type)
 
 #ifdef CUDA_AVAILABLE
         case decoder_sdk::HWAccelType::kCuda:
-			return cuda_utils::getCudaContext();
+            return cuda_utils::getCudaContext();
 #endif
 
 #ifdef VAAPI_AVAILABLE
@@ -326,13 +338,13 @@ StreamManager::~StreamManager()
     for (auto it = mapDecoderByKey_.begin(); it != mapDecoderByKey_.end(); ++it) {
         StreamDecoderWorker *worker = it.value();
         if (worker) {
-			delete worker;
-			worker = nullptr;
+            delete worker;
+            worker = nullptr;
         }
     }
     mapDecoderByKey_.clear();
     // 清理所有的播放器映射
-	mapDecoderByWidget_.clear();
+    mapDecoderByWidget_.clear();
 
 #ifdef D3D11VA_AVAILABLE
     cachedD3D11Device_.Reset();

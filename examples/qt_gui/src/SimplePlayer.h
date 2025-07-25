@@ -25,7 +25,8 @@ private slots:
     void onSliderValueChanged(int value);
     void onSliderPressed();
     void onSliderReleased();
-    void onSliderClicked();  // 新增：处理滑块点击事件
+    void onSliderClicked();
+    void onSpeedBtnClicked();
 
 private:
     void initUi();

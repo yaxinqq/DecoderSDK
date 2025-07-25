@@ -146,6 +146,7 @@ private:
 
     // 是否初始化完成
     std::atomic_bool initialized_;
+    
     // 是否支持glFence
     bool supportsGlFence_ = false;
 };

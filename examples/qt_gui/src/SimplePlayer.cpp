@@ -100,6 +100,11 @@ void SimplePlayer::onSliderClicked()
     ui->player->seek(static_cast<double>(ui->ptsSlider->value()));
 }
 
+void SimplePlayer::onSpeedBtnClicked()
+{
+    ui->player->setSpeed(ui->speedEdit->text().toDouble());
+}
+
 void SimplePlayer::initUi()
 {
     ui->urlEdit->setText(QStringLiteral("D:/WorkSpace/test_video/test.mp4"));
@@ -118,6 +123,7 @@ void SimplePlayer::initConnection()
     connect(ui->startRecordBtn, &QPushButton::clicked, this,
             &SimplePlayer::onStartRecordBtnClicked);
     connect(ui->stopRecordBtn, &QPushButton::clicked, this, &SimplePlayer::onStopRecordBtnClicked);
+    connect(ui->speedBtn, &QPushButton::clicked, this, &SimplePlayer::onSpeedBtnClicked);
 
     connect(ui->player, &RtspStreamPlayer::totalTimeRecved, this, &SimplePlayer::onTotalTimeRecved);
     connect(ui->player, &RtspStreamPlayer::ptsChanged, this, &SimplePlayer::onPtsChanged);

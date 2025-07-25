@@ -108,6 +108,7 @@ public slots:
     void onNeedToStopRecording();
 
     void onNeedToSeek(double pos);
+    void onNeedToSpeed(double speed);
 
 signals:
     // 录像状态变更  isRecoding - 是否正在录像
@@ -214,6 +215,7 @@ signals:
     void needToStopRecording();
 
     void needToSeek(double pos);
+    void needToSpeed(double speed);
 
 protected:
     void run() override;

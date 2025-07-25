@@ -39,6 +39,11 @@ RenderWorker::~RenderWorker()
         render_.reset(nullptr);
     }
 
+    if (audioRender_) {
+        audioRender_->stop();
+        audioRender_.reset(nullptr);
+    }
+
     context_->doneCurrent();
 }
 
@@ -72,11 +77,79 @@ void RenderWorker::render(const std::shared_ptr<decoder_sdk::Frame>& frame)
     if (!frame || !frame->isValid())
         return;
 
-    const auto width = frame->width();
-    const auto height = frame->height();
-    const auto pixelFormat = frame->pixelFormat();
+    // 根据帧类型进行不同的处理
+    switch (frame->mediaType()) {
+        case decoder_sdk::MediaType::kMediaTypeAudio:
+            renderAudio(frame);
+            break;
+        case decoder_sdk::MediaType::kMediaTypeVideo:
+            renderVideo(frame);
+            break;
+        default:
+            qWarning() << "[RenderWorker] Unsupported frame type received.";
+            return;
+    }
+}
 
-    // 检查是否需要重新创建渲染器
+void RenderWorker::renderAudio(const std::shared_ptr<decoder_sdk::Frame>& audioFrame)
+{
+    if (!audioFrame || !audioFrame->isValid() || audioFrame->mediaType() != decoder_sdk::MediaType::kMediaTypeAudio) {
+        return;
+    }
+
+    const int sampleRate = audioFrame->sampleRate();
+    const int channels = audioFrame->channels();
+    const auto sampleFormat = audioFrame->sampleFormat();
+
+    // 检查是否需要重新初始化音频渲染器
+    bool needRecreateAudioRenderer = false;
+
+    if (!audioRender_) {
+        needRecreateAudioRenderer = true;
+    } else if (audioSampleRate_ != sampleRate || 
+               audioChannels_ != channels || 
+               audioSampleFormat_ != sampleFormat) {
+        needRecreateAudioRenderer = true;
+    }
+
+    if (needRecreateAudioRenderer) {
+        if (audioRender_) {
+            // 停止旧的音频渲染
+            audioRender_->stop();
+        }
+            
+        // 初始化
+        audioRender_.reset(new AudioRender);
+        audioRender_->initialize(audioFrame);
+        audioSampleRate_ = sampleRate;
+        audioChannels_ = channels;
+        audioSampleFormat_ = sampleFormat;
+
+        qDebug() << "[RenderWorker] Initialized audio renderer - Sample Rate:" << sampleRate
+                 << "Channels:" << channels << "Format:" << static_cast<int>(sampleFormat);
+
+        // 如果当前处于播放状态，立即启动音频
+        audioRender_->start();
+    }
+
+    // 渲染音频帧（只有在准备好渲染时才处理）
+    if (audioRender_) {
+        audioRender_->render(audioFrame);
+    }
+}
+
+void RenderWorker::renderVideo(const std::shared_ptr<decoder_sdk::Frame>& videoFrame)
+{
+    if (!videoFrame || !videoFrame->isValid() ||
+        videoFrame->mediaType() != decoder_sdk::MediaType::kMediaTypeVideo) {
+        return;
+    }
+
+    const auto width = videoFrame->width();
+    const auto height = videoFrame->height();
+    const auto pixelFormat = videoFrame->pixelFormat();
+
+    // 检查是否需要重新创建视频渲染器
     bool needRecreateRenderer = false;
 
     if (!render_ || !render_->isValid()) {
@@ -99,24 +172,37 @@ void RenderWorker::render(const std::shared_ptr<decoder_sdk::Frame>& frame)
         // 根据像素格式创建新的渲染器
         render_ = createRenderer(pixelFormat);
         if (render_) {
-            render_->initialize(frame);
+            render_->initialize(videoFrame);
             renderWidth_ = width;
             renderHeight_ = height;
             currentPixelFormat_ = pixelFormat;
 
-            qDebug() << "Created renderer for pixel format:" << static_cast<int>(pixelFormat)
+            qDebug() << "[RenderWorker] Created video renderer for pixel format:" << static_cast<int>(pixelFormat)
                      << "size:" << width << "x" << height;
         } else {
-            qWarning() << "Failed to create renderer for pixel format:"
+            qWarning() << "[RenderWorker] Failed to create video renderer for pixel format:"
                        << static_cast<int>(pixelFormat);
             return;
         }
     }
 
-	if (render_) {
-		render_->render(frame);
-		emit textureReady(render_, frame->secPts());
-	}
+    if (render_) {
+        render_->render(videoFrame);
+        emit textureReady(render_, videoFrame->secPts());
+    }
+}
+
+void RenderWorker::setVolume(qreal volume)
+{
+    if (!audioRender_)
+        return;
+
+    audioRender_->setVolume(volume);
+}
+
+qreal RenderWorker::volume() const
+{
+    return audioRender_ ? audioRender_->volume() : 0.0;
 }
 
 void RenderWorker::prepareStop()
@@ -125,8 +211,14 @@ void RenderWorker::prepareStop()
         render_.reset(nullptr);
         context_->doneCurrent();
     }
+    if (audioRender_) {
+        audioRender_.reset(nullptr);
+    }
+    
     currentPixelFormat_ = decoder_sdk::ImageFormat::kUnknown;
     readyRender_.store(false);
+    
+    qDebug() << "[RenderWorker] Prepared for stop";
 }
 
 void RenderWorker::preparePause()
@@ -134,7 +226,12 @@ void RenderWorker::preparePause()
     if (render_) {
         render_.reset(nullptr);
     }
+    if (audioRender_) {
+        audioRender_.reset(nullptr);
+    }
+    
     currentPixelFormat_ = decoder_sdk::ImageFormat::kUnknown;
+
     readyRender_.store(false);
 }
 

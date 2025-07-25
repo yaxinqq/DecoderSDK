@@ -56,6 +56,8 @@ public:
 
     bool seek(double pts);
 
+    bool setSpeed(double speed);
+
     // 切换解码器，如果当前没有url对应的解码器，会先尝试创建。切换成功返回true，失败返回false
     // 适用于一个播放介质对应同一个设备的多个解码器（如球机对应可见光视频流和红外视频流）
     // 调用此函数前，要保证deviceId、channelId、openMode是有效的

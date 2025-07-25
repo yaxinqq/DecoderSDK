@@ -17,9 +17,9 @@ RtspStreamPlayer::~RtspStreamPlayer()
 
 void RtspStreamPlayer::open(const QString &url, const QString &deviceId, const QString &channelId, Stream::OpenMode openMode)
 {
-	if (playerState() != Stream::PlayerState::Stop) {
-		close();
-	}
+	if (playerState() != Stream::PlayerState::Stop) { 
+		close();  
+	} 
 
 	// 设置播放器状态-开始播放
 	setPlayerState(Stream::PlayerState::Start);
@@ -88,6 +88,11 @@ bool RtspStreamPlayer::isRecording() const
 bool RtspStreamPlayer::seek(double pts)
 {
     return StreamManager::instance()->seek(impl_, pts);
+}
+
+bool RtspStreamPlayer::setSpeed(double speed)
+{
+    return StreamManager::instance()->setSpeed(impl_, speed);
 }
 
 bool RtspStreamPlayer::switchStream(const QString &url)

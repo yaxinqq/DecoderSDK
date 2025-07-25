@@ -32,9 +32,11 @@ const char *fsrc = R"(
     )";
 } // namespace
 
-VideoRender::VideoRender() : initialized_{false}, fboDrawResourcesInitialized_{false}
+VideoRender::VideoRender() 
+    : initialized_{false}
+    , fboDrawResourcesInitialized_{false}
 {
-    bufferQueue_ = std::make_unique<RenderBufferQueue>(10); // 增加到6个缓冲区
+    bufferQueue_ = std::make_unique<RenderBufferQueue>(10); // 增加到10个缓冲区
 }
 
 VideoRender::~VideoRender()
@@ -201,10 +203,7 @@ bool VideoRender::isValid() const
 
 RenderBufferQueue::Statistics VideoRender::getStatistics() const
 {
-    if (bufferQueue_) {
-        return bufferQueue_->getStatistics();
-    }
-    return {};
+    return bufferQueue_->getStatistics();
 }
 
 void VideoRender::initDefaultVBO(QOpenGLBuffer &vbo, const bool horizontal,

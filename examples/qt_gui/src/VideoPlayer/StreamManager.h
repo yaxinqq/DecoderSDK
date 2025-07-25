@@ -101,6 +101,8 @@ public:
 
     bool seek(VideoPlayerImpl *player, double pts);
 
+    bool setSpeed(VideoPlayerImpl *player, double speed);
+
     /*
      * @brief 获得默认录像文件名称
      *
