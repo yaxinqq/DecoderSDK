@@ -185,6 +185,100 @@ ImageFormat avPixelFormat2ImageFormat(AVPixelFormat format)
     }
     return ImageFormat::kUnknown;
 }
+
+AVSampleFormat audioSampleFormat2AVSampleFormat(AudioSampleFormat format)
+{
+    switch (format) {
+        case AudioSampleFormat::kFmtU8:
+            return AV_SAMPLE_FMT_U8;
+        case AudioSampleFormat::kFmtS16:
+            return AV_SAMPLE_FMT_S16;
+        case AudioSampleFormat::kFmtS32:
+            return AV_SAMPLE_FMT_S32;
+        case AudioSampleFormat::kFmtFlt:
+            return AV_SAMPLE_FMT_FLT;
+        case AudioSampleFormat::kFmtDbl:
+            return AV_SAMPLE_FMT_DBL;
+        case AudioSampleFormat::kFmtU8P:
+            return AV_SAMPLE_FMT_U8P;
+        case AudioSampleFormat::kFmtS16P:
+            return AV_SAMPLE_FMT_S16P;
+        case AudioSampleFormat::kFmtS32P:
+            return AV_SAMPLE_FMT_S32P;
+        case AudioSampleFormat::kFmtFltP:
+            return AV_SAMPLE_FMT_FLTP;
+        case AudioSampleFormat::kFmtDblP:
+            return AV_SAMPLE_FMT_DBLP;
+        case AudioSampleFormat::kFmtS64:
+            return AV_SAMPLE_FMT_S64;
+        case AudioSampleFormat::kFmtS64P:
+            return AV_SAMPLE_FMT_S64P;
+        default:
+            break;
+    }
+
+    return AV_SAMPLE_FMT_NONE;
+}
+
+AudioSampleFormat avSampleFormat2AudioSampleFormat(AVSampleFormat format)
+{
+    switch (format) {
+        case AV_SAMPLE_FMT_U8:
+            return AudioSampleFormat::kFmtU8;
+        case AV_SAMPLE_FMT_S16:
+            return AudioSampleFormat::kFmtS16;
+        case AV_SAMPLE_FMT_S32:
+            return AudioSampleFormat::kFmtS32;
+        case AV_SAMPLE_FMT_FLT:
+            return AudioSampleFormat::kFmtFlt;
+        case AV_SAMPLE_FMT_DBL:
+            return AudioSampleFormat::kFmtDbl;
+        case AV_SAMPLE_FMT_U8P:
+            return AudioSampleFormat::kFmtU8P;
+        case AV_SAMPLE_FMT_S16P:
+            return AudioSampleFormat::kFmtS16P;
+        case AV_SAMPLE_FMT_S32P:
+            return AudioSampleFormat::kFmtS32P;
+        case AV_SAMPLE_FMT_FLTP:
+            return AudioSampleFormat::kFmtFltP;
+        case AV_SAMPLE_FMT_DBLP:
+            return AudioSampleFormat::kFmtDblP;
+        case AV_SAMPLE_FMT_S64:
+            return AudioSampleFormat::kFmtS64;
+        case AV_SAMPLE_FMT_S64P:
+            return AudioSampleFormat::kFmtS64P;
+        default:
+            break;
+    }
+    return AudioSampleFormat::kUnknown;
+}
+
+MediaType avMediaType2MediaType(AVMediaType type)
+{
+    switch (type) {
+        case AVMEDIA_TYPE_VIDEO:
+            return MediaType::kMediaTypeVideo;
+        case AVMEDIA_TYPE_AUDIO:
+            return MediaType::kMediaTypeAudio;
+        default:
+            break;
+    }
+    return MediaType::kMediaTypeUnknown;
+}
+
+AVMediaType mediaType2AVMediaType(MediaType type)
+{
+    switch (type) {
+        case MediaType::kMediaTypeVideo:
+            return AVMEDIA_TYPE_VIDEO;
+        case MediaType::kMediaTypeAudio:
+            return AVMEDIA_TYPE_AUDIO;
+        default:
+            break;
+    }
+    return AVMEDIA_TYPE_UNKNOWN;
+}
+
 } // namespace utils
 
 INTERNAL_NAMESPACE_END

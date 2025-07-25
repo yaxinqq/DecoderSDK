@@ -28,6 +28,12 @@ public:
      */
     virtual ~AudioDecoder();
 
+    /**
+     * @brief 初始化音频解码器
+     * @param config 配置参数项
+     */
+    void init(const Config &config);
+
     AVMediaType type() const override;
 
 protected:
@@ -46,9 +52,10 @@ private:
     /**
      * @brief 重采样音频数据
      * @param frame 待重采样的音频帧
+     * @param errorCode 错误码
      * @return 重采样后的音频帧
      */
-    Frame resampleFrame(const Frame &frame);
+    Frame resampleFrame(const Frame &frame, int &errorCode);
 
     /**
      * @brief 检查是否需要重新初始化重采样
@@ -57,14 +64,59 @@ private:
      */
     bool needResampleUpdate(double lastSpeed);
 
+    /**
+     * @brief 初始化格式转换上下文
+     * @param srcFormat 源格式
+     * @param dstFormat 目标格式
+     * @param sampleRate 采样率
+     * @param channels 声道数
+     * @param channelLayout 声道布局
+     * @return 是否成功初始化
+     */
+    bool initFormatConvertContext(AVSampleFormat srcFormat, AVSampleFormat dstFormat,
+                                  int sampleRate, int channels, uint64_t channelLayout);
+
+    /**
+     * @brief 使用格式转换上下文转换音频数据
+     * @param frame 输入音频帧
+     * @param targetFormat 目标格式
+     * @return 是否转换成功
+     */
+    bool convertAudioFormat(Frame &frame, AVSampleFormat targetFormat);
+
+    /**
+     * @brief 清理重采样资源
+     */
+    void cleanupResampleResources();
+
+    /**
+     * @brief 清理格式转换资源
+     */
+    void cleanupFormatConvertResources();
+
 private:
     // 用于音频重采样
     SwrContext *swrCtx_ = nullptr;
     // 是否需要重采样
-    bool needResample_ = false;
+    bool needResample_{false};
 
     // 复用的重采样帧
     Frame resampleFrame_;
+
+    // 音频采样格式是否交错
+    bool audioInterleaved_{true};
+
+    // 用于格式转换的SwrContext（复用）
+    SwrContext *formatConvertCtx_ = nullptr;
+    // 格式转换的缓存参数，用于判断是否需要重新初始化
+    AVSampleFormat lastSrcFormat_ = AV_SAMPLE_FMT_NONE;
+    AVSampleFormat lastDstFormat_ = AV_SAMPLE_FMT_NONE;
+    int lastConvertSampleRate_ = 0;
+    int lastConvertChannels_ = 0;
+    uint64_t lastConvertChannelLayout_ = 0;
+
+    // 复用的格式转换帧
+    Frame formatConvertFrame_;
 };
 
 INTERNAL_NAMESPACE_END

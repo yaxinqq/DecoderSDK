@@ -3,12 +3,14 @@
 DECODER_SDK_NAMESPACE_BEGIN
 INTERNAL_NAMESPACE_BEGIN
 
-Frame::Frame() : frame_(nullptr), serial_(0), duration_(0), pts_(0.0)
+Frame::Frame()
+    : frame_(nullptr), serial_(0), duration_(0), pts_(0.0), mediaType_(AVMEDIA_TYPE_UNKNOWN)
 {
     // 不在构造函数中分配内存，只在需要时分配
 }
 
-Frame::Frame(AVFrame *srcFrame) : frame_(nullptr), serial_(0), duration_(0), pts_(0.0)
+Frame::Frame(AVFrame *srcFrame)
+    : frame_(nullptr), serial_(0), duration_(0), pts_(0.0), mediaType_(AVMEDIA_TYPE_UNKNOWN)
 {
     if (srcFrame) {
         ensureAllocated();
@@ -19,7 +21,11 @@ Frame::Frame(AVFrame *srcFrame) : frame_(nullptr), serial_(0), duration_(0), pts
 }
 
 Frame::Frame(const Frame &other)
-    : frame_(nullptr), serial_(other.serial_), duration_(other.duration_), pts_(other.pts_)
+    : frame_(nullptr),
+      serial_(other.serial_),
+      duration_(other.duration_),
+      pts_(other.pts_),
+      mediaType_(other.mediaType_)
 {
     if (other.frame_) {
         ensureAllocated();
@@ -36,6 +42,7 @@ Frame &Frame::operator=(const Frame &other)
         serial_ = other.serial_;
         duration_ = other.duration_;
         pts_ = other.pts_;
+        mediaType_ = other.mediaType_;
 
         if (other.frame_) {
             ensureAllocated();
@@ -54,7 +61,11 @@ Frame::~Frame()
 
 // 移动构造函数
 Frame::Frame(Frame &&other) noexcept
-    : frame_(other.frame_), serial_(other.serial_), duration_(other.duration_), pts_(other.pts_)
+    : frame_(other.frame_),
+      serial_(other.serial_),
+      duration_(other.duration_),
+      pts_(other.pts_),
+      mediaType_(other.mediaType_)
 {
     // 转移所有权，避免深拷贝
     other.frame_ = nullptr;
@@ -71,6 +82,7 @@ Frame &Frame::operator=(Frame &&other) noexcept
         serial_ = other.serial_;
         duration_ = other.duration_;
         pts_ = other.pts_;
+        mediaType_ = other.mediaType_;
 
         other.frame_ = nullptr;
     }
@@ -120,6 +132,16 @@ void Frame::setSecPts(double pts)
 double Frame::secPts() const
 {
     return pts_;
+}
+
+AVMediaType Frame::mediaType() const
+{
+    return mediaType_;
+}
+
+void Frame::setMediaType(AVMediaType type)
+{
+    mediaType_ = type;
 }
 
 int Frame::width() const
@@ -386,6 +408,15 @@ void Frame::setChannels(int ch)
 }
 #endif
 
+int Frame::channels() const
+{
+#if LIBAVUTIL_VERSION_MAJOR >= 57
+    return frame_ ? frame_->ch_layout.nb_channels : 0;
+#else
+    return frame_ ? frame_->channels : 0;
+#endif
+}
+
 uint8_t *Frame::data(int plane) const
 {
     return (frame_ && plane < AV_NUM_DATA_POINTERS) ? frame_->data[plane] : nullptr;
@@ -426,19 +457,15 @@ void Frame::setMetadata(const char *key, const char *value)
     }
 }
 
-bool Frame::isAudioFrame() const
-{
-    return frame_ && frame_->nb_samples > 0;
-}
-
-bool Frame::isVideoFrame() const
-{
-    return frame_ && frame_->width > 0 && frame_->height > 0;
-}
-
 int Frame::getBufferSize() const
 {
     return frame_ ? av_image_get_buffer_size(pixelFormat(), width(), height(), 1) : 0;
+}
+
+int Frame::getAudioBufferSize() const
+{
+    return frame_ ? av_samples_get_buffer_size(nullptr, channels(), nbSamples(), sampleFormat(), 1)
+                  : 0;
 }
 
 void Frame::ensureAllocated()

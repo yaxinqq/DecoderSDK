@@ -531,7 +531,13 @@ bool Demuxer::handleFileStreamPause()
 
 int Demuxer::readAndProcessPacket(AVPacket *pkt, std::optional<std::chrono::high_resolution_clock::time_point> &occuredErrorTime, bool &readFirstPacket, bool isEof)
 {
-    const int ret = av_read_frame(formatContext_, pkt);
+    // 读取数据包
+    int ret;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        // 在锁保护下读取数据包
+        ret = av_read_frame(formatContext_, pkt);
+    }
     
     // 成功读取数据包
     if (ret >= 0) {

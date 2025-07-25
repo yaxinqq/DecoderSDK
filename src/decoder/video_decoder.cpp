@@ -444,6 +444,7 @@ void VideoDecoder::decodeLoop()
         outFrame->setSerial(serial);
         outFrame->setDurationByFps(duration);
         outFrame->setSecPts(pts);
+        outFrame->setMediaType(AVMEDIA_TYPE_VIDEO);
 
         // 如果启用了帧率控制，则根据帧率控制推送速度
         if (isFrameRateControlEnabled()) {

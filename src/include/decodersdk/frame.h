@@ -117,6 +117,16 @@ public:
      * @return int 样本数量
      */
     int64_t nbSamples() const;
+    /**
+     * @brief 获得声道数量
+     * @return int 声道数量
+     */
+    int channels() const;
+    /**
+     * @brief 获得样本格式
+     * @return AudioSampleFormat 样本格式
+     */
+    AudioSampleFormat sampleFormat() const;
 
     /**
      * @brief 获得数据指针
@@ -132,21 +142,22 @@ public:
     int linesize(int plane = 0) const;
 
     /**
-     * @brief 获得是否音频帧
-     * @return true 音频帧, false 视频帧
+     * @brief 获得媒体类型
+     * @return MediaType 媒体类型
      */
-    bool isAudioFrame() const;
-    /**
-     * @brief 获得是否视频帧
-     * @return true 视频帧, false 音频帧
-     */
-    bool isVideoFrame() const;
+    MediaType mediaType() const;
 
     /**
      * @brief 获取帧的字节大小
      * @return int 帧的字节大小
      */
     int getBufferSize() const;
+
+    /**
+     * @brief 获取音频帧的字节大小
+     * @return int 音频帧的字节大小
+     */
+    int getAudioBufferSize() const;
 
 private:
     std::unique_ptr<internal::Frame> impl_;

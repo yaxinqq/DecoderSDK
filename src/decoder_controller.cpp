@@ -678,6 +678,7 @@ bool DecoderController::startDecodeInternal(bool reopen)
     // 创建音频解码器
     if (demuxer_->hasAudio() && (config_.decodeMediaType & Config::DecodeMediaType::kAudio)) {
         audioDecoder_ = std::make_shared<AudioDecoder>(demuxer_, syncController_, eventDispatcher_);
+        audioDecoder_->init(config_);
         audioDecoder_->setSpeed(config_.speed);
         if (!audioDecoder_->open()) {
             return false;

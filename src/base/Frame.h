@@ -100,6 +100,17 @@ public:
      * @return double 解码时间戳
      */
     double secPts() const;
+
+    /**
+     * @brief 获得媒体类型
+     * @return MediaType 媒体类型
+     */
+    AVMediaType mediaType() const;
+    /**
+     * @brief 获得媒体类型
+     * @param type 媒体类型
+     */
+    void setMediaType(AVMediaType type);
     // ==================================================== //
 
     // ====================== 数据透传 ===================== //
@@ -342,9 +353,14 @@ public:
     // 兼容旧版本
     uint64_t channelLayout() const;
     void setChannelLayout(uint64_t layout);
-    int channels() const;
     void setChannels(int ch);
 #endif
+
+    /**
+     * @brief 获得声道数
+     * @return int 声道数
+     */
+    int channels() const;
 
     /**
      * @brief 获得数据指针
@@ -393,21 +409,16 @@ public:
     void setMetadata(const char *key, const char *value);
 
     /**
-     * @brief 获得是否音频帧
-     * @return true 音频帧, false 视频帧
-     */
-    bool isAudioFrame() const;
-    /**
-     * @brief 获得是否视频帧
-     * @return true 视频帧, false 音频帧
-     */
-    bool isVideoFrame() const;
-
-    /**
      * @brief 获取帧的字节大小
      * @return int 帧的字节大小
      */
     int getBufferSize() const;
+
+    /**
+     * @brief 获取音频帧的字节大小
+     * @return int 帧的字节大小
+     */
+    int getAudioBufferSize() const;
     // ==================================================== //
 
     /**
@@ -435,6 +446,8 @@ private:
     double duration_ = 0.0;
     // pts 单位s
     double pts_ = 0.0;
+    // 媒体类型
+    AVMediaType mediaType_ = AVMEDIA_TYPE_UNKNOWN;
 };
 
 INTERNAL_NAMESPACE_END

@@ -104,6 +104,17 @@ int64_t Frame::nbSamples() const
     return impl_ ? impl_->nbSamples() : 0;
 }
 
+int Frame::channels() const
+{
+    return impl_ ? impl_->channels() : 0;
+}
+
+AudioSampleFormat Frame::sampleFormat() const
+{
+    return impl_ ? internal::utils::avSampleFormat2AudioSampleFormat(impl_->sampleFormat())
+                 : AudioSampleFormat::kUnknown;
+}
+
 uint8_t *Frame::data(int plane) const
 {
     return impl_ ? impl_->data(plane) : nullptr;
@@ -114,18 +125,19 @@ int Frame::linesize(int plane) const
     return impl_ ? impl_->linesize(plane) : 0;
 }
 
-bool Frame::isAudioFrame() const
+MediaType Frame::mediaType() const
 {
-    return impl_ ? impl_->isAudioFrame() : false;
-}
-
-bool Frame::isVideoFrame() const
-{
-    return impl_ ? impl_->isVideoFrame() : false;
+    return impl_ ? internal::utils::avMediaType2MediaType(impl_->mediaType())
+                 : MediaType::kMediaTypeUnknown;
 }
 
 int Frame::getBufferSize() const
 {
     return impl_ ? impl_->getBufferSize() : 0;
+}
+
+int Frame::getAudioBufferSize() const
+{
+    return impl_ ? impl_->getAudioBufferSize() : 0;
 }
 } // namespace decoder_sdk

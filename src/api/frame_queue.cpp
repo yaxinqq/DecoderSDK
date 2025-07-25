@@ -68,7 +68,7 @@ bool FrameQueue::pop(Frame &frame, int timeout)
 {
     if (!impl_ || !impl_->get()) {
         return false;
-    }
+    } 
 
     auto internalFrame = std::make_unique<internal::Frame>();
     const bool success = impl_->get()->pop(*internalFrame, timeout);

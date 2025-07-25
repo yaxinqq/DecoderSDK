@@ -4,7 +4,9 @@
 #include <string>
 
 extern "C" {
+#include <libavutil/avutil.h>
 #include <libavutil/pixfmt.h>
+#include <libavutil/samplefmt.h>
 }
 
 #include "base/base_define.h"
@@ -44,6 +46,18 @@ AVPixelFormat imageFormat2AVPixelFormat(ImageFormat format);
 
 // AVPixelFormat 转为 ImageFormat
 ImageFormat avPixelFormat2ImageFormat(AVPixelFormat format);
+
+// AudioSampleFormat 转为 AVSampleFormat
+AVSampleFormat audioSampleFormat2AVSampleFormat(AudioSampleFormat format);
+
+// AVSampleFormat 转为 AudioSampleFormat
+AudioSampleFormat avSampleFormat2AudioSampleFormat(AVSampleFormat format);
+
+// AVMediaType 转为 MediaType
+MediaType avMediaType2MediaType(AVMediaType type);
+
+// MediaType 转为 AVMediaType
+AVMediaType mediaType2AVMediaType(MediaType type);
 
 } // namespace utils
 

@@ -59,6 +59,25 @@ enum class ImageFormat : uint8_t {
     kUnknown, // 未知
 };
 
+// 音频采样格式枚举
+enum class AudioSampleFormat : uint8_t {
+    kFmtU8,  ///< unsigned 8 bits
+    kFmtS16, ///< signed 16 bits
+    kFmtS32, ///< signed 32 bits
+    kFmtFlt, ///< float
+    kFmtDbl, ///< double
+
+    kFmtU8P,  ///< unsigned 8 bits, planar
+    kFmtS16P, ///< signed 16 bits, planar
+    kFmtS32P, ///< signed 32 bits, planar
+    kFmtFltP, ///< float, planar
+    kFmtDblP, ///< double, planar
+    kFmtS64,  ///< signed 64 bits
+    kFmtS64P, ///< signed 64 bits, planar
+
+    kUnknown, // 未知
+};
+
 /**
  * @brief 获取SDK版本字符串
  * @return 版本字符串，格式为"major.minor.patch"
@@ -240,9 +259,9 @@ public:
 
 // 循环播放模式枚举（新增）
 enum class LoopMode : uint8_t {
-    kNone = 0,     // 不循环
-    kSingle,       // 单次循环
-    kInfinite      // 无限循环
+    kNone = 0, // 不循环
+    kSingle,   // 单次循环
+    kInfinite  // 无限循环
 };
 
 // 循环播放事件参数（新增）
@@ -257,8 +276,8 @@ public:
     {
     }
 
-    int currentLoop;  // 当前循环次数
-    int maxLoops;     // 最大循环次数（-1表示无限循环）
+    int currentLoop; // 当前循环次数
+    int maxLoops;    // 最大循环次数（-1表示无限循环）
 };
 
 // 连接类型
@@ -430,6 +449,9 @@ struct Config {
         // 预缓冲完成后是否自动开始解码
         bool autoStartAfterPreBuffer = true;
     } preBufferConfig;
+
+    // 音频采样格式是否交错
+    bool audioInterleaved = true;
 };
 
 // 预缓冲状态

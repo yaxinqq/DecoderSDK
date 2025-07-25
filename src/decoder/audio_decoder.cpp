@@ -28,10 +28,13 @@ AudioDecoder::AudioDecoder(std::shared_ptr<Demuxer> demuxer,
 AudioDecoder::~AudioDecoder()
 {
     close();
-    if (swrCtx_) {
-        swr_free(&swrCtx_);
-        swrCtx_ = nullptr;
-    }
+    cleanupResampleResources();
+    cleanupFormatConvertResources();
+}
+
+void AudioDecoder::init(const Config &config)
+{
+    audioInterleaved_ = config.audioInterleaved;
 }
 
 AVMediaType AudioDecoder::type() const
@@ -142,9 +145,10 @@ void AudioDecoder::decodeLoop()
         // 重采样处理
         Frame outputFrame;
         if (needResample_ && swrCtx_) {
-            outputFrame = resampleFrame(frame);
+            ret = 0;
+            outputFrame = resampleFrame(frame, ret);
             if (!outputFrame.isValid()) {
-                handleDecodeError(kAudioDecoderName, MediaType::kMediaTypeAudio, AVERROR_UNKNOWN,
+                handleDecodeError(kAudioDecoderName, MediaType::kMediaTypeAudio, ret,
                                   "Resample frame failed!");
                 continue;
             }
@@ -169,6 +173,84 @@ void AudioDecoder::decodeLoop()
         }
         seekPos_ = -1.0;
 
+        // 转换交错格式
+        // 根据配置决定音频数据的存储方式
+        if (!audioInterleaved_ &&
+            av_sample_fmt_is_planar(static_cast<AVSampleFormat>(outputFrame.get()->format)) == 0) {
+            // 配置要求非交错，但当前是交错格式，转换为平面格式
+            AVSampleFormat currentFormat = static_cast<AVSampleFormat>(outputFrame.get()->format);
+            AVSampleFormat targetFormat = AV_SAMPLE_FMT_NONE;
+
+            // 获取对应的平面格式
+            switch (currentFormat) {
+                case AV_SAMPLE_FMT_U8:
+                    targetFormat = AV_SAMPLE_FMT_U8P;
+                    break;
+                case AV_SAMPLE_FMT_S16:
+                    targetFormat = AV_SAMPLE_FMT_S16P;
+                    break;
+                case AV_SAMPLE_FMT_S32:
+                    targetFormat = AV_SAMPLE_FMT_S32P;
+                    break;
+                case AV_SAMPLE_FMT_FLT:
+                    targetFormat = AV_SAMPLE_FMT_FLTP;
+                    break;
+                case AV_SAMPLE_FMT_DBL:
+                    targetFormat = AV_SAMPLE_FMT_DBLP;
+                    break;
+                case AV_SAMPLE_FMT_S64:
+                    targetFormat = AV_SAMPLE_FMT_S64P;
+                    break;
+                default:
+                    LOG_WARN("Unsupported audio format for planar conversion: {}",
+                             static_cast<int>(currentFormat));
+                    break;
+            }
+
+            if (targetFormat != AV_SAMPLE_FMT_NONE) {
+                if (!convertAudioFormat(outputFrame, targetFormat)) {
+                    LOG_WARN("Failed to convert audio to planar format");
+                }
+            }
+        } else if (audioInterleaved_ && av_sample_fmt_is_planar(static_cast<AVSampleFormat>(
+                                            outputFrame.get()->format)) == 1) {
+            // 配置要求交错，但当前是平面格式，转换为交错格式
+            AVSampleFormat currentFormat = static_cast<AVSampleFormat>(outputFrame.get()->format);
+            AVSampleFormat targetFormat = AV_SAMPLE_FMT_NONE;
+
+            // 获取对应的交错格式
+            switch (currentFormat) {
+                case AV_SAMPLE_FMT_U8P:
+                    targetFormat = AV_SAMPLE_FMT_U8;
+                    break;
+                case AV_SAMPLE_FMT_S16P:
+                    targetFormat = AV_SAMPLE_FMT_S16;
+                    break;
+                case AV_SAMPLE_FMT_S32P:
+                    targetFormat = AV_SAMPLE_FMT_S32;
+                    break;
+                case AV_SAMPLE_FMT_FLTP:
+                    targetFormat = AV_SAMPLE_FMT_FLT;
+                    break;
+                case AV_SAMPLE_FMT_DBLP:
+                    targetFormat = AV_SAMPLE_FMT_DBL;
+                    break;
+                case AV_SAMPLE_FMT_S64P:
+                    targetFormat = AV_SAMPLE_FMT_S64;
+                    break;
+                default:
+                    LOG_WARN("Unsupported audio format for interleaved conversion: {}",
+                             static_cast<int>(currentFormat));
+                    break;
+            }
+
+            if (targetFormat != AV_SAMPLE_FMT_NONE) {
+                if (!convertAudioFormat(outputFrame, targetFormat)) {
+                    LOG_WARN("Failed to convert audio to interleaved format");
+                }
+            }
+        }
+
         // 如果是第一帧，发出事件
         if (!readFirstFrame) {
             readFirstFrame = true;
@@ -186,6 +268,7 @@ void AudioDecoder::decodeLoop()
         outFrame->setSerial(serial);
         outFrame->setDurationByFps(duration);
         outFrame->setSecPts(pts);
+        outFrame->setMediaType(AVMEDIA_TYPE_AUDIO);
 
         // 计算延时
         // 如果启用了帧率控制，则根据帧率控制推送速度
@@ -277,19 +360,16 @@ bool AudioDecoder::initResampleContext()
     return true;
 }
 
-Frame AudioDecoder::resampleFrame(const Frame &frame)
+Frame AudioDecoder::resampleFrame(const Frame &frame, int &errorCode)
 {
+    errorCode = 0;
+
     if (!needResample_ || !swrCtx_ || !frame.isValid()) {
         return frame;
     }
 
-    if (!resampleFrame_.isValid()) {
-        resampleFrame_.ensureAllocated();
-    }
-
     // 获得当前速度
     const double curSpeed = speed();
-
     const int inputSampleRate = frame.sampleRate();
     const int outputSampleRate = static_cast<int>(inputSampleRate * curSpeed);
 
@@ -297,18 +377,23 @@ Frame AudioDecoder::resampleFrame(const Frame &frame)
     bool needReconfig = false;
 #if LIBAVUTIL_VERSION_INT >= AV_VERSION_INT(57, 28, 100) // FFmpeg 5.1+
     needReconfig =
-        (resampleFrame_.sampleRate() != outputSampleRate) ||
+        !resampleFrame_.isValid() || (resampleFrame_.sampleRate() != outputSampleRate) ||
         (resampleFrame_.get()->ch_layout.nb_channels != frame.get()->ch_layout.nb_channels) ||
         (resampleFrame_.get()->format != frame.get()->format);
 #else
-    needReconfig = (resampleFrame_.sampleRate() != outputSampleRate) ||
+    needReconfig = !resampleFrame_.isValid() || (resampleFrame_.sampleRate() != outputSampleRate) ||
                    (resampleFrame_.get()->channels != frame.get()->channels) ||
                    (resampleFrame_.get()->format != frame.get()->format);
 #endif
 
     if (needReconfig) {
+        // 确保帧已分配
+        if (!resampleFrame_.isValid()) {
+            resampleFrame_.ensureAllocated();
+        }
+
         // 重新配置输出帧参数
-        resampleFrame_.setPixelFormat(static_cast<AVPixelFormat>(frame.get()->format));
+        resampleFrame_.setSampleFormat(static_cast<AVSampleFormat>(frame.get()->format));
 #if LIBAVUTIL_VERSION_INT >= AV_VERSION_INT(57, 28, 100) // FFmpeg 5.1+
         resampleFrame_.setChannelLayout(frame.channelLayout());
 #else
@@ -319,10 +404,25 @@ Frame AudioDecoder::resampleFrame(const Frame &frame)
         resampleFrame_.setSampleRate(outputSampleRate);
     }
 
-    // 计算输出采样数
-    int64_t outSamples =
-        av_rescale_rnd(swr_get_delay(swrCtx_, frame.sampleRate()) + frame.get()->nb_samples,
-                       resampleFrame_.sampleRate(), frame.sampleRate(), AV_ROUND_UP);
+    // 计算输出采样数 - 添加安全检查
+    int64_t delay = swr_get_delay(swrCtx_, frame.sampleRate());
+    if (delay < 0) {
+        delay = 0;
+    }
+
+    int64_t outSamples = av_rescale_rnd(delay + frame.get()->nb_samples, outputSampleRate,
+                                        inputSampleRate, AV_ROUND_UP);
+
+    // 添加合理的上限检查，防止异常大的缓冲区分配
+    const int64_t maxSamples = frame.get()->nb_samples * 4; // 最多4倍的输入采样数
+    if (outSamples > maxSamples) {
+        outSamples = maxSamples;
+    }
+
+    if (outSamples <= 0) {
+        errorCode = AVERROR(EINVAL);
+        return Frame();
+    }
 
     // 检查是否需要重新分配缓冲区
     bool needRealloc = needReconfig || (resampleFrame_.get()->nb_samples < outSamples) ||
@@ -332,20 +432,31 @@ Frame AudioDecoder::resampleFrame(const Frame &frame)
         // 释放旧缓冲区
         av_frame_unref(resampleFrame_.get());
 
-        // 设置新的采样数（分配足够的空间）
-        resampleFrame_.setNbSamples(outSamples);
+        // *** 修复：重新设置所有必要的帧参数 ***
+        resampleFrame_.setSampleFormat(static_cast<AVSampleFormat>(frame.get()->format));
+        resampleFrame_.setSampleRate(outputSampleRate);
+        resampleFrame_.setNbSamples(static_cast<int>(outSamples));
+
+#if LIBAVUTIL_VERSION_INT >= AV_VERSION_INT(57, 28, 100) // FFmpeg 5.1+
+        resampleFrame_.setChannelLayout(frame.channelLayout());
+#else
+        // FFmpeg 4.4.2使用旧的channel layout API
+        resampleFrame_.get()->channel_layout = frame.get()->channel_layout;
+        resampleFrame_.get()->channels = frame.get()->channels;
+#endif
 
         // 分配新缓冲区
-        int ret = av_frame_get_buffer(resampleFrame_.get(), 0);
-        if (ret < 0) {
+        errorCode = av_frame_get_buffer(resampleFrame_.get(), 0);
+        if (errorCode < 0) {
             return Frame();
         }
     }
 
     // 执行重采样
-    int ret = swr_convert(swrCtx_, resampleFrame_.get()->data, outSamples,
+    int ret = swr_convert(swrCtx_, resampleFrame_.get()->data, static_cast<int>(outSamples),
                           (const uint8_t **)frame.get()->data, frame.get()->nb_samples);
     if (ret < 0) {
+        errorCode = ret;
         return Frame();
     }
 
@@ -354,15 +465,208 @@ Frame AudioDecoder::resampleFrame(const Frame &frame)
     resampleFrame_.setAvPts(frame.avPts());
     resampleFrame_.setPktDts(frame.pktDts());
 
-    // 使用移动语义返回，避免拷贝
-    Frame result = std::move(resampleFrame_);
-    resampleFrame_ = Frame(); // 重置复用帧
-    return result;
+    // 复制其他重要属性
+#if LIBAVUTIL_VERSION_INT >= AV_VERSION_INT(57, 28, 100)
+    resampleFrame_.setTimeBase(frame.timeBase());
+#endif
+
+    // 修正duration计算逻辑
+    if (frame.durationByFps() > 0) {
+        // 按比例调整duration（保持为double类型）
+        double newDuration = frame.durationByFps() * outputSampleRate / inputSampleRate;
+        resampleFrame_.setDurationByFps(newDuration);
+    }
+
+    // 返回拷贝而不是移动，保持帧复用
+    return resampleFrame_;
+}
+
+void AudioDecoder::cleanupResampleResources()
+{
+    if (swrCtx_) {
+        swr_free(&swrCtx_);
+        swrCtx_ = nullptr;
+    }
+    needResample_ = false;
+}
+
+void AudioDecoder::cleanupFormatConvertResources()
+{
+    if (formatConvertCtx_) {
+        swr_free(&formatConvertCtx_);
+        formatConvertCtx_ = nullptr;
+    }
+    // 重置缓存参数
+    lastSrcFormat_ = AV_SAMPLE_FMT_NONE;
+    lastDstFormat_ = AV_SAMPLE_FMT_NONE;
+    lastConvertSampleRate_ = 0;
+    lastConvertChannels_ = 0;
+    lastConvertChannelLayout_ = 0;
 }
 
 bool AudioDecoder::needResampleUpdate(double lastSpeed)
 {
     return std::abs(speed_ - lastSpeed) > 0.01f;
+}
+
+bool AudioDecoder::initFormatConvertContext(AVSampleFormat srcFormat, AVSampleFormat dstFormat,
+                                            int sampleRate, int channels, uint64_t channelLayout)
+{
+    // 检查参数是否与上次相同，如果相同则不需要重新初始化
+    if (formatConvertCtx_ && lastSrcFormat_ == srcFormat && lastDstFormat_ == dstFormat &&
+        lastConvertSampleRate_ == sampleRate && lastConvertChannels_ == channels &&
+        lastConvertChannelLayout_ == channelLayout) {
+        return true; // 复用现有上下文
+    }
+
+    // 释放旧的格式转换上下文
+    if (formatConvertCtx_) {
+        swr_free(&formatConvertCtx_);
+        formatConvertCtx_ = nullptr;
+    }
+
+    // 创建新的格式转换上下文
+    formatConvertCtx_ = swr_alloc();
+    if (!formatConvertCtx_) {
+        return false;
+    }
+
+    // FFmpeg版本兼容性处理
+#if LIBAVUTIL_VERSION_INT >= AV_VERSION_INT(57, 28, 100) // FFmpeg 5.1+
+    // 设置输入参数 (新版本API)
+    AVChannelLayout chLayout;
+    av_channel_layout_from_mask(&chLayout, channelLayout);
+    av_opt_set_chlayout(formatConvertCtx_, "in_chlayout", &chLayout, 0);
+    av_opt_set_int(formatConvertCtx_, "in_sample_rate", sampleRate, 0);
+    av_opt_set_sample_fmt(formatConvertCtx_, "in_sample_fmt", srcFormat, 0);
+
+    // 设置输出参数 (新版本API)
+    av_opt_set_chlayout(formatConvertCtx_, "out_chlayout", &chLayout, 0);
+    av_opt_set_int(formatConvertCtx_, "out_sample_rate", sampleRate, 0);
+    av_opt_set_sample_fmt(formatConvertCtx_, "out_sample_fmt", dstFormat, 0);
+#else
+    // 设置输入参数 (旧版本API - FFmpeg 4.4.2)
+    av_opt_set_int(formatConvertCtx_, "in_channel_layout", channelLayout, 0);
+    av_opt_set_int(formatConvertCtx_, "in_channels", channels, 0);
+    av_opt_set_int(formatConvertCtx_, "in_sample_rate", sampleRate, 0);
+    av_opt_set_sample_fmt(formatConvertCtx_, "in_sample_fmt", srcFormat, 0);
+
+    // 设置输出参数 (旧版本API - FFmpeg 4.4.2)
+    av_opt_set_int(formatConvertCtx_, "out_channel_layout", channelLayout, 0);
+    av_opt_set_int(formatConvertCtx_, "out_channels", channels, 0);
+    av_opt_set_int(formatConvertCtx_, "out_sample_rate", sampleRate, 0);
+    av_opt_set_sample_fmt(formatConvertCtx_, "out_sample_fmt", dstFormat, 0);
+#endif
+
+    // 初始化格式转换上下文
+    int ret = swr_init(formatConvertCtx_);
+    if (ret < 0) {
+        swr_free(&formatConvertCtx_);
+        formatConvertCtx_ = nullptr;
+        return false;
+    }
+
+    // 缓存参数，用于下次比较
+    lastSrcFormat_ = srcFormat;
+    lastDstFormat_ = dstFormat;
+    lastConvertSampleRate_ = sampleRate;
+    lastConvertChannels_ = channels;
+    lastConvertChannelLayout_ = channelLayout;
+
+    return true;
+}
+
+bool AudioDecoder::convertAudioFormat(Frame &frame, AVSampleFormat targetFormat)
+{
+    AVFrame *avFrame = frame.get();
+    if (!avFrame || static_cast<AVSampleFormat>(avFrame->format) == targetFormat) {
+        return true; // 已经是目标格式
+    }
+
+    const AVSampleFormat srcFormat = static_cast<AVSampleFormat>(avFrame->format);
+    const int sampleRate = frame.sampleRate();
+#if LIBAVUTIL_VERSION_MAJOR >= 57
+    const int channels = frame.channelLayout().nb_channels;
+#else
+    const int channels = frame.channels();
+#endif
+
+#if LIBAVUTIL_VERSION_INT >= AV_VERSION_INT(57, 28, 100)
+    const uint64_t channelLayout = avFrame->ch_layout.u.mask;
+#else
+    const uint64_t channelLayout = avFrame->channel_layout;
+#endif
+
+    // 初始化或复用格式转换上下文
+    if (!initFormatConvertContext(srcFormat, targetFormat, sampleRate, channels, channelLayout)) {
+        return false;
+    }
+
+    // 准备输出帧
+    if (!formatConvertFrame_.isValid()) {
+        formatConvertFrame_.ensureAllocated();
+        if (!formatConvertFrame_.isValid()) {
+            return false;
+        }
+    }
+
+    // 检查是否需要重新配置输出帧
+    bool needReconfig = (formatConvertFrame_.get()->format != targetFormat) ||
+                        (formatConvertFrame_.sampleRate() != sampleRate) ||
+#if LIBAVUTIL_VERSION_MAJOR >= 57
+                        formatConvertFrame_.channelLayout().nb_channels != channels;
+#else
+                        formatConvertFrame_.channels() != channels;
+#endif
+
+    if (needReconfig) {
+        // 重新配置输出帧参数
+        av_frame_unref(formatConvertFrame_.get());
+        formatConvertFrame_.get()->format = targetFormat;
+        formatConvertFrame_.setSampleRate(sampleRate);
+
+#if LIBAVUTIL_VERSION_INT >= AV_VERSION_INT(57, 28, 100)
+        formatConvertFrame_.get()->ch_layout = avFrame->ch_layout;
+#else
+        formatConvertFrame_.get()->channel_layout = channelLayout;
+        formatConvertFrame_.get()->channels = channels;
+#endif
+    }
+
+    // 计算输出采样数（格式转换不改变采样数）
+    const int outSamples = avFrame->nb_samples;
+
+    // 检查是否需要重新分配缓冲区
+    bool needRealloc = needReconfig || (formatConvertFrame_.get()->nb_samples < outSamples) ||
+                       !formatConvertFrame_.get()->data[0];
+
+    if (needRealloc) {
+        // 设置采样数并分配缓冲区
+        formatConvertFrame_.setNbSamples(outSamples);
+        int ret = av_frame_get_buffer(formatConvertFrame_.get(), 0);
+        if (ret < 0) {
+            av_frame_unref(formatConvertFrame_.get());
+            return false;
+        }
+    }
+
+    // 执行格式转换
+    int ret = swr_convert(formatConvertCtx_, formatConvertFrame_.get()->data, outSamples,
+                          (const uint8_t **)avFrame->data, avFrame->nb_samples);
+    if (ret < 0) {
+        return false;
+    }
+
+    // 设置输出帧的其他属性
+    formatConvertFrame_.setNbSamples(ret);
+    formatConvertFrame_.setAvPts(frame.avPts());
+    formatConvertFrame_.setPktDts(frame.pktDts());
+
+    // 将转换后的数据替换原帧数据
+    av_frame_unref(avFrame);
+    av_frame_move_ref(avFrame, formatConvertFrame_.get());
+
+    return true;
 }
 
 INTERNAL_NAMESPACE_END
