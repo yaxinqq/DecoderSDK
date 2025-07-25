@@ -237,8 +237,10 @@ private:
      * @param isEof 是否已经处理过eof
      * @return 读取结果：0=成功，1=EOF，-1=错误需要继续，-2=严重错误需要退出
      */
-    int readAndProcessPacket(AVPacket *pkt, std::optional<std::chrono::high_resolution_clock::time_point> &occuredErrorTime, bool &readFirstPacket,
-                             bool isEof = false);
+    int readAndProcessPacket(
+        AVPacket *pkt,
+        std::optional<std::chrono::high_resolution_clock::time_point> &occuredErrorTime,
+        bool &readFirstPacket, bool isEof = false);
 
     /**
      * @brief 检查预缓冲状态
@@ -256,7 +258,14 @@ private:
      * @param occuredErrorTime 出错时间s
      * @return 处理结果：-1=需要继续，-2=严重错误
      */
-    int handleReadError(std::optional<std::chrono::high_resolution_clock::time_point> &occuredErrorTime);
+    int handleReadError(
+        std::optional<std::chrono::high_resolution_clock::time_point> &occuredErrorTime);
+
+    /**
+     * @brief 处理seek请求
+     * @return true 如果处理了seek请求; false 如果没有pending的seek请求
+     */
+    bool handleSeekRequest();
 
 private:
     // 同步原语
@@ -280,7 +289,8 @@ private:
     std::atomic<bool> isPaused_{false};
     std::atomic<bool> isSeeking_{false};
 
-    // 是否循环播放
+    // seek位置原子变量
+    std::atomic_int seekMsPos_ = -1;
 
     // 录制器
     std::unique_ptr<RealTimeStreamRecorder> realTimeStreamRecorder_;

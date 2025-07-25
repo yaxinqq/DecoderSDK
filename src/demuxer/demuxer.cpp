@@ -14,7 +14,7 @@ extern "C" {
 namespace {
 // 读取错误出现的最长时限（单位：s）
 constexpr int kReadErrorMaxInterval = 3;
-}
+} // namespace
 
 DECODER_SDK_NAMESPACE_BEGIN
 INTERNAL_NAMESPACE_BEGIN
@@ -200,18 +200,121 @@ bool Demuxer::resume()
 
 bool Demuxer::seek(double position)
 {
-    if (!formatContext_ || isRealTime_.load()) {
+    if (!formatContext_ || isRealTime_.load() || !utils::greaterAndEqual(position, 0.0)) {
         return false;
     }
 
-    // 防止并发seek
-    bool expected = false;
-    if (!isSeeking_.compare_exchange_strong(expected, true)) {
-        LOG_WARN("Seek already in progress, ignoring new seek request");
+    // 防止并发seek - 检查是否已经有pending的seek
+    int expected = -1;
+    std::atomic_int desired = static_cast<int>(position * 1000);
+
+    if (!seekMsPos_.compare_exchange_strong(expected, desired)) {
+        LOG_WARN("Seek request pending, replacing with new position: {:.2f}s", position);
+        seekMsPos_.store(desired);
+    }
+
+    LOG_INFO("Seek request queued: {:.2f}s", position);
+    return true;
+}
+
+void Demuxer::fileStreamDemuxLoop(AVPacket *pkt)
+{
+    std::optional<std::chrono::high_resolution_clock::time_point> occuredErrorTime;
+    bool readFirstPacket = false;
+    std::optional<bool> isEof = std::nullopt;
+
+    while (isRunning_.load()) {
+        // 检查是否有pending的seek请求
+        if (handleSeekRequest()) {
+            // seek完成后继续循环
+            continue;
+        }
+
+        // 处理暂停状态 - 文件流暂停时完全停止读取
+        if (!handleFileStreamPause()) {
+            break;
+        }
+
+        // 读取并处理数据包
+        int result =
+            readAndProcessPacket(pkt, occuredErrorTime, readFirstPacket, isEof.value_or(false));
+        if (result == 1) {
+            isEof = true;
+            // 文件结束
+            if ((!videoPacketQueue_ || videoPacketQueue_->isEmpty()) &&
+                (!audioPacketQueue_ || audioPacketQueue_->isEmpty()) && isEof.value_or(false)) {
+                auto event = std::make_shared<StreamEventArgs>(url_, "Demuxer", "Stream Ended");
+                eventDispatcher_->triggerEvent(EventType::kStreamEnded, event);
+
+                // 检查是否需要循环播放（仅对文件流有效）
+                if (!isRealTime_.load() && handleLoopPlayback()) {
+                    // 成功开始新的循环，不发送结束包
+                    av_packet_unref(pkt);
+                }
+                isEof.reset();
+            }
+            continue;
+        } else if (result == -2) {
+            // 严重错误，退出循环
+            break;
+        } else if (result == -1) {
+            // 需要继续循环
+            continue;
+        }
+
+        isEof.reset();
+        // 分发数据包
+        distributePacket(pkt);
+        av_packet_unref(pkt);
+    }
+}
+
+void Demuxer::realTimeStreamDemuxLoop(AVPacket *pkt)
+{
+    std::optional<std::chrono::high_resolution_clock::time_point> occuredErrorTime;
+    bool readFirstPacket = false;
+
+    while (isRunning_.load()) {
+        // 实时流不支持seek，清除任何pending的seek请求
+        if (seekMsPos_.load() > 0) {
+            seekMsPos_.store(-1);
+            LOG_WARN("Seek not supported for real-time streams, ignoring seek request");
+        }
+
+        // 读取并处理数据包
+        int result = readAndProcessPacket(pkt, occuredErrorTime, readFirstPacket);
+        if (result == 1) {
+            // 实时流EOF，短暂等待后继续
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            continue;
+        } else if (result == -2) {
+            // 严重错误，退出循环
+            break;
+        } else if (result == -1) {
+            // 需要继续循环
+            continue;
+        }
+
+        // 分发数据包
+        distributePacket(pkt);
+        av_packet_unref(pkt);
+    }
+}
+
+bool Demuxer::handleSeekRequest()
+{
+    auto seekMsPosition = seekMsPos_.load();
+    if (seekMsPosition < 0) {
         return false;
     }
 
-    std::lock_guard<std::mutex> lock(mutex_);
+    // 清除seek请求
+    seekMsPos_.store(-1);
+
+    // 设置seeking状态
+    isSeeking_.store(true);
+
+    double position = seekMsPosition / 1000.0;
 
     // 转换时间戳
     int64_t timestamp = static_cast<int64_t>(position * AV_TIME_BASE);
@@ -220,7 +323,7 @@ bool Demuxer::seek(double position)
     int ret = av_seek_frame(formatContext_, -1, timestamp, AVSEEK_FLAG_BACKWARD);
     if (ret < 0) {
         LOG_ERROR("Seek failed: {}", utils::avErr2Str(ret));
-        isSeeking_.store(false); // 重置状态
+        isSeeking_.store(false);
         return false;
     }
 
@@ -234,8 +337,9 @@ bool Demuxer::seek(double position)
         audioPacketQueue_->flush();
     }
 
-    isSeeking_.store(false); // 重置状态
-    LOG_INFO("{} seek to position: {:.2f}s", url_, position);
+    isSeeking_.store(false);
+    LOG_INFO("{} seek completed to position: {:.2f}s", url_, position);
+
     return true;
 }
 
@@ -445,77 +549,6 @@ void Demuxer::demuxLoop()
     LOG_INFO("{} demux loop ended.", url_);
 }
 
-void Demuxer::fileStreamDemuxLoop(AVPacket *pkt)
-{
-    std::optional<std::chrono::high_resolution_clock::time_point> occuredErrorTime;
-    bool readFirstPacket = false;
-    std::optional<bool> isEof = std::nullopt;
-
-    while (isRunning_.load()) {
-        // 处理暂停状态 - 文件流暂停时完全停止读取
-        if (!handleFileStreamPause()) {
-            break;
-        }
-
-        // 读取并处理数据包
-        int result = readAndProcessPacket(pkt, occuredErrorTime, readFirstPacket, isEof.value_or(false));
-        if (result == 1) {
-            isEof = true;
-            // 文件结束
-            if ((!videoPacketQueue_ || videoPacketQueue_->isEmpty()) &&
-                (!audioPacketQueue_ || audioPacketQueue_->isEmpty()) && isEof.value_or(false)) {
-                auto event = std::make_shared<StreamEventArgs>(url_, "Demuxer", "Stream Ended");
-                eventDispatcher_->triggerEvent(EventType::kStreamEnded, event);
-
-                // 检查是否需要循环播放（仅对文件流有效）
-                if (!isRealTime_.load() && handleLoopPlayback()) {
-                    // 成功开始新的循环，不发送结束包
-                    av_packet_unref(pkt);
-                }
-                isEof.reset();
-            }
-            continue;
-        } else if (result == -2) {
-            // 严重错误，退出循环
-            break;
-        } else if (result == -1) {
-            // 需要继续循环
-            continue;
-        }
-
-        isEof.reset();
-        // 分发数据包
-        distributePacket(pkt);
-        av_packet_unref(pkt);
-    }
-}
-
-void Demuxer::realTimeStreamDemuxLoop(AVPacket *pkt)
-{
-    std::optional<std::chrono::high_resolution_clock::time_point> occuredErrorTime;
-    bool readFirstPacket = false;
-
-    while (isRunning_.load()) {
-        // 读取并处理数据包
-        int result = readAndProcessPacket(pkt, occuredErrorTime, readFirstPacket);
-        if (result == 1) {
-            // 实时流EOF，短暂等待后继续
-            std::this_thread::sleep_for(std::chrono::milliseconds(10));
-            continue;
-        } else if (result == -2) {
-            // 严重错误，退出循环
-            break;
-        } else if (result == -1) {
-            // 需要继续循环
-            continue;
-        }
-
-        // 分发数据包
-        distributePacket(pkt);
-        av_packet_unref(pkt);
-    }
-}
-
 bool Demuxer::handleFileStreamPause()
 {
     if (isPaused_.load()) {
@@ -529,7 +562,9 @@ bool Demuxer::handleFileStreamPause()
     return true;
 }
 
-int Demuxer::readAndProcessPacket(AVPacket *pkt, std::optional<std::chrono::high_resolution_clock::time_point> &occuredErrorTime, bool &readFirstPacket, bool isEof)
+int Demuxer::readAndProcessPacket(
+    AVPacket *pkt, std::optional<std::chrono::high_resolution_clock::time_point> &occuredErrorTime,
+    bool &readFirstPacket, bool isEof)
 {
     // 读取数据包
     int ret;
@@ -538,7 +573,7 @@ int Demuxer::readAndProcessPacket(AVPacket *pkt, std::optional<std::chrono::high
         // 在锁保护下读取数据包
         ret = av_read_frame(formatContext_, pkt);
     }
-    
+
     // 成功读取数据包
     if (ret >= 0) {
         occuredErrorTime.reset();
@@ -548,7 +583,7 @@ int Demuxer::readAndProcessPacket(AVPacket *pkt, std::optional<std::chrono::high
             auto event = std::make_shared<StreamEventArgs>(url_, "Demuxer", "Stream Read Data");
             eventDispatcher_->triggerEvent(EventType::kStreamReadData, event);
         }
-        
+
         return 0;
     }
 
@@ -556,26 +591,26 @@ int Demuxer::readAndProcessPacket(AVPacket *pkt, std::optional<std::chrono::high
     if (isRealTime_.load() && isPaused_.load()) {
         return -1;
     }
-    
+
     // 处理EOF（对所有流类型都适用）
     if (ret == AVERROR_EOF || avio_feof(formatContext_->pb)) {
         if (!isEof) {
             handleEndOfFile(pkt);
         }
-        
+
         // 实时流的EOF可能是临时的，应该累计错误计数
         if (isRealTime_.load()) {
             return handleReadError(occuredErrorTime);
         }
-        
+
         return 1; // 非实时流的正常EOF
     }
-    
+
     // 处理EAGAIN（需要重试）
     if (ret == AVERROR(EAGAIN)) {
         return -1;
     }
-    
+
     // 处理其他读取错误
     return handleReadError(occuredErrorTime);
 }
@@ -692,8 +727,12 @@ bool Demuxer::handleLoopPlayback()
         return false;
     }
 
-    // 执行seek到文件开头
-    seek(0.0);
+    // 使用内部seek机制
+    seekMsPos_.store(0);
+    if (!handleSeekRequest()) {
+        return false;
+    }
+
     // 重置到文件开始位置
     if (formatContext_->pb && formatContext_->pb->seekable) {
         avio_seek(formatContext_->pb, 0, SEEK_SET);
@@ -714,21 +753,24 @@ bool Demuxer::handleLoopPlayback()
     return true;
 }
 
-int Demuxer::handleReadError(std::optional<std::chrono::high_resolution_clock::time_point> &occuredErrorTime)
+int Demuxer::handleReadError(
+    std::optional<std::chrono::high_resolution_clock::time_point> &occuredErrorTime)
 {
     const auto now = std::chrono::high_resolution_clock::now();
     if (!occuredErrorTime.has_value())
         occuredErrorTime = now;
 
-    if (std::chrono::duration_cast<std::chrono::seconds>(now - occuredErrorTime.value()).count() >= kReadErrorMaxInterval) {
-        LOG_ERROR("Has accumulated errors for more than {}s in {}, stopping", kReadErrorMaxInterval, url_);
-        
+    if (std::chrono::duration_cast<std::chrono::seconds>(now - occuredErrorTime.value()).count() >=
+        kReadErrorMaxInterval) {
+        LOG_ERROR("Has accumulated errors for more than {}s in {}, stopping", kReadErrorMaxInterval,
+                  url_);
+
         occuredErrorTime.reset();
         auto event = std::make_shared<StreamEventArgs>(url_, "Demuxer", "Stream Read Error");
         eventDispatcher_->triggerEvent(EventType::kStreamReadError, event);
         return -2; // 严重错误
     }
-    
+
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
     return -1; // 需要继续
 }
