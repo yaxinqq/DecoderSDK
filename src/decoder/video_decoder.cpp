@@ -342,6 +342,12 @@ void VideoDecoder::decodeLoop()
         if (packet.serial() != serial)
             continue;
 
+        // 等待关键帧
+        if (!hasKeyFrame && (packet.get()->flags & AV_PKT_FLAG_KEY) == 0) {
+            continue;
+        }
+        hasKeyFrame = true;
+
         if (codecCtx_->codec_id == AV_CODEC_ID_H264 && hwAccel_ &&
             (hwAccel_->getType() == HWAccelType::kD3d11va ||
              hwAccel_->getType() == HWAccelType::kDxva2) &&
@@ -409,12 +415,6 @@ void VideoDecoder::decodeLoop()
         if (!std::isnan(pts)) {
             syncController_->updateVideoClock(pts, serial);
         }
-
-        // 等待关键帧
-        if (!hasKeyFrame && frame.keyFrame() == 0) {
-            continue;
-        }
-        hasKeyFrame = true;
 
         // 如果当前小于seekPos，丢弃帧
         {
