@@ -5,6 +5,8 @@
 #include <QFileDialog>
 #include <QUuid>
 
+#include <cmath>
+
 SimplePlayer::SimplePlayer(QWidget *parent) : QWidget(parent), ui{new Ui::SimplePlayer}
 {
     ui->setupUi(this);

@@ -6,11 +6,12 @@ function(install_ffmpeg_libraries destination)
     if(CMAKE_SYSTEM_NAME STREQUAL "Windows")
         # Windows 平台：安装 FFmpeg DLL 文件
         foreach(ffmpeg_lib ${FFMPEG_LIB})
-            install(DIRECTORY "${FFMPEG_BIN_DIR}/"
-                    DESTINATION ${destination}
-                    FILES_MATCHING 
-                    PATTERN "${ffmpeg_lib}*.dll"
-            )
+            file(GLOB ffmpeg_dlls "${FFMPEG_BIN_DIR}/${ffmpeg_lib}*.dll")
+            if(ffmpeg_dlls)
+                install(FILES ${ffmpeg_dlls}
+                        DESTINATION ${destination}
+                )
+            endif()
         endforeach()
         
     elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
@@ -18,11 +19,12 @@ function(install_ffmpeg_libraries destination)
         foreach(lib_dir ${FFMPEG_LIB_DIR})
             if(EXISTS "${lib_dir}")
                 foreach(ffmpeg_lib ${FFMPEG_LIB})
-                    install(DIRECTORY "${lib_dir}/"
-                        DESTINATION ${destination}
-                        FILES_MATCHING 
-                        PATTERN "lib${ffmpeg_lib}*.so*"
-                    )
+                    file(GLOB ffmpeg_sos "${lib_dir}/lib${ffmpeg_lib}*.so*")
+                    if(ffmpeg_sos)
+                        install(FILES ${ffmpeg_sos}
+                                DESTINATION ${destination}
+                        )
+                    endif()
                 endforeach()
             endif()
         endforeach()

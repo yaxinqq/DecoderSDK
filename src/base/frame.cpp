@@ -397,10 +397,6 @@ void Frame::setChannelLayout(uint64_t layout)
         frame_->channel_layout = layout;
 }
 
-int Frame::channels() const
-{
-    return frame_ ? frame_->channels : 0;
-}
 void Frame::setChannels(int ch)
 {
     if (frame_)
