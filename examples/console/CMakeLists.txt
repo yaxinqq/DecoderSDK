@@ -27,8 +27,8 @@ set_target_properties(${EXAMPLE_TARGET} PROPERTIES
 
 # 包含目录
 target_include_directories(${EXAMPLE_TARGET} PRIVATE
-    ${CMAKE_SOURCE_DIR}/src/include
-    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src
     ${FFMPEG_INCLUDE_DIR}
     ${SPDLOG_INCLUDE_DIR}
     ${FMT_INCLUDE_DIR}
@@ -51,9 +51,9 @@ endif()
 if(WIN32)
     # 设置输出目录
     set_target_properties(${EXAMPLE_TARGET} PROPERTIES
-        RUNTIME_OUTPUT_DIRECTORY_DEBUG ${CMAKE_BINARY_DIR}/examples/Debug
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE ${CMAKE_BINARY_DIR}/examples/Release
-        RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO ${CMAKE_BINARY_DIR}/examples/RelWithDebInfo
+        RUNTIME_OUTPUT_DIRECTORY_DEBUG ${CMAKE_BINARY_DIR}/examples/console/Debug
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE ${CMAKE_BINARY_DIR}/examples/console/Release
+        RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO ${CMAKE_BINARY_DIR}/examples/console/RelWithDebInfo
     )
     
     # 复制必要的DLL文件到输出目录

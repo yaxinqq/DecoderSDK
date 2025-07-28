@@ -1,7 +1,10 @@
 @PACKAGE_INIT@
 
 include(CMakeFindDependencyMacro)
-include(CMakePackageConfigHelpers)
+
+# 查找依赖项
+# 注意：这里只查找必要的依赖，具体的FFmpeg等库由目标自己管理
+find_dependency(Threads QUIET)
 
 # 包含目标文件
 include("${CMAKE_CURRENT_LIST_DIR}/DecoderSDKTargets.cmake")
@@ -16,3 +19,19 @@ set(DecoderSDK_LIBRARIES DecoderSDK::DecoderSDK)
 set(DecoderSDK_INCLUDE_DIRS "${DecoderSDK_INSTALL_PREFIX}/include")
 set(DecoderSDK_LIB_DIRS "${DecoderSDK_INSTALL_PREFIX}/lib")
 set(DecoderSDK_BIN_DIRS "${DecoderSDK_INSTALL_PREFIX}/bin")
+
+# 版本信息
+set(DecoderSDK_VERSION_MAJOR @DECODER_SDK_VERSION_MAJOR@)
+set(DecoderSDK_VERSION_MINOR @DECODER_SDK_VERSION_MINOR@)
+set(DecoderSDK_VERSION_PATCH @DECODER_SDK_VERSION_PATCH@)
+set(DecoderSDK_VERSION "@DECODER_SDK_VERSION_MAJOR@.@DECODER_SDK_VERSION_MINOR@.@DECODER_SDK_VERSION_PATCH@")
+
+# 检查所有必需的组件是否找到
+check_required_components(DecoderSDK)
+
+# 提供一些有用的信息
+if(NOT DecoderSDK_FIND_QUIETLY)
+    message(STATUS "Found DecoderSDK: ${DecoderSDK_VERSION}")
+    message(STATUS "DecoderSDK include dirs: ${DecoderSDK_INCLUDE_DIRS}")
+    message(STATUS "DecoderSDK libraries: ${DecoderSDK_LIBRARIES}")
+endif()

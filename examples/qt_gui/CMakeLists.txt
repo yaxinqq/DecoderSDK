@@ -41,16 +41,10 @@ find_package(Qt5 REQUIRED COMPONENTS
 
 # 全局包含目录设置
 set(GLOBAL_INCLUDE_DIRS
-    ${CMAKE_SOURCE_DIR}/src/include
-    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/include
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CMAKE_CURRENT_SOURCE_DIR}/src/VideoPlayer
     ${CMAKE_CURRENT_SOURCE_DIR}/src/VideoPlayer/VideoRender
-    ${FFMPEG_INCLUDE_DIR}
-    ${SPDLOG_INCLUDE_DIR}
-    ${FMT_INCLUDE_DIR}
-    ${MAGIC_ENUM_INCLUDE_DIR}
-    ${JSON_INCLUDE_DIR}
 )
 
 # 如果找到CUDA，添加CUDA包含目录

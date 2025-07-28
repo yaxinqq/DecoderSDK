@@ -1,4 +1,12 @@
 cmake_minimum_required(VERSION 3.14)
+
+# 检测是否作为子项目被包含
+if(NOT DEFINED PROJECT_NAME)
+    set(DECODER_SDK_IS_MAIN_PROJECT TRUE)
+else()
+    set(DECODER_SDK_IS_MAIN_PROJECT FALSE)
+endif()
+
 project(DecoderSDK)
 
 # Only generate Debug and Release configuration types.
@@ -25,7 +33,7 @@ find_package(Git QUIET)
 if(GIT_FOUND)
     execute_process(
         COMMAND ${GIT_EXECUTABLE} rev-parse --short HEAD
-        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
         OUTPUT_VARIABLE GIT_HASH
         OUTPUT_STRIP_TRAILING_WHITESPACE
         ERROR_QUIET
@@ -36,17 +44,17 @@ endif()
 
 # 配置版本头文件
 configure_file(
-    "${CMAKE_SOURCE_DIR}/src/base/version.h.in"
-    "${CMAKE_BINARY_DIR}/generated/version.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/base/version.h.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/generated/version.h"
     @ONLY
 )
 
-# 添加选项控制是否编译examples
-option(BUILD_EXAMPLES "Build example programs" ON)
-option(BUILD_SHARED_LIBS "Build shared libraries" ON)
+# 添加选项控制是否编译examples（只在主项目时默认开启）
+option(BUILD_EXAMPLES "Build example programs" ${DECODER_SDK_IS_MAIN_PROJECT})
+option(BUILD_DECODERSDK_SHARED_LIBS "Build shared libraries" ON)
 
 # 添加选项控制具体编译哪些例子
-option(BUILD_CONSOLE_EXAMPLE "Build console example" ON)
+option(BUILD_CONSOLE_EXAMPLE "Build console example" OFF)
 option(BUILD_QT_GUI_EXAMPLE "Build Qt GUI example" ON)
 option(BUILD_D3D_RENDER_EXAMPLE "Build D3D render example" OFF)
 
@@ -66,25 +74,27 @@ if (CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
 endif ()
 
 # 添加自定义的CMake模块路径
-# set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/cmake/")
+# set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_CURRENT_SOURCE_DIR}/cmake/")
 
-# 设置安装路径
-if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
-    set(CMAKE_INSTALL_PREFIX "${CMAKE_SOURCE_DIR}/install" CACHE PATH "Install path" FORCE)
+# 设置安装路径（只在主项目时设置）
+if(DECODER_SDK_IS_MAIN_PROJECT AND CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
+    set(CMAKE_INSTALL_PREFIX "${CMAKE_CURRENT_SOURCE_DIR}/install" CACHE PATH "Install path" FORCE)
 endif()
 
-# 设置输出目录
-set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/output)
-set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/output)
-# set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/output)
+# 设置输出目录（只在主项目时设置）
+if(DECODER_SDK_IS_MAIN_PROJECT)
+    set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/output)
+    set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/output)
+    # set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/output)
 
-# 针对不同的构建类型设置输出目录
-set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_DEBUG ${CMAKE_BINARY_DIR}/output/Debug)
-set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_RELEASE ${CMAKE_BINARY_DIR}/output/Release)
-set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO ${CMAKE_BINARY_DIR}/output/RelWithDebInfo)
-set(CMAKE_LIBRARY_OUTPUT_DIRECTORY_DEBUG ${CMAKE_BINARY_DIR}/output/Debug)
-set(CMAKE_LIBRARY_OUTPUT_DIRECTORY_RELEASE ${CMAKE_BINARY_DIR}/output/Release)
-set(CMAKE_LIBRARY_OUTPUT_DIRECTORY_RELWITHDEBINFO ${CMAKE_BINARY_DIR}/output/RelWithDebInfo)
+    # 针对不同的构建类型设置输出目录
+    set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_DEBUG ${CMAKE_BINARY_DIR}/output/Debug)
+    set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_RELEASE ${CMAKE_BINARY_DIR}/output/Release)
+    set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO ${CMAKE_BINARY_DIR}/output/RelWithDebInfo)
+    set(CMAKE_LIBRARY_OUTPUT_DIRECTORY_DEBUG ${CMAKE_BINARY_DIR}/output/Debug)
+    set(CMAKE_LIBRARY_OUTPUT_DIRECTORY_RELEASE ${CMAKE_BINARY_DIR}/output/Release)
+    set(CMAKE_LIBRARY_OUTPUT_DIRECTORY_RELWITHDEBINFO ${CMAKE_BINARY_DIR}/output/RelWithDebInfo)
+endif()
 
 # 获取系统信息
 message(STATUS "CMake system name: ${CMAKE_SYSTEM_NAME}")
@@ -92,11 +102,11 @@ message(STATUS "CMake system processor: ${CMAKE_SYSTEM_PROCESSOR}")
 
 # 根据系统和架构设置包含目录和库文件路径
 #eventpp
-set(EVENTPP_INCLUDE_DIR ${CMAKE_SOURCE_DIR}/external/eventpp/include)
+set(EVENTPP_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/external/eventpp/include)
 #nlohmann
-set(JSON_INCLUDE_DIR ${CMAKE_SOURCE_DIR}/external/nlohmann/include)
+set(JSON_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/external/nlohmann/include)
 # magic_enum
-set(MAGIC_ENUM_INCLUDE_DIR ${CMAKE_SOURCE_DIR}/external/magic_enum/include)
+set(MAGIC_ENUM_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/external/magic_enum/include)
 if (CMAKE_SYSTEM_NAME STREQUAL "Windows")
     # Windows-x86_64
     # FFmpeg
@@ -104,42 +114,118 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Windows")
     set(FFMPEG_LIB_DIR ${FFMPEG_ROOT_DIR}/lib)
     set(FFMPEG_BIN_DIR ${FFMPEG_ROOT_DIR}/bin)
     # spdlog
-    set(SPDLOG_INCLUDE_DIR ${CMAKE_SOURCE_DIR}/external/spdlog/windows-x86_64/include)
-    set(SPDLOG_LIB_DIR ${CMAKE_SOURCE_DIR}/external/spdlog/windows-x86_64/lib)
-    set(SPDLOG_BIN_DIR ${CMAKE_SOURCE_DIR}/external/spdlog/windows-x86_64/bin)
+    set(SPDLOG_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/external/spdlog/windows-x86_64/include)
+    set(SPDLOG_LIB_DIR ${CMAKE_CURRENT_SOURCE_DIR}/external/spdlog/windows-x86_64/lib)
 
     # fmt
-    set(FMT_INCLUDE_DIR ${CMAKE_SOURCE_DIR}/external/fmt/windows-x86_64/include)
-    set(FMT_LIB_DIR ${CMAKE_SOURCE_DIR}/external/fmt/windows-x86_64/lib)
+    set(FMT_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/external/fmt/windows-x86_64/include)
+    set(FMT_LIB_DIR ${CMAKE_CURRENT_SOURCE_DIR}/external/fmt/windows-x86_64/lib)
 
-elseif (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR STREQUAL "aarch64")
-    # like Kylin-aarch64
-    
+elseif (CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    set(FFMPEG_INCLUDE_DIR )
+    set(FFMPEG_LIB_DIR  )
+    set(FFMPEG_BIN_DIR )
 
-elseif (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
-    # like UOS Desktop 20
-    # FFmpeg
-    find_package(PkgConfig REQUIRED)
+    # FFmpeg配置 - 优先使用FFMPEG_ROOT_DIR，否则使用pkg-config收集各模块路径
+    if(FFMPEG_ROOT_DIR AND EXISTS "${FFMPEG_ROOT_DIR}")
+        # 方案1: 使用用户指定的FFMPEG_ROOT_DIR
+        message(STATUS "Using user-specified FFMPEG_ROOT_DIR: ${FFMPEG_ROOT_DIR}")
+        
+        # 设置统一的路径
+        set(FFMPEG_INCLUDE_DIR ${FFMPEG_ROOT_DIR}/include)
+        set(FFMPEG_LIB_DIR ${FFMPEG_ROOT_DIR}/lib)
+        set(FFMPEG_BIN_DIR ${FFMPEG_LIB_DIR})
+        
+        message(STATUS "FFmpeg include directories: ${FFMPEG_INCLUDE_DIR}")
+        message(STATUS "FFmpeg lib directories: ${FFMPEG_LIB_DIR}")
+        message(STATUS "FFmpeg bin directory: ${FFMPEG_BIN_DIR}")
+        
+    else()
+        # 方案2: 使用pkg-config收集各个模块的路径
+        message(STATUS "FFMPEG_ROOT_DIR not set, using pkg-config to collect FFmpeg module paths")
+        
+        find_package(PkgConfig REQUIRED)
+        
+        # 定义FFmpeg模块列表
+        set(FFMPEG_MODULES 
+            "libavcodec"
+            "libavdevice" 
+            "libavfilter"
+            "libavformat"
+            "libavutil"
+            "libswresample"
+            "libswscale"
+        )
+        
+        # 收集各个模块的头文件和库文件路径
+        foreach(module ${FFMPEG_MODULES})
+            # 检查模块是否存在
+            pkg_check_modules(${module}_PKG REQUIRED ${module})
+            
+            # 收集头文件路径
+            if(${module}_PKG_INCLUDE_DIRS)
+                foreach(include_dir ${${module}_PKG_INCLUDE_DIRS})
+                    list(APPEND FFMPEG_INCLUDE_DIR ${include_dir})
+                endforeach()
+            endif()
+            
+            # 收集库文件路径
+            if(${module}_PKG_LIBRARY_DIRS)
+                foreach(lib_dir ${${module}_PKG_LIBRARY_DIRS})
+                    list(APPEND FFMPEG_LIB_DIR ${lib_dir})
+                endforeach()
+            endif()
+            
+            # 通过pkg-config获取具体的库目录
+            execute_process(
+                COMMAND ${PKG_CONFIG_EXECUTABLE} --variable=libdir ${module}
+                OUTPUT_VARIABLE ${module}_LIBDIR
+                OUTPUT_STRIP_TRAILING_WHITESPACE
+                ERROR_QUIET
+            )
+            
+            if(${module}_LIBDIR)
+                list(APPEND FFMPEG_LIB_DIR ${${module}_LIBDIR})
+                message(STATUS "Found ${module} lib directory: ${${module}_LIBDIR}")
+            endif()
+        endforeach()
+        
+        # 去重路径数组
+        if(FFMPEG_INCLUDE_DIR)
+            list(REMOVE_DUPLICATES FFMPEG_INCLUDE_DIR)
+        endif()
+        if(FFMPEG_LIB_DIR)
+            list(REMOVE_DUPLICATES FFMPEG_LIB_DIR)
+        endif()
+        # linux下，lib和bin的目录一致
+        set(FFMPEG_BIN_DIR ${FFMPEG_LIB_DIR})
+    endif()
 
-    pkg_check_modules(AVCODEC REQUIRED libavcodec)
-    pkg_check_modules(AVDEVICE REQUIRED libavdevice)
-    pkg_check_modules(AVFILTER REQUIRED libavfilter)
-    pkg_check_modules(AVFORMAT REQUIRED libavformat)
-    pkg_check_modules(AVUTIL REQUIRED libavutil)
-    pkg_check_modules(SWRESAMPLE REQUIRED libswresample)
-    pkg_check_modules(SWSCALE REQUIRED libswscale)
+    # 输出最终的路径信息
+    message(STATUS "=== FFmpeg Configuration Summary ===")
+    message(STATUS "  Include Dirs: ${FFMPEG_INCLUDE_DIR}")
+    message(STATUS "  Library Dirs: ${FFMPEG_LIB_DIR}")
+    message(STATUS "  Binary Dir:   ${FFMPEG_BIN_DIR}")
+    message(STATUS "=====================================")
+
     # spdlog
-    set(SPDLOG_INCLUDE_DIR ${CMAKE_SOURCE_DIR}/external/spdlog/linux-x86_64/include)
-    set(SPDLOG_LIB_DIR ${CMAKE_SOURCE_DIR}/external/spdlog/linux-x86_64/lib)
+    set(SPDLOG_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/external/spdlog/linux-${CMAKE_SYSTEM_PROCESSOR}/include)
+    set(SPDLOG_LIB_DIR ${CMAKE_CURRENT_SOURCE_DIR}/external/spdlog/linux-${CMAKE_SYSTEM_PROCESSOR}/lib)
 
     # fmt
-    set(FMT_INCLUDE_DIR ${CMAKE_SOURCE_DIR}/external/fmt/linux-x86_64/include)
-    set(FMT_LIB_DIR ${CMAKE_SOURCE_DIR}/external/fmt/linux-x86_64/lib)
+    set(FMT_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/external/fmt/linux-${CMAKE_SYSTEM_PROCESSOR}/include)
+    set(FMT_LIB_DIR ${CMAKE_CURRENT_SOURCE_DIR}/external/fmt/linux-${CMAKE_SYSTEM_PROCESSOR}/lib)
+
 
 else ()
     # 不支持的系统或处理器架构
     message(FATAL_ERROR "Unsupported system ${CMAKE_SYSTEM_NAME} or unsupported processor ${CMAKE_SYSTEM_PROCESSOR}")
 endif ()
+
+# 如果不是作为主项目，则设置依赖库的路径
+if(NOT DECODER_SDK_IS_MAIN_PROJECT)
+    set(DECODERSDK_DEPENDENCY_DIR ${FFMPEG_BIN_DIR} PARENT_SCOPE)
+endif()
 
 # 查找和配置各种硬件解码支持
 set(CUDA_FOUND FALSE)
@@ -338,6 +424,10 @@ endif()
 # 添加子项目
 # src
 add_subdirectory(src)
+
+# 创建别名目标，方便作为子项目使用
+add_library(DecoderSDK::DecoderSDK ALIAS DecoderSDK)
+
 # examples (可选)
 if(BUILD_EXAMPLES)
     message(STATUS "Building examples")
@@ -346,39 +436,33 @@ else()
     message(STATUS "Skipping examples")
 endif()
 
-# 创建配置文件
-configure_file(
-    "${CMAKE_SOURCE_DIR}/cmake/DecoderSDKConfig.cmake.in"
-    "${CMAKE_BINARY_DIR}/DecoderSDKConfig.cmake"
-    @ONLY
-)
-
-# 安装配置文件
-install(FILES
-    "${CMAKE_BINARY_DIR}/DecoderSDKConfig.cmake"
-    DESTINATION lib/cmake/DecoderSDK
-)
-
-# 安装依赖的DLL文件（Windows）
-if(WIN32)
-    install(DIRECTORY ${FFMPEG_BIN_DIR}/
-        DESTINATION bin
-        FILES_MATCHING PATTERN "*.dll"
+# 只在主项目时进行安装配置
+if(DECODER_SDK_IS_MAIN_PROJECT)
+    # 创建配置文件
+    include(CMakePackageConfigHelpers)
+    
+    configure_package_config_file(
+        "${CMAKE_CURRENT_SOURCE_DIR}/cmake/DecoderSDKConfig.cmake.in"
+        "${CMAKE_BINARY_DIR}/DecoderSDKConfig.cmake"
+        INSTALL_DESTINATION lib/cmake/DecoderSDK
+        PATH_VARS CMAKE_INSTALL_PREFIX
     )
-    install(DIRECTORY ${SPDLOG_BIN_DIR}/
-        DESTINATION bin
-        FILES_MATCHING PATTERN "*.dll"
+
+    # 安装配置文件
+    install(FILES
+        "${CMAKE_BINARY_DIR}/DecoderSDKConfig.cmake"
+        DESTINATION lib/cmake/DecoderSDK
+    )
+
+    # 安装配置文件
+    install(FILES
+        "${CMAKE_CURRENT_SOURCE_DIR}/resources/decoderSDK.json"
+        DESTINATION etc
+    )
+
+    # 安装文档
+    install(FILES
+        "${CMAKE_CURRENT_SOURCE_DIR}/README.md"
+        DESTINATION .
     )
 endif()
-
-# 安装配置文件
-install(FILES
-    "${CMAKE_SOURCE_DIR}/resources/decoderSDK.json"
-    DESTINATION etc
-)
-
-# 安装文档
-install(FILES
-    "${CMAKE_SOURCE_DIR}/README.md"
-    DESTINATION .
-)

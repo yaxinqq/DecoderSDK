@@ -68,7 +68,7 @@ file(GLOB ROOT_SRC
 )
 
 # 定义库类型
-if(BUILD_SHARED_LIBS)
+if(BUILD_DECODERSDK_SHARED_LIBS)
     set(LIB_TYPE SHARED)
 else()
     set(LIB_TYPE STATIC)
@@ -99,6 +99,9 @@ set_target_properties(${PROJECT_NAME} PROPERTIES
     VERSION "${DECODER_SDK_VERSION_MAJOR}.${DECODER_SDK_VERSION_MINOR}.${DECODER_SDK_VERSION_PATCH}"
     SOVERSION "${DECODER_SDK_VERSION_MAJOR}"
     DEBUG_POSTFIX "d"
+    # 导出符号
+    CXX_VISIBILITY_PRESET hidden
+    VISIBILITY_INLINES_HIDDEN YES
 )
 
 # Linux特定的版本信息
@@ -109,15 +112,8 @@ if(UNIX AND NOT APPLE)
     )
 endif()
 
-# 设置Debug模式下的库文件名后缀
-set_target_properties(${PROJECT_NAME} PROPERTIES
-    DEBUG_POSTFIX "d"
-    VERSION "1.0.0"
-    SOVERSION "1"
-)
-
 # 设置导出符号（Windows DLL）
-if(WIN32 AND BUILD_SHARED_LIBS)
+if(WIN32 AND BUILD_DECODERSDK_SHARED_LIBS)
     target_compile_definitions(${PROJECT_NAME}
         PRIVATE DECODER_SDK_LIB
         INTERFACE DECODER_SDK_DLL
@@ -127,9 +123,12 @@ endif()
 # 包含目录
 target_include_directories(${PROJECT_NAME}
     PRIVATE
-        ${CMAKE_SOURCE_DIR}/src
-        ${CMAKE_SOURCE_DIR}/external
-        ${CMAKE_BINARY_DIR}/generated
+        # 内部使用的头文件
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/external
+        ${CMAKE_CURRENT_BINARY_DIR}/generated
+        ${CMAKE_CURRENT_BINARY_DIR}/../generated
         ${FFMPEG_INCLUDE_DIR}
         ${SPDLOG_INCLUDE_DIR}
         ${JSON_INCLUDE_DIR}
@@ -137,7 +136,8 @@ target_include_directories(${PROJECT_NAME}
         ${EVENTPP_INCLUDE_DIR}
         ${MAGIC_ENUM_INCLUDE_DIR}
     PUBLIC
-        $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/src/include>
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/../generated>
         $<INSTALL_INTERFACE:include>
 )
 
@@ -201,11 +201,6 @@ set(FFMPEG_LIB
     swresample
     swscale
 )
-if (CMAKE_SYSTEM_NAME STREQUAL "Windows")
-    list(APPEND FFMPEG_LIB
-        postproc
-    )
-endif ()
 
 set(SPDLOG_LIB spdlog)
 set(FMT_LIB fmt)
@@ -293,47 +288,47 @@ target_compile_definitions(${PROJECT_NAME}
         DECODER_SDK_LIB
 )
 
-# 安装目标
-install(TARGETS ${PROJECT_NAME}
-    EXPORT DecoderSDKTargets
-    RUNTIME DESTINATION bin
-    LIBRARY DESTINATION lib
-    ARCHIVE DESTINATION lib
-    INCLUDES DESTINATION include
-)
+# 引入安装函数
+include(${CMAKE_CURRENT_SOURCE_DIR}/../cmake/DecoderSDKInstall.cmake)
 
-# 安装头文件
-install(DIRECTORY include/
-    DESTINATION include
-    FILES_MATCHING PATTERN "*.h" PATTERN "*.hpp"
-)
+# 设置子项目安装路径
+if(NOT DECODER_SDK_IS_MAIN_PROJECT)
+    # 允许外部设置安装路径，默认使用 $<CONFIG>
+    if(NOT DEFINED DECODER_SDK_INSTALL_DESTINATION)
+        set(DECODER_SDK_INSTALL_DESTINATION "$<CONFIG>")
+    endif()
+endif()
 
-# 安装 PDB 文件（Windows Debug信息）
-if (MSVC AND BUILD_SHARED_LIBS)
-    install(FILES "$<TARGET_PDB_FILE:${PROJECT_NAME}>"
-        DESTINATION bin
-        CONFIGURATIONS Debug RelWithDebInfo Release
-        OPTIONAL
+# 安装逻辑
+if(DECODER_SDK_IS_MAIN_PROJECT)
+    # 主项目安装
+    install_decoder_targets(TRUE "")
+
+    # 安装头文件
+    install(DIRECTORY include/
+        DESTINATION include
+        FILES_MATCHING PATTERN "*.h" PATTERN "*.hpp"
     )
-endif ()
 
-# 导出目标
-install(EXPORT DecoderSDKTargets
-    FILE DecoderSDKTargets.cmake
-    NAMESPACE DecoderSDK::
-    DESTINATION lib/cmake/DecoderSDK
-)
+    # 导出目标
+    install(EXPORT DecoderSDKTargets
+        FILE DecoderSDKTargets.cmake
+        NAMESPACE DecoderSDK::
+        DESTINATION lib/cmake/DecoderSDK
+    )
 
-# 生成版本文件
-include(CMakePackageConfigHelpers)
-write_basic_package_version_file(
-    "${CMAKE_BINARY_DIR}/DecoderSDKConfigVersion.cmake"
-    VERSION "1.0.0"
-    COMPATIBILITY SameMajorVersion
-)
-
-# 安装版本文件
-install(FILES
-    "${CMAKE_BINARY_DIR}/DecoderSDKConfigVersion.cmake"
-    DESTINATION lib/cmake/DecoderSDK
-)
+    # 生成和安装版本文件
+    include(CMakePackageConfigHelpers)
+    write_basic_package_version_file(
+        "${CMAKE_BINARY_DIR}/DecoderSDKConfigVersion.cmake"
+        VERSION "${DECODER_SDK_VERSION_MAJOR}.${DECODER_SDK_VERSION_MINOR}.${DECODER_SDK_VERSION_PATCH}"
+        COMPATIBILITY SameMajorVersion
+    )
+    install(FILES
+        "${CMAKE_BINARY_DIR}/DecoderSDKConfigVersion.cmake"
+        DESTINATION lib/cmake/DecoderSDK
+    )
+else()
+    # 子项目安装
+    install_decoder_targets(FALSE "${DECODER_SDK_INSTALL_DESTINATION}")
+endif()
