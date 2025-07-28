@@ -25,7 +25,6 @@ private slots:
     void onSliderValueChanged(int value);
     void onSliderPressed();
     void onSliderReleased();
-    void onSliderClicked();
     void onSpeedBtnClicked();
 
 private:
@@ -34,6 +33,6 @@ private:
 
 private:
     Ui::SimplePlayer *ui = nullptr;
-    bool isSliderPressed_ = false;  // 标记滑块是否被按下
-    int totalTime_ = 0;             // 总时长
+    bool isSliderPressed_ = false; // 标记滑块是否被按下
+    int totalTime_ = 0;            // 总时长
 };

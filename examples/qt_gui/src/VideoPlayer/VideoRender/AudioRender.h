@@ -7,12 +7,15 @@
 #include <QAudioFormat>
 #include <QAudioOutput>
 #include <QByteArray>
-#include <QIODevice>
+#include <QObject>
 #include <QScopedPointer>
+#include <QTimer>
 #include <atomic>
 #include <memory>
+#include <mutex>
+#include <queue>
 
-class AudioRender : public QIODevice {
+class AudioRender : public QObject {
     Q_OBJECT
 
 public:
@@ -83,21 +86,11 @@ public:
 
     Statistics getStatistics() const;
 
-protected:
-    // QIODevice interface
-    qint64 readData(char *data, qint64 maxlen) override;
-    qint64 writeData(const char *data, qint64 len) override;
-
 private slots:
     /**
      * @brief 处理音频状态变化
      */
     void handleStateChanged(QAudio::State newState);
-
-    /**
-     * @brief 处理音频设备通知（需要更多数据时调用）
-     */
-    void handleNotify();
 
 private:
     /**
@@ -144,20 +137,20 @@ private:
      */
     double getPts(const decoder_sdk::Frame &frame);
 
+    /**
+     * @brief 将数据写入音频设备
+     * @param data 音频数据
+     * @param size 数据大小
+     * @return 实际写入的字节数
+     */
+    qint64 writeToDevice(const char *data, qint64 size);
+
 private:
     // 音频输出相关
     QScopedPointer<QAudioOutput> audioOutput_;
+    QIODevice *audioDevice_ = nullptr;
     QAudioFormat audioFormat_;
-    QAudioDeviceInfo audioDevice_;
-
-    // 简化的缓冲区 - 使用单个QByteArray作为环形缓冲区
-    QByteArray audioBuffer_;
-    qint64 writePos_ = 0; // 写入位置
-    qint64 readPos_ = 0;  // 读取位置
-    qint64 dataSize_ = 0; // 当前数据量
-
-    // 缓冲区配置
-    static const qint64 kMaxBufferSize = 1024 * 1024; // 1MB缓冲区，约23秒@44.1kHz立体声16bit
+    QAudioDeviceInfo audioDeviceInfo_;
 
     // 状态控制
     std::atomic<bool> initialized_;

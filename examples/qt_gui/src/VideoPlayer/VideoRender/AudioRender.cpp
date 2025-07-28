@@ -7,10 +7,8 @@
 #include <cstring>
 
 AudioRender::AudioRender(QObject *parent)
-    : QIODevice(parent), initialized_(false), playing_(false), volume_(1.0)
+    : QObject(parent), initialized_(false), playing_(false), volume_(1.0)
 {
-    // 预分配缓冲区
-    audioBuffer_.resize(kMaxBufferSize);
 }
 
 AudioRender::~AudioRender()
@@ -18,6 +16,7 @@ AudioRender::~AudioRender()
     stop();
     if (audioOutput_) {
         audioOutput_->stop();
+        audioOutput_.reset();
     }
 }
 
@@ -41,11 +40,6 @@ void AudioRender::initialize(const std::shared_ptr<decoder_sdk::Frame> &frame,
         return;
     }
 
-    // 重置缓冲区状态
-    writePos_ = 0;
-    readPos_ = 0;
-    dataSize_ = 0;
-
     initialized_.store(true);
     qDebug() << "[AudioRender] Initialized successfully"
              << "SampleRate:" << sampleRate_ << "Channels:" << channels_
@@ -54,7 +48,7 @@ void AudioRender::initialize(const std::shared_ptr<decoder_sdk::Frame> &frame,
 
 void AudioRender::render(const std::shared_ptr<decoder_sdk::Frame> &frame)
 {
-    if (!frame || !frame->isValid() || !isValid()) {
+    if (!frame || !frame->isValid() || !isValid() || !audioDevice_) {
         return;
     }
 
@@ -65,30 +59,22 @@ void AudioRender::render(const std::shared_ptr<decoder_sdk::Frame> &frame)
         return;
     }
 
-    // 检查缓冲区是否有足够空间
-    qint64 freeSpace = kMaxBufferSize - dataSize_;
-    if (frameDataSize > freeSpace) {
-        // 缓冲区满了，丢弃这一帧（在倍速播放时这是正常的）
+    // 应用音量控制
+    applyVolume(audioData.data(), frameDataSize, volume_.load());
+
+    // 直接写入设备，无需队列缓存
+    qint64 bytesWritten = writeToDevice(audioData.constData(), audioData.size());
+
+    // 统计信息更新
+    if (bytesWritten > 0) {
+        totalFramesRendered_.fetch_add(1);
+        totalBytesRendered_.fetch_add(bytesWritten);
+    }
+
+    // 如果没有完全写入，记录丢弃
+    if (bytesWritten < audioData.size()) {
         droppedFrames_.fetch_add(1);
-        return;
     }
-
-    // 写入环形缓冲区
-    const char *srcData = audioData.constData();
-    qint64 remaining = frameDataSize;
-
-    while (remaining > 0) {
-        qint64 toWrite = std::min(remaining, kMaxBufferSize - writePos_);
-        std::memcpy(audioBuffer_.data() + writePos_, srcData, toWrite);
-
-        writePos_ = (writePos_ + toWrite) % kMaxBufferSize;
-        srcData += toWrite;
-        remaining -= toWrite;
-    }
-
-    dataSize_ += frameDataSize;
-    totalFramesRendered_.fetch_add(1);
-    totalBytesRendered_.fetch_add(frameDataSize);
 }
 
 void AudioRender::start()
@@ -98,8 +84,11 @@ void AudioRender::start()
     }
 
     if (audioOutput_) {
-        open(QIODevice::ReadOnly);
-        audioOutput_->start(this);
+        audioDevice_ = audioOutput_->start();
+        if (!audioDevice_) {
+            qWarning() << "[AudioRender] Failed to start audio output";
+            return;
+        }
         playing_.store(true);
         qDebug() << "[AudioRender] Started playing";
     }
@@ -115,14 +104,8 @@ void AudioRender::stop()
 
     if (audioOutput_) {
         audioOutput_->stop();
+        audioDevice_ = nullptr;
     }
-
-    close();
-
-    // 清空缓冲区
-    writePos_ = 0;
-    readPos_ = 0;
-    dataSize_ = 0;
 
     qDebug() << "[AudioRender] Stopped playing";
 }
@@ -164,7 +147,7 @@ qreal AudioRender::volume() const
 
 bool AudioRender::isValid() const
 {
-    return initialized_.load() && audioOutput_ && audioOutput_->error() == QAudio::NoError;
+    return initialized_.load() && audioOutput_;
 }
 
 AudioRender::Statistics AudioRender::getStatistics() const
@@ -172,7 +155,7 @@ AudioRender::Statistics AudioRender::getStatistics() const
     Statistics stats;
     stats.totalFramesRendered = totalFramesRendered_.load();
     stats.totalBytesRendered = totalBytesRendered_.load();
-    stats.availableBytes = dataSize_;
+
     stats.droppedFrames = droppedFrames_.load();
     return stats;
 }
@@ -180,41 +163,6 @@ AudioRender::Statistics AudioRender::getStatistics() const
 QAudio::State AudioRender::state() const
 {
     return audioOutput_ ? audioOutput_->state() : QAudio::StoppedState;
-}
-
-qint64 AudioRender::readData(char *data, qint64 maxlen)
-{
-    if (!playing_.load() || dataSize_ <= 0 || maxlen <= 0) {
-        return 0;
-    }
-
-    // 从环形缓冲区读取数据
-    qint64 toRead = std::min(maxlen, dataSize_);
-    qint64 totalRead = 0;
-
-    while (totalRead < toRead) {
-        qint64 chunkSize = std::min(toRead - totalRead, kMaxBufferSize - readPos_);
-        std::memcpy(data + totalRead, audioBuffer_.constData() + readPos_, chunkSize);
-
-        readPos_ = (readPos_ + chunkSize) % kMaxBufferSize;
-        totalRead += chunkSize;
-    }
-
-    dataSize_ -= totalRead;
-
-    // 应用音量控制
-    if (totalRead > 0) {
-        applyVolume(data, totalRead, volume_.load());
-    }
-
-    return totalRead;
-}
-
-qint64 AudioRender::writeData(const char *data, qint64 len)
-{
-    Q_UNUSED(data)
-    Q_UNUSED(len)
-    return 0; // 只读设备
 }
 
 void AudioRender::handleStateChanged(QAudio::State newState)
@@ -225,11 +173,11 @@ void AudioRender::handleStateChanged(QAudio::State newState)
         audioOutput_->error() != QAudio::NoError) {
         qWarning() << "[AudioRender] Audio error:" << audioOutput_->error();
     }
-}
 
-void AudioRender::handleNotify()
-{
-    // 简化：不需要特殊处理，Qt会自动调用readData
+    // 处理IdleState：当音频设备进入空闲状态时，检查是否有更多数据
+    if (newState == QAudio::IdleState && playing_.load()) {
+        audioOutput_->resume();
+    }
 }
 
 bool AudioRender::initAudioFormat(const decoder_sdk::Frame &frame)
@@ -242,8 +190,8 @@ bool AudioRender::initAudioFormat(const decoder_sdk::Frame &frame)
     const auto sampleFormat = frame.sampleFormat();
 
     // 设置Qt音频格式
-    audioFormat_.setSampleRate(sampleRate_);
-    audioFormat_.setChannelCount(channels_);
+    audioFormat_.setSampleRate(std::max(sampleRate_, 1));
+    audioFormat_.setChannelCount(std::max(channels_, 1));
     audioFormat_.setCodec("audio/pcm");
     audioFormat_.setByteOrder(QAudioFormat::LittleEndian);
 
@@ -298,32 +246,29 @@ bool AudioRender::initAudioFormat(const decoder_sdk::Frame &frame)
 
 bool AudioRender::initAudioOutput(const QAudioDeviceInfo &deviceInfo)
 {
-    audioDevice_ = deviceInfo;
+    audioDeviceInfo_ = deviceInfo;
 
     // 检查设备是否支持我们的音频格式
-    if (!audioDevice_.isFormatSupported(audioFormat_)) {
+    if (!audioDeviceInfo_.isFormatSupported(audioFormat_)) {
         qWarning() << "[AudioRender] Audio format not supported by device";
         // 尝试获取最接近的格式
-        audioFormat_ = audioDevice_.nearestFormat(audioFormat_);
+        audioFormat_ = audioDeviceInfo_.nearestFormat(audioFormat_);
         qDebug() << "[AudioRender] Using nearest format:"
                  << "SampleRate:" << audioFormat_.sampleRate()
                  << "Channels:" << audioFormat_.channelCount()
                  << "SampleSize:" << audioFormat_.sampleSize();
     }
 
-    audioOutput_.reset(new QAudioOutput(audioDevice_, audioFormat_));
+    audioOutput_.reset(new QAudioOutput(audioDeviceInfo_, audioFormat_));
     if (!audioOutput_) {
         qWarning() << "[AudioRender] Failed to create QAudioOutput";
         return false;
     }
 
     // 设置较小的缓冲区大小以减少延迟
-    // 根据环形缓冲区大小和音频格式计算合适的QAudioOutput缓冲区大小
     int bytesPerSecond =
         audioFormat_.sampleRate() * audioFormat_.channelCount() * (audioFormat_.sampleSize() / 8);
 
-    // QAudioOutput缓冲区设置为环形缓冲区的1/8到1/4，确保及时消费数据
-    // 这样可以避免QAudioOutput内部缓冲过多数据，同时保证流畅播放
     int targetBufferMs = 50; // 目标50ms缓冲，平衡延迟和稳定性
     int bufferSize = (bytesPerSecond * targetBufferMs) / 1000;
 
@@ -341,17 +286,13 @@ bool AudioRender::initAudioOutput(const QAudioDeviceInfo &deviceInfo)
     qDebug() << "[AudioRender] Audio output configured:"
              << "BufferSize:" << bufferSize << "bytes (" << (bufferSize * 1000 / bytesPerSecond)
              << "ms)"
-             << "NotifyInterval:" << notifyInterval << "ms"
-             << "RingBufferSize:" << (kMaxBufferSize / 1024) << "KB";
+             << "NotifyInterval:" << notifyInterval << "ms";
 
     // 连接信号
     connect(audioOutput_.data(), &QAudioOutput::stateChanged, this,
             &AudioRender::handleStateChanged);
-    connect(audioOutput_.data(), &QAudioOutput::notify, this, &AudioRender::handleNotify);
 
-    qDebug() << "[AudioRender] Audio output initialized"
-             << "BufferSize:" << bufferSize << "bytes"
-             << "NotifyInterval:" << notifyInterval << "ms";
+    qDebug() << "[AudioRender] Audio output initialized";
     return true;
 }
 
@@ -447,4 +388,13 @@ double AudioRender::getPts(const decoder_sdk::Frame &frame)
 {
     // 使用secPts()方法获取时间戳
     return frame.secPts();
+}
+
+qint64 AudioRender::writeToDevice(const char *data, qint64 size)
+{
+    if (!audioDevice_ || !data || size <= 0) {
+        return 0;
+    }
+
+    return audioDevice_->write(data, size);
 }

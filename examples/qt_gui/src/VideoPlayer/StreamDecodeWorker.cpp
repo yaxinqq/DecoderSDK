@@ -36,6 +36,16 @@ void DecoderThread::run()
 
         bool shouldSleep = true;
         {
+            // 音频。需要验证音频帧有效
+            std::shared_ptr pFrame = std::make_shared<decoder_sdk::Frame>();
+            if (pDecoder_ && pDecoder_->controller_.audioQueue().tryPop(*pFrame) &&
+                pFrame->isValid()) {
+                emit pDecoder_->videoFrameReady(pFrame);
+                shouldSleep = false;
+            }
+        }
+
+        {
             // 视频，需要验证视频帧有效，且（是关键帧 或 decodeKeyFrame_为true）
             std::shared_ptr pFrame = std::make_shared<decoder_sdk::Frame>();
             if (pDecoder_ && pDecoder_->controller_.videoQueue().tryPop(*pFrame) &&
@@ -44,16 +54,6 @@ void DecoderThread::run()
                 if (!decodeKeyFrame_)
                     decodeKeyFrame_ = true;
 
-                shouldSleep = false;
-            }
-        }
-         
-        {
-            // 音频。需要验证音频帧有效
-            std::shared_ptr pFrame = std::make_shared<decoder_sdk::Frame>();
-            if (pDecoder_ && pDecoder_->controller_.audioQueue().tryPop(*pFrame) &&
-                pFrame->isValid()) {
-                emit pDecoder_->videoFrameReady(pFrame);
                 shouldSleep = false;
             }
         }

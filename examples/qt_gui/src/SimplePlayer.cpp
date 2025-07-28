@@ -67,7 +67,7 @@ void SimplePlayer::onTotalTimeRecved(int totalTime)
 void SimplePlayer::onPtsChanged(double pts)
 {
     ui->startTimeLabel->setText(QString::number(std::round(pts)));
-    
+
     // 只有在滑块没有被按下时才更新滑块位置，避免拖拽时的冲突
     if (!isSliderPressed_) {
         ui->ptsSlider->setValue(static_cast<int>(std::round(pts)));
@@ -76,9 +76,8 @@ void SimplePlayer::onPtsChanged(double pts)
 
 void SimplePlayer::onSliderValueChanged(int value)
 {
-    // 只有在用户主动拖拽滑块时才执行跳转
     if (isSliderPressed_) {
-        ui->player->seek(static_cast<double>(value));
+        ui->startTimeLabel->setText(QString::number(value));
     }
 }
 
@@ -90,13 +89,7 @@ void SimplePlayer::onSliderPressed()
 void SimplePlayer::onSliderReleased()
 {
     isSliderPressed_ = false;
-    // 释放时执行一次跳转，确保跳转到准确位置
-    ui->player->seek(static_cast<double>(ui->ptsSlider->value()));
-}
-
-void SimplePlayer::onSliderClicked()
-{
-    // 处理鼠标点击滑块的跳转
+    // 只在松开时执行seek
     ui->player->seek(static_cast<double>(ui->ptsSlider->value()));
 }
 
@@ -108,7 +101,7 @@ void SimplePlayer::onSpeedBtnClicked()
 void SimplePlayer::initUi()
 {
     ui->urlEdit->setText(QStringLiteral("D:/WorkSpace/test_video/test.mp4"));
-    
+
     // 初始化滑块
     ui->ptsSlider->setMinimum(0);
     ui->ptsSlider->setValue(0);
@@ -127,10 +120,9 @@ void SimplePlayer::initConnection()
 
     connect(ui->player, &RtspStreamPlayer::totalTimeRecved, this, &SimplePlayer::onTotalTimeRecved);
     connect(ui->player, &RtspStreamPlayer::ptsChanged, this, &SimplePlayer::onPtsChanged);
-    
+
     // 连接滑块信号
     connect(ui->ptsSlider, &QSlider::valueChanged, this, &SimplePlayer::onSliderValueChanged);
     connect(ui->ptsSlider, &QSlider::sliderPressed, this, &SimplePlayer::onSliderPressed);
     connect(ui->ptsSlider, &QSlider::sliderReleased, this, &SimplePlayer::onSliderReleased);
-    connect(ui->ptsSlider, &QSlider::sliderMoved, this, &SimplePlayer::onSliderClicked);  // 新增：连接点击信号
 }

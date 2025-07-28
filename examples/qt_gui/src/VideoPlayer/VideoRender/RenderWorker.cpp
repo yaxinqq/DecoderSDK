@@ -80,11 +80,13 @@ void RenderWorker::render(const std::shared_ptr<decoder_sdk::Frame>& frame)
     // 根据帧类型进行不同的处理
     switch (frame->mediaType()) {
         case decoder_sdk::MediaType::kMediaTypeAudio:
-            renderAudio(frame);
-            break;
+            renderAudio(frame);  
+            //qInfo() << "Audio Pts: " << frame->secPts();
+            break; 
         case decoder_sdk::MediaType::kMediaTypeVideo:
             renderVideo(frame);
-            break;
+            //qInfo() << "Video Pts: " << frame->secPts();  
+            break; 
         default:
             qWarning() << "[RenderWorker] Unsupported frame type received.";
             return;
