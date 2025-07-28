@@ -464,7 +464,7 @@ int Frame::getBufferSize() const
 
 int Frame::getAudioBufferSize() const
 {
-    return frame_ ? av_samples_get_buffer_size(nullptr, channels(), nbSamples(), sampleFormat(), 1)
+    return frame_ ? av_samples_get_buffer_size(nullptr, channels(), static_cast<int>(nbSamples()), sampleFormat(), 1)
                   : 0;
 }
 

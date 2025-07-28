@@ -115,6 +115,11 @@ public:
      */
     void setSerial(int serial);
     /**
+     * @brief 获取序号
+     * @return 序号
+     */
+    int serial() const;
+    /**
      * @brief 设置保留最后一帧
      * @param keepLast true - 保留；false - 不保留
      */

@@ -222,6 +222,7 @@ void DecoderBase::setSeekPos(double pos)
 {
     std::lock_guard<std::mutex> lock(configMutex_);
     seekPos_ = pos;
+    demuxerSeeking_ = true;
 }
 
 double DecoderBase::seekPos() const
@@ -430,9 +431,8 @@ double DecoderBase::calculateFrameDisplayTime(
         std::chrono::duration_cast<std::chrono::microseconds>(nextFrameTime - currentTime).count() /
         1000.0;
 
-    // 更新上一帧时间
-    lastFrameTime =
-        currentTime + std::chrono::microseconds(static_cast<int64_t>(baseDelay * 1000.0));
+    // 更新上一帧时间为理论的下一帧时间
+    lastFrameTime = nextFrameTime;
 
     return std::max(0.0, baseDelay);
 }

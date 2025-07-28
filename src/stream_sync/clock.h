@@ -48,15 +48,10 @@ public:
     void reset();
 
     /**
-     * @brief 获得当前时钟（高性能版本）
+     * @brief 获得当前时钟
      * @return 当前时钟时间，如果时钟无效返回NaN
      */
     double getClock() const;
-
-    /**
-     * @brief 获取时钟但不更新缓存（用于内部计算）
-     */
-    double getClockNoCache() const;
 
     /**
      * @brief 设置当前时钟（线程安全）
@@ -122,13 +117,12 @@ public:
      * @brief 获取时钟统计信息
      */
     struct ClockStats {
-        double currentTime;  // 当前系统时间（秒）
-        double drift;        // 时间戳与系统时间的差值（秒）
-        double speed;        // 时钟速度（倍速）
-        int serial;          // 当前数据包序号
-        bool paused;         // 当前时钟暂停状态
-        ClockState state;    // 时钟状态
-        int64_t updateCount; // 时钟更新次数
+        double currentTime; // 当前系统时间（秒）
+        double drift;       // 时间戳与系统时间的差值（秒）
+        double speed;       // 时钟速度（倍速）
+        int serial;         // 当前数据包序号
+        bool paused;        // 当前时钟暂停状态
+        ClockState state;   // 时钟状态
     };
     /**
      * @brief 获取时钟统计信息
@@ -141,14 +135,6 @@ private:
      * @brief 获取当前系统时间（秒）
      */
     double getCurrentSystemTime() const;
-    /**
-     * @brief 检查缓存是否有效
-     */
-    bool isCacheValid() const;
-    /**
-     * @brief 更新缓存
-     */
-    void updateCache(double clockValue) const;
 
 private:
     // 时间戳（秒）
@@ -163,14 +149,6 @@ private:
     std::atomic<int> serial_{0};
     // 当前时钟暂停状态
     std::atomic<bool> paused_{false};
-
-    // 性能优化相关
-    // 缓存的时钟值（秒）
-    mutable std::atomic<double> cachedClock_{0.0};
-    // 缓存时间戳（微秒）
-    mutable std::atomic<int64_t> cacheTimestamp_{0};
-    // 缓存更新次数
-    mutable std::atomic<int64_t> updateCount_{0};
 
     // 时钟校准相关
     // 校准累加器

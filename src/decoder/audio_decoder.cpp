@@ -65,7 +65,7 @@ void AudioDecoder::decodeLoop()
     }
 
     int serial = packetQueue->serial();
-    syncController_->updateVideoClock(0.0, serial);
+    syncController_->updateAudioClock(0.0, serial);
 
     bool readFirstFrame = false;
     bool occuredError = false;
@@ -94,10 +94,13 @@ void AudioDecoder::decodeLoop()
         if (checkAndUpdateSerial(serial, packetQueue.get())) {
             // 序列号发生变化时，重置下列数据
 
-            // 重置视频时钟
-            syncController_->updateVideoClock(0.0, serial);
+            // 重置音频时钟
+            syncController_->updateAudioClock(0.0, serial);
             // 重置最后帧时间
             lastFrameTime_ = std::nullopt;
+
+            std::lock_guard<std::mutex> lock(configMutex_);
+            demuxerSeeking_ = false;
         }
 
         // 获取一个可写入的帧
@@ -157,21 +160,31 @@ void AudioDecoder::decodeLoop()
         }
 
         // 计算帧持续时间(单位 s)
-        const double duration = frame.nbSamples() / (double)codecCtx_->sample_rate;
+        // 计算帧持续时间应该使用实际的采样率
+        double actualSampleRate =
+            needResample_ ? (codecCtx_->sample_rate * speed()) : codecCtx_->sample_rate;
+        const double duration = outputFrame.nbSamples() / actualSampleRate;
         // 计算PTS（单位s）
-        const double pts = calculatePts(frame);
-
-        // 更新音频时钟
+        const double pts = calculatePts(outputFrame);
         if (!std::isnan(pts)) {
             syncController_->updateAudioClock(pts, serial);
         }
 
-        // 如果当前小于seekPos，丢弃帧，先不加锁了
-        if (!utils::greaterAndEqual(pts, seekPos_)) {
-            frame.unref();
-            continue;
+        // 如果当前小于seekPos，丢弃帧
+        {
+            std::lock_guard<std::mutex> l(configMutex_);
+            // 如果当前正在seeking，直接跳过
+            if (demuxerSeeking_)
+                continue;
+
+            if (utils::greater(seekPos_, 0)) {
+                if (!utils::greaterAndEqual(pts, seekPos_)) {
+                    frame.unref();
+                    continue;
+                }
+                seekPos_ = -1.0;
+            }
         }
-        seekPos_ = -1.0;
 
         // 转换交错格式
         // 根据配置决定音频数据的存储方式
@@ -273,9 +286,24 @@ void AudioDecoder::decodeLoop()
         // 计算延时
         // 如果启用了帧率控制，则根据帧率控制推送速度
         if (isFrameRateControlEnabled()) {
-            double displayTime = calculateFrameDisplayTime(pts, duration * 1000.0, lastFrameTime_);
-            if (utils::greater(displayTime, 0.0)) {
-                std::this_thread::sleep_until(lastFrameTime_.value());
+            // 计算基本延迟
+            double baseDelay = calculateFrameDisplayTime(pts, duration * 1000.0, lastFrameTime_);
+
+            // // 计算音频缓冲区延迟
+            // double bufferDelay = frameQueue_->size() * duration * 1000.0; //
+            // 估算缓冲区中的音频时长
+
+            // // 使用同步控制器计算实际延迟
+            // double syncDelay = syncController_->computeAudioDelay(pts, baseDelay, speed());
+
+            // // 修正：限制最大延迟，防止延迟累积
+            // const double maxDelay = 100.0; // 最大延迟100ms
+            // syncDelay = std::min(syncDelay, maxDelay);
+
+            // 使用同步后的延迟
+            if (utils::greater(baseDelay, 0.0)) {
+                std::this_thread::sleep_for(
+                    std::chrono::milliseconds(static_cast<int64_t>(baseDelay)));
             }
         }
 

@@ -271,6 +271,8 @@ protected:
     double speed_ = 1.0;
     // 跳转时间戳
     double seekPos_ = 0.0;
+    // demuxer是否正在seeking
+    bool demuxerSeeking_ = false;
     // 最大帧队列大小
     std::atomic_uint32_t maxFrameQueueSize_{3};
     // 是否按帧率去推送

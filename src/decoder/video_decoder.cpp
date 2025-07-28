@@ -318,6 +318,9 @@ void VideoDecoder::decodeLoop()
             syncController_->updateVideoClock(0.0, serial);
             // 重置最后帧时间
             lastFrameTime_ = std::nullopt;
+
+            std::lock_guard<std::mutex> lock(configMutex_);
+            demuxerSeeking_ = false;
         }
 
         // 获取一个可写入的帧
@@ -338,12 +341,6 @@ void VideoDecoder::decodeLoop()
         // 检查序列号
         if (packet.serial() != serial)
             continue;
-
-        // 等待关键帧
-        if (!hasKeyFrame && (packet.get()->flags & AV_PKT_FLAG_KEY) == 0) {
-            continue;
-        }
-        hasKeyFrame = true;
 
         if (codecCtx_->codec_id == AV_CODEC_ID_H264 && hwAccel_ &&
             (hwAccel_->getType() == HWAccelType::kD3d11va ||
@@ -413,12 +410,26 @@ void VideoDecoder::decodeLoop()
             syncController_->updateVideoClock(pts, serial);
         }
 
-        // 如果当前小于seekPos，丢弃帧，先不加锁了
-        if (!utils::greaterAndEqual(pts, seekPos_)) {
-            frame.unref();
+        // 等待关键帧
+        if (!hasKeyFrame && frame.keyFrame() == 0) {
             continue;
         }
-        seekPos_ = -1.0;
+        hasKeyFrame = true;
+
+        // 如果当前小于seekPos，丢弃帧
+        {
+            std::lock_guard<std::mutex> l(configMutex_);
+            // 如果当前正在seeking，直接跳过
+            if (demuxerSeeking_)
+                continue;
+            if (utils::greater(seekPos_, 0)) {
+                if (!utils::greaterAndEqual(pts, seekPos_)) {
+                    frame.unref();
+                    continue;
+                }
+                seekPos_ = -1.0;
+            }
+        }
 
         // 如果是第一帧，发出事件
         if (!readFirstFrame) {
@@ -448,9 +459,25 @@ void VideoDecoder::decodeLoop()
 
         // 如果启用了帧率控制，则根据帧率控制推送速度
         if (isFrameRateControlEnabled()) {
-            double displayTime = calculateFrameDisplayTime(pts, duration * 1000.0, lastFrameTime_);
-            if (utils::greater(displayTime, 0.0)) {
-                std::this_thread::sleep_until(lastFrameTime_.value());
+            // 计算基本延迟
+            const double baseDelay =
+                calculateFrameDisplayTime(pts, duration * 1000.0, lastFrameTime_);
+
+            // 使用同步控制器计算实际延迟
+            const double syncDelay =
+                syncController_->computeVideoDelay(pts, duration, baseDelay, speed());
+
+            // 检查是否需要丢弃此帧
+            if (syncDelay < 0) {
+                // 丢弃此帧，不提交到队列
+                frame.unref();
+                continue;
+            }
+
+            // 使用同步后的延迟
+            if (utils::greater(syncDelay, 0.0)) {
+                std::this_thread::sleep_for(
+                    std::chrono::milliseconds(static_cast<int64_t>(syncDelay)));
             }
         }
 

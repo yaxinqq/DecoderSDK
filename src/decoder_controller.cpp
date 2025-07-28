@@ -339,16 +339,28 @@ bool DecoderController::seek(double position)
     bool result = demuxer_->seek(position);
 
     if (result) {
+        // 先重置同步控制器的时钟
+        syncController_->resetClocks();
+
         // 清空队列，并设置seek节点
         if (videoDecoder_) {
+            videoDecoder_->frameQueue()->clear();
             videoDecoder_->setSeekPos(position);
         }
         if (audioDecoder_) {
+            audioDecoder_->frameQueue()->clear();
             audioDecoder_->setSeekPos(position);
         }
 
-        // 重置同步控制器的时钟
-        syncController_->resetClocks();
+        // 重新初始化时钟基准
+        if (audioDecoder_) {
+            syncController_->updateAudioClock(position,
+                                              demuxer_->packetQueue(AVMEDIA_TYPE_AUDIO)->serial());
+        }
+        if (videoDecoder_) {
+            syncController_->updateVideoClock(position,
+                                              demuxer_->packetQueue(AVMEDIA_TYPE_VIDEO)->serial());
+        }
     }
 
     // 如果之前没有暂停，则恢复播放

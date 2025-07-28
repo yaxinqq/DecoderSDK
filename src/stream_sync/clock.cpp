@@ -20,7 +20,6 @@ void Clock::init(int queueSerial)
     speed_.store(1.0, std::memory_order_release);
     paused_.store(false, std::memory_order_release);
     serial_.store(queueSerial, std::memory_order_release);
-    updateCount_.store(0, std::memory_order_release);
     driftAccumulator_.store(0.0, std::memory_order_release);
     calibrationCounter_.store(0, std::memory_order_release);
 
@@ -34,46 +33,31 @@ void Clock::reset()
 
 double Clock::getClock() const
 {
-    // 快速路径：检查缓存是否有效
-    if (isCacheValid()) {
-        return cachedClock_.load(std::memory_order_acquire);
-    }
-
-    // 慢速路径：重新计算
-    double clockValue = getClockNoCache();
-    updateCache(clockValue);
-
-    return clockValue;
-}
-
-double Clock::getClockNoCache() const
-{
     if (paused_.load(std::memory_order_acquire)) {
         return pts_.load(std::memory_order_acquire);
     }
 
-    double currentTime = getCurrentSystemTime();
-    double lastUpdate = lastUpdated_.load(std::memory_order_acquire);
-    double drift = ptsDrift_.load(std::memory_order_acquire);
-    double speed = speed_.load(std::memory_order_acquire);
+    const double currentTime = getCurrentSystemTime();
+    const double lastUpdate = lastUpdated_.load(std::memory_order_acquire);
+    const double drift = ptsDrift_.load(std::memory_order_acquire);
+    const double speed = speed_.load(std::memory_order_acquire);
 
-    // 改进的时钟计算公式，减少累积误差
-    double elapsed = currentTime - lastUpdate;
-    return drift + currentTime - elapsed * (1.0 - speed);
+    // 时钟计算公式
+    const double elapsed = (currentTime - lastUpdate) * speed;
+    return drift + currentTime - elapsed;
 }
 
 void Clock::setClock(double pts, int serial)
 {
-    double currentTime = getCurrentSystemTime();
+    const double currentTime = getCurrentSystemTime();
+
+    // 限制漂移范围，防止漂移过大
+    const double drift = pts - currentTime;
 
     pts_.store(pts, std::memory_order_release);
-    ptsDrift_.store(pts - currentTime, std::memory_order_release);
+    ptsDrift_.store(drift, std::memory_order_release);
     lastUpdated_.store(currentTime, std::memory_order_release);
     serial_.store(serial, std::memory_order_release);
-    updateCount_.fetch_add(1, std::memory_order_acq_rel);
-
-    // 清除缓存
-    cacheTimestamp_.store(0, std::memory_order_release);
 }
 
 void Clock::setClockSpeed(double speed)
@@ -82,34 +66,34 @@ void Clock::setClockSpeed(double speed)
         return;
     }
 
-    // 线程安全的速度更新
-    double currentClock = getClockNoCache();
-    int currentSerial = serial_.load(std::memory_order_acquire);
-
     speed_.store(speed, std::memory_order_release);
+
+    // 线程安全的速度更新
+    const double currentClock = getClock();
+    const int currentSerial = serial_.load(std::memory_order_acquire);
+
     setClock(currentClock, currentSerial);
 }
 
 void Clock::calibrate()
 {
-    int counter = calibrationCounter_.fetch_add(1, std::memory_order_acq_rel);
+    const int counter = calibrationCounter_.fetch_add(1, std::memory_order_acq_rel);
     if (counter % kCalibrationInterval != 0) {
         return;
     }
 
     // 检查并修正累积漂移
-    double drift = ptsDrift_.load(std::memory_order_acquire);
+    const double drift = ptsDrift_.load(std::memory_order_acquire);
     if (std::abs(drift) > kMaxDrift) {
         std::lock_guard<std::mutex> lock(mutex_);
-        double currentClock = getClockNoCache();
+        const double currentClock = getClock();
         setClock(currentClock, serial_.load());
     }
 }
 
 bool Clock::isValid() const
 {
-    return updateCount_.load(std::memory_order_acquire) > 0 &&
-           !std::isnan(pts_.load(std::memory_order_acquire));
+    return !std::isnan(pts_.load(std::memory_order_acquire));
 }
 
 Clock::ClockState Clock::getState() const
@@ -118,8 +102,8 @@ Clock::ClockState Clock::getState() const
         return ClockState::Invalid;
     }
 
-    double currentTime = getCurrentSystemTime();
-    double lastUpdate = lastUpdated_.load(std::memory_order_acquire);
+    const double currentTime = getCurrentSystemTime();
+    const double lastUpdate = lastUpdated_.load(std::memory_order_acquire);
 
     // 如果超过5秒没有更新，认为时钟过期
     if (currentTime - lastUpdate > 5.0) {
@@ -161,18 +145,18 @@ bool Clock::isPaused() const
 
 void Clock::setPaused(bool paused)
 {
-    bool wasPaused = paused_.load(std::memory_order_acquire);
+    const bool wasPaused = paused_.load(std::memory_order_acquire);
     if (wasPaused == paused) {
         return;
     }
 
     if (paused) {
         // 暂停：记录当前时钟值
-        double currentClock = getClockNoCache();
+        const double currentClock = getClock();
         pts_.store(currentClock, std::memory_order_release);
     } else {
         // 恢复：重新设置时钟
-        double currentPts = pts_.load(std::memory_order_acquire);
+        const double currentPts = pts_.load(std::memory_order_acquire);
         setClock(currentPts, serial_.load());
     }
 
@@ -186,26 +170,12 @@ Clock::ClockStats Clock::getStats() const
             speed_.load(std::memory_order_acquire),
             serial_.load(std::memory_order_acquire),
             paused_.load(std::memory_order_acquire),
-            getState(),
-            updateCount_.load(std::memory_order_acquire)};
+            getState()};
 }
 
 double Clock::getCurrentSystemTime() const
 {
     return av_gettime_relative() / 1000000.0;
-}
-
-bool Clock::isCacheValid() const
-{
-    int64_t currentTime = av_gettime_relative();
-    int64_t cacheTime = cacheTimestamp_.load(std::memory_order_acquire);
-    return (currentTime - cacheTime) < kCacheValidityUs;
-}
-
-void Clock::updateCache(double clockValue) const
-{
-    cachedClock_.store(clockValue, std::memory_order_release);
-    cacheTimestamp_.store(av_gettime_relative(), std::memory_order_release);
 }
 
 INTERNAL_NAMESPACE_END

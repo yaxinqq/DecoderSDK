@@ -47,8 +47,6 @@ StreamSyncManager::StreamSyncManager(MasterClock master, double syncThreshold, d
 void StreamSyncManager::setMaster(MasterClock m)
 {
     master_.store(m, std::memory_order_release);
-    // 清除缓存
-    masterClockCacheTime_.store(0, std::memory_order_release);
 }
 
 MasterClock StreamSyncManager::master() const
@@ -77,19 +75,16 @@ void StreamSyncManager::setSpeed(double speed)
 void StreamSyncManager::updateAudioClock(double pts, int serial)
 {
     audioClock_.setClock(pts, serial);
-    masterClockCacheTime_.store(0, std::memory_order_release);
 }
 
 void StreamSyncManager::updateVideoClock(double pts, int serial)
 {
     videoClock_.setClock(pts, serial);
-    masterClockCacheTime_.store(0, std::memory_order_release);
 }
 
 void StreamSyncManager::updateExternalClock(double pts, int serial)
 {
     externalClock_.setClock(pts, serial);
-    masterClockCacheTime_.store(0, std::memory_order_release);
 }
 
 void StreamSyncManager::resetClocks()
@@ -104,19 +99,10 @@ void StreamSyncManager::resetClocks()
     droppedFrames_.store(0, std::memory_order_release);
     duplicatedFrames_.store(0, std::memory_order_release);
     syncQualityCounter_.store(0, std::memory_order_release);
-    masterClockCacheTime_.store(0, std::memory_order_release);
 }
 
 double StreamSyncManager::getMasterClock() const
 {
-    // 使用缓存提高性能
-    int64_t currentTime = av_gettime_relative();
-    int64_t cacheTime = masterClockCacheTime_.load(std::memory_order_acquire);
-
-    if ((currentTime - cacheTime) < kMasterClockCacheValidityUs) {
-        return cachedMasterClock_.load(std::memory_order_acquire);
-    }
-
     return getMasterClockCached();
 }
 
@@ -139,29 +125,44 @@ double StreamSyncManager::getMasterClockCached() const
             break;
     }
 
-    // 更新缓存
-    cachedMasterClock_.store(masterClock, std::memory_order_release);
-    masterClockCacheTime_.store(av_gettime_relative(), std::memory_order_release);
-
     return masterClock;
 }
 
 // EMA 平滑函数（改进版）
-double smoothEMA(double alpha, double prev, double current, double maxChange = 0.1)
+double smoothEMA(double alpha, double prev, double current, double speed, double maxChange = 0.1)
 {
-    double change = std::clamp(current - prev, -maxChange, maxChange);
-    return prev + alpha * change;
-}
+    // 根据速度调整参数
+    double speedFactor = std::min(speed, 4.0); // 限制最大影响
+    double adjustedMaxChange = maxChange * speedFactor;
+    double adjustedAlpha = std::min(alpha * speedFactor, 0.9); // 限制最大alpha
 
+    // 检测方向变化（从正变负或从负变正）
+    bool directionChange = (prev > 0 && current < 0) || (prev < 0 && current > 0);
+
+    // 方向变化时使用更大的变化量限制
+    double effectiveMaxChange = directionChange ? adjustedMaxChange * 2.0 : adjustedMaxChange;
+
+    // 限制单次变化量
+    double change = std::clamp(current - prev, -effectiveMaxChange, effectiveMaxChange);
+
+    // 方向变化时使用更大的alpha值加速收敛
+    double effectiveAlpha = directionChange ? std::min(adjustedAlpha * 2.0, 1.0) : adjustedAlpha;
+
+    // 计算新值
+    double newValue = prev + effectiveAlpha * change;
+
+    // 限制累积漂移范围，根据速度调整
+    return std::clamp(newValue, -0.2 * speedFactor, 0.2 * speedFactor);
+}
 double StreamSyncManager::computeVideoDelay(double framePts, double frameDuration, double baseDelay,
                                             double speed)
 {
     double master = getMasterClock();
     double diff = framePts - master;
 
-    // 改进的EMA平滑，限制突变
+    // EMA平滑
     double prevDrift = smoothedVideoDrift_.load(std::memory_order_acquire);
-    double newDrift = smoothEMA(alpha_.load(), prevDrift, diff);
+    double newDrift = smoothEMA(alpha_.load(), prevDrift, diff, speed, 0.1);
     smoothedVideoDrift_.store(newDrift, std::memory_order_release);
 
     // 自适应阈值
@@ -182,10 +183,17 @@ double StreamSyncManager::computeVideoDelay(double framePts, double frameDuratio
         }
     }
 
-    // 计算延迟
+    // 计算延迟，平衡处理超前和滞后情况
     double delay = baseDelay;
     if (std::abs(newDrift) > threshold) {
-        delay += newDrift * 1000.0; // 转为毫秒
+        if (newDrift > 0) {
+            // 视频超前，增加延迟，考虑速度因素
+            delay += newDrift * 1000.0 / speed;
+        } else {
+            // 视频滞后，根据速度更积极地减少延迟
+            double factor = std::min(1.0, 0.5 * speed); // 速度越快，减少越多
+            delay = std::max(0.0, delay + newDrift * 1000.0 * factor);
+        }
 
         // 检查是否需要重复帧
         if (newDrift > threshold && shouldDuplicateFrame(framePts, frameDuration)) {
@@ -198,35 +206,8 @@ double StreamSyncManager::computeVideoDelay(double framePts, double frameDuratio
     double newAvg = prevAvg * 0.95 + delay * 0.05;
     avgVideoDelay_.store(newAvg, std::memory_order_release);
 
-    return std::max(0.0, delay);
-}
-
-double StreamSyncManager::computeAudioDelay(double audioPts, double bufferDelay, double speed)
-{
-    double master = getMasterClock();
-    double diff = audioPts - master;
-
-    // 音频也使用EMA平滑
-    double prevDrift = smoothedAudioDrift_.load(std::memory_order_acquire);
-    double newDrift = smoothEMA(alpha_.load(), prevDrift, diff, 0.05); // 音频变化更保守
-    smoothedAudioDrift_.store(newDrift, std::memory_order_release);
-
-    double threshold = syncThreshold_.load() / speed;
-    double delay = bufferDelay;
-
-    if (diff > threshold) {
-        // 音频快了，增加延迟
-        delay += diff * 1000.0;
-    } else if (bufferDelay > threshold * 1000.0 && diff < -threshold) {
-        // 音频慢了且缓冲过多，减少延迟
-        double reduction = std::min(bufferDelay, maxDrift_.load() * 1000.0);
-        delay -= reduction * 0.5; // 保守减少
-    }
-
-    // 更新统计
-    double prevAvg = avgAudioDelay_.load(std::memory_order_acquire);
-    double newAvg = prevAvg * 0.95 + delay * 0.05;
-    avgAudioDelay_.store(newAvg, std::memory_order_release);
+    /*LOG_INFO("frame pts: {}, master clock: {}, frameDuration: {}, newDrift: {}, base delay: {},
+       delay: {}", framePts, master, frameDuration, newDrift, baseDelay, delay);*/
 
     return std::max(0.0, delay);
 }
@@ -235,18 +216,26 @@ bool StreamSyncManager::shouldDropFrame(double framePts, double frameDuration) c
 {
     double drift = smoothedVideoDrift_.load(std::memory_order_acquire);
     double threshold = syncThreshold_.load();
+    double speed = videoClock_.speed(); // 获取当前速度
 
-    // 只有在严重滞后且帧持续时间较短时才丢帧
-    return (drift < -threshold * 2.0) && (frameDuration < 0.050); // 50ms
+    // 考虑速度因素调整阈值
+    threshold /= speed;
+
+    // 更保守的丢帧策略
+    return (drift < -threshold * 3.0) && (frameDuration < 0.033 / speed);
 }
 
 bool StreamSyncManager::shouldDuplicateFrame(double framePts, double frameDuration) const
 {
     double drift = smoothedVideoDrift_.load(std::memory_order_acquire);
     double threshold = syncThreshold_.load();
+    double speed = videoClock_.speed(); // 获取当前速度
+
+    // 考虑速度因素调整阈值
+    threshold /= speed;
 
     // 只有在严重超前且帧持续时间较长时才重复帧
-    return (drift > threshold * 3.0) && (frameDuration > 0.020); // 20ms
+    return (drift > threshold * 3.0) && (frameDuration > 0.020 / speed); // 调整帧率阈值
 }
 
 SyncState StreamSyncManager::getSyncState() const

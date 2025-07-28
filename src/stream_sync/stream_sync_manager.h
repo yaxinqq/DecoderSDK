@@ -193,10 +193,6 @@ private:
     std::atomic<double> avgVideoDelay_{0.0}; // 视频平均延迟
     std::atomic<double> avgAudioDelay_{0.0}; // 音频平均延迟
 
-    // 性能优化
-    mutable std::atomic<double> cachedMasterClock_{0.0};   // 缓存的主时钟时间
-    mutable std::atomic<int64_t> masterClockCacheTime_{0}; // 缓存时间（微秒）
-
     // 自适应参数
     std::atomic<int> syncQualityCounter_{0};       // 同步质量计数器
     std::atomic<double> adaptiveThreshold_{0.010}; // 自适应阈值（秒）

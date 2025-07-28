@@ -186,6 +186,12 @@ void FrameQueue::setSerial(int serial)
     serial_ = serial;
 }
 
+int FrameQueue::serial() const
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    return serial_;
+}
+
 void FrameQueue::setKeepLast(bool keepLast)
 {
     std::lock_guard<std::mutex> lock(mutex_);
