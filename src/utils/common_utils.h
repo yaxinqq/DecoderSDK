@@ -41,6 +41,9 @@ bool isRealtime(const std::string &url);
 // av error改为string
 std::string avErr2Str(int errnum);
 
+// 路径处理函数 - 解决中文路径问题
+std::string convertPathForFFmpeg(const std::string &path);
+
 // ImageFormat 转为 AVPixelFormat
 AVPixelFormat imageFormat2AVPixelFormat(ImageFormat format);
 
