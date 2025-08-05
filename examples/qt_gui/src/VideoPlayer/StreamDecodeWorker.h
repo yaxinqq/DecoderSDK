@@ -121,8 +121,6 @@ private:
     int resume();
     // 关闭解码器
     int close();
-    // 是否正在解码
-    bool isDecoding() const;
 
     // 打开流后的回调函数
     void openCallback(decoder_sdk::AsyncOpenResult result, bool openSuccess,

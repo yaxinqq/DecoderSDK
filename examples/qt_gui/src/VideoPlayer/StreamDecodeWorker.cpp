@@ -29,12 +29,8 @@ DecoderThread::~DecoderThread()
 
 void DecoderThread::run()
 {
-    while (pDecoder_ || !isInterruptionRequested()) {
-        if (!pDecoder_->isOpening_.load() && !pDecoder_->isDecoding()) {
-            break;
-        }
-
-        bool shouldSleep = true;
+    while (pDecoder_ && !isInterruptionRequested()) {
+        bool shouldSleep = true; 
         {
             // 音频。需要验证音频帧有效
             std::shared_ptr pFrame = std::make_shared<decoder_sdk::Frame>();
@@ -228,58 +224,41 @@ void StreamDecoder::openAsync(const QString &url, const decoder_sdk::Config &con
 
 int StreamDecoder::pause()
 {
-    if (isDecoding() && decodeThread_) {
-        bool ret;
-        ret = controller_.pause();
-        if (controller_.isRealTimeUrl()) {
-            ret = controller_.stopDecode();
-        }
+    bool ret = controller_.pause();
+    if (controller_.isRealTimeUrl()) {
+        ret = controller_.stopDecode();
+    }
 
+    if (decodeThread_) {
         decodeThread_->requestInterruption();
         decodeThread_->quit();
         decodeThread_->wait();
-
-#if DEBUG_DECODER
-        g_decodingDecoder.fetch_sub(1);
-        qDebug() << QStringLiteral("****** decoding decoder count: %1 ******")
-                        .arg(g_decodingDecoder.load());
-#endif
-
-        return ret ? 0 : -1;
     }
 
-    return -1;
+#if DEBUG_DECODER
+    g_decodingDecoder.fetch_sub(1);
+    qDebug()
+        << QStringLiteral("****** decoding decoder count: %1 ******").arg(g_decodingDecoder.load());
+#endif
+
+    return ret ? 0 : -1;
 }
 
 int StreamDecoder::resume()
 {
-    if (!isDecoding()) {
-        int ret = -1;
-        if (controller_.isRealTimeUrl()) {
-            ret = controller_.startDecode();
-        }
-        ret = controller_.resume();
+    bool ret = false;
+    if (controller_.isRealTimeUrl()) {
+        ret = controller_.startDecode();
+    }
+    ret = controller_.resume();
 
 #if DEBUG_DECODER
-        g_decodingDecoder.fetch_add(1);
-        qDebug() << QStringLiteral("****** decoding decoder count: %1 ******")
-                        .arg(g_decodingDecoder.load());
+    g_decodingDecoder.fetch_add(1);
+    qDebug()
+        << QStringLiteral("****** decoding decoder count: %1 ******").arg(g_decodingDecoder.load());
 #endif
 
-        return ret;
-    }
-
-    return -1;
-}
-
-bool StreamDecoder::isDecoding() const
-{
-    if (isOpening_.load())
-        return false;
-    if (isSeeking_.load())
-        return true;
-
-    return !controller_.isDecodeStopped() && !controller_.isDecodePaused();
+    return ret ? 0 : -1;
 }
 
 void StreamDecoder::openCallback(decoder_sdk::AsyncOpenResult result, bool openSuccess,

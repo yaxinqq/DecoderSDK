@@ -36,6 +36,7 @@ QString StreamManager::openStream(VideoPlayerImpl *player, QString url, QString 
     config.createHwContextCallback =
         std::bind(&StreamManager::createHwContextCallback, this, std::placeholders::_1);
     config.audioInterleaved = true;
+    config.maxReconnectAttempts = -1;
     worker->open(url, config);
 
     return key;
