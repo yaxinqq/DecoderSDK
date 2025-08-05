@@ -1,4 +1,4 @@
-#include "audio_decoder.h"
+﻿#include "audio_decoder.h"
 
 extern "C" {
 #include <libavutil/time.h>
@@ -23,6 +23,7 @@ AudioDecoder::AudioDecoder(std::shared_ptr<Demuxer> demuxer,
                            std::shared_ptr<EventDispatcher> eventDispatcher)
     : DecoderBase(demuxer, StreamSyncManager, eventDispatcher)
 {
+    init({});
 }
 
 AudioDecoder::~AudioDecoder()
@@ -34,6 +35,7 @@ AudioDecoder::~AudioDecoder()
 
 void AudioDecoder::init(const Config &config)
 {
+    std::lock_guard<std::mutex> lock(mutex_);
     audioInterleaved_ = config.audioInterleaved;
 }
 
@@ -72,7 +74,7 @@ void AudioDecoder::decodeLoop()
     double lastSpeed = speed_;
 
     resetStatistics();
-    while (isRunning_) {
+    while (!requestInterruption_.load()) {
         // 如果在等待预缓冲，则暂停解码
         if (waitingForPreBuffer_.load()) {
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
@@ -81,8 +83,9 @@ void AudioDecoder::decodeLoop()
         // 处理暂停状态
         if (isPaused_.load()) {
             std::unique_lock<std::mutex> lock(pauseMutex_);
-            pauseCv_.wait(lock, [this] { return !isPaused_.load() || !isRunning_.load(); });
-            if (!isRunning_.load()) {
+            pauseCv_.wait(lock,
+                          [this] { return !isPaused_.load() || requestInterruption_.load(); });
+            if (requestInterruption_.load()) {
                 break;
             }
             // 重置最后帧时间
@@ -99,8 +102,8 @@ void AudioDecoder::decodeLoop()
             // 重置最后帧时间
             lastFrameTime_ = std::nullopt;
 
-            std::lock_guard<std::mutex> lock(configMutex_);
-            demuxerSeeking_ = false;
+            // 结束seeking状态
+            utils::atomicUpdateIfNotEqual<bool>(demuxerSeeking_, false);
         }
 
         // 获取一个可写入的帧
@@ -172,17 +175,17 @@ void AudioDecoder::decodeLoop()
 
         // 如果当前小于seekPos，丢弃帧
         {
-            std::lock_guard<std::mutex> l(configMutex_);
             // 如果当前正在seeking，直接跳过
-            if (demuxerSeeking_)
+            if (demuxerSeeking_.load())
                 continue;
 
-            if (utils::greater(seekPos_, 0)) {
-                if (!utils::greaterAndEqual(pts, seekPos_)) {
+            const auto targetPos = seekPos();
+            if (utils::greater(targetPos, 0)) {
+                if (!utils::greaterAndEqual(pts, targetPos)) {
                     frame.unref();
                     continue;
                 }
-                seekPos_ = -1.0;
+                utils::atomicUpdateIfNotEqual<int64_t>(seekPosMs_, -1);
             }
         }
 
@@ -509,29 +512,6 @@ Frame AudioDecoder::resampleFrame(const Frame &frame, int &errorCode)
     return resampleFrame_;
 }
 
-void AudioDecoder::cleanupResampleResources()
-{
-    if (swrCtx_) {
-        swr_free(&swrCtx_);
-        swrCtx_ = nullptr;
-    }
-    needResample_ = false;
-}
-
-void AudioDecoder::cleanupFormatConvertResources()
-{
-    if (formatConvertCtx_) {
-        swr_free(&formatConvertCtx_);
-        formatConvertCtx_ = nullptr;
-    }
-    // 重置缓存参数
-    lastSrcFormat_ = AV_SAMPLE_FMT_NONE;
-    lastDstFormat_ = AV_SAMPLE_FMT_NONE;
-    lastConvertSampleRate_ = 0;
-    lastConvertChannels_ = 0;
-    lastConvertChannelLayout_ = 0;
-}
-
 bool AudioDecoder::needResampleUpdate(double lastSpeed)
 {
     return std::abs(speed_ - lastSpeed) > 0.01f;
@@ -695,6 +675,29 @@ bool AudioDecoder::convertAudioFormat(Frame &frame, AVSampleFormat targetFormat)
     av_frame_move_ref(avFrame, formatConvertFrame_.get());
 
     return true;
+}
+
+void AudioDecoder::cleanupResampleResources()
+{
+    if (swrCtx_) {
+        swr_free(&swrCtx_);
+        swrCtx_ = nullptr;
+    }
+    needResample_ = false;
+}
+
+void AudioDecoder::cleanupFormatConvertResources()
+{
+    if (formatConvertCtx_) {
+        swr_free(&formatConvertCtx_);
+        formatConvertCtx_ = nullptr;
+    }
+    // 重置缓存参数
+    lastSrcFormat_ = AV_SAMPLE_FMT_NONE;
+    lastDstFormat_ = AV_SAMPLE_FMT_NONE;
+    lastConvertSampleRate_ = 0;
+    lastConvertChannels_ = 0;
+    lastConvertChannelLayout_ = 0;
 }
 
 INTERNAL_NAMESPACE_END

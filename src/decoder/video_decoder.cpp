@@ -1,4 +1,4 @@
-#include "video_decoder.h"
+﻿#include "video_decoder.h"
 
 #include <chrono>
 #include <thread>
@@ -210,7 +210,7 @@ bool isAnnexBFormat(const uint8_t *data, size_t size)
 VideoDecoder::VideoDecoder(std::shared_ptr<Demuxer> demuxer,
                            std::shared_ptr<StreamSyncManager> StreamSyncManager,
                            std::shared_ptr<EventDispatcher> eventDispatcher)
-    : DecoderBase(demuxer, StreamSyncManager, eventDispatcher), frameRate_(0.0)
+    : DecoderBase(demuxer, StreamSyncManager, eventDispatcher)
 {
     init({});
 }
@@ -226,6 +226,7 @@ VideoDecoder::~VideoDecoder()
 
 void VideoDecoder::init(const Config &config)
 {
+    std::lock_guard<std::mutex> lock(mutex_);
     hwAccelType_ = config.hwAccelType;
     deviceIndex_ = config.hwDeviceIndex;
     softPixelFormat_ = utils::imageFormat2AVPixelFormat(config.swVideoOutFormat);
@@ -236,17 +237,21 @@ void VideoDecoder::init(const Config &config)
     enableHardwareFallback_ = config.enableHardwareFallback;
 }
 
-bool VideoDecoder::open()
+AVMediaType VideoDecoder::type() const
 {
-    if (!DecoderBase::open()) {
-        return false;
-    }
+    return AVMEDIA_TYPE_VIDEO;
+}
 
-    // 预测帧率
-    AVRational frame_rate = av_guess_frame_rate(demuxer_->formatContext(), stream_, NULL);
-    updateFrameRate(frame_rate);
+void VideoDecoder::requireFrameInSystemMemory(bool required)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    requireFrameInMemory_ = required;
+}
 
-    return true;
+double VideoDecoder::getFrameRate() const
+{
+    AVRational frameRate = av_guess_frame_rate(demuxer_->formatContext(), stream_, NULL);
+    return av_q2d(frameRate);
 }
 
 void VideoDecoder::decodeLoop()
@@ -284,7 +289,7 @@ void VideoDecoder::decodeLoop()
     std::vector<uint8_t> pps;
 
     resetStatistics();
-    while (isRunning_.load()) {
+    while (!requestInterruption_.load()) {
         // 如果在等待预缓冲，则暂停解码
         if (waitingForPreBuffer_.load()) {
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
@@ -295,8 +300,8 @@ void VideoDecoder::decodeLoop()
         if (isPaused_.load()) {
             std::unique_lock<std::mutex> lock(pauseMutex_);
             pauseCv_.wait_for(lock, std::chrono::milliseconds(10),
-                              [this] { return !isPaused_.load() || !isRunning_.load(); });
-            if (!isRunning_.load()) {
+                              [this] { return !isPaused_.load() || requestInterruption_.load(); });
+            if (requestInterruption_.load()) {
                 break;
             }
             if (isPaused_.load())
@@ -319,8 +324,8 @@ void VideoDecoder::decodeLoop()
             // 重置最后帧时间
             lastFrameTime_ = std::nullopt;
 
-            std::lock_guard<std::mutex> lock(configMutex_);
-            demuxerSeeking_ = false;
+            // 结束seeking
+            utils::atomicUpdateIfNotEqual<bool>(demuxerSeeking_, false);
         }
 
         // 获取一个可写入的帧
@@ -418,16 +423,17 @@ void VideoDecoder::decodeLoop()
 
         // 如果当前小于seekPos，丢弃帧
         {
-            std::lock_guard<std::mutex> l(configMutex_);
             // 如果当前正在seeking，直接跳过
-            if (demuxerSeeking_)
+            if (demuxerSeeking_.load())
                 continue;
-            if (utils::greater(seekPos_, 0)) {
-                if (!utils::greaterAndEqual(pts, seekPos_)) {
+
+            const auto targetPos = seekPos();
+            if (utils::greater(targetPos, 0)) {
+                if (!utils::greaterAndEqual(pts, targetPos)) {
                     frame.unref();
                     continue;
                 }
-                seekPos_ = -1.0;
+                utils::atomicUpdateIfNotEqual<int64_t>(seekPosMs_, -1);
             }
         }
 
@@ -497,6 +503,45 @@ void VideoDecoder::decodeLoop()
 
     // 循环结束时，统计一次解码时间
     updateTotalDecodeTime();
+}
+
+bool VideoDecoder::setupHardwareDecode()
+{
+    needFixSPSProfile_ = false; // 重置SPS修正标志
+
+    // 创建硬件加速器（默认尝试自动选择最佳硬件加速方式）
+    hwAccel_ = HardwareAccelFactory::getInstance().createHardwareAccel(hwAccelType_, deviceIndex_,
+                                                                       hwContextCallbeck_);
+    if (!hwAccel_) {
+        LOG_WARN("Hardware acceleration not available, using software decode");
+        return false;
+    }
+
+    if (hwAccel_->getType() == HWAccelType::kNone) {
+        LOG_WARN("Hardware acceleration not available, using software decode");
+        hwAccel_.reset();
+        return false;
+    } else {
+        LOG_INFO("Using hardware accelerator: {} ({}), device index: {}", hwAccel_->getDeviceName(),
+                 hwAccel_->getDeviceDescription(), std::to_string(hwAccel_->getDeviceIndex()));
+
+        // 设置解码器上下文使用硬件加速
+        if (!hwAccel_->setupDecoder(codecCtx_)) {
+            LOG_WARN("Hardware acceleration setup failed, falling back to software");
+            hwAccel_.reset();
+            return false;
+        }
+    }
+
+    // 如果创建的是D3D11、DXVA2类型的硬解码器，且是H264编码，则修复异常的SPS profile
+    if ((hwAccel_->getType() == HWAccelType::kD3d11va ||
+         hwAccel_->getType() == HWAccelType::kDxva2) &&
+        codecCtx_->codec_id == AV_CODEC_ID_H264 && codecCtx_->extradata &&
+        codecCtx_->extradata_size > 0) {
+        needFixSPSProfile_ = fixH264ProfileIfNeeded(codecCtx_);
+    }
+
+    return true;
 }
 
 Frame VideoDecoder::processFrameConversion(const Frame &inputFrame)
@@ -604,74 +649,6 @@ Frame VideoDecoder::convertSoftwareFrame(const Frame &frame)
     Frame result = std::move(swsFrame_);
     swsFrame_ = Frame(); // 重置为空，下次会重新分配
     return result;
-}
-
-bool VideoDecoder::setupHardwareDecode()
-{
-    needFixSPSProfile_ = false; // 重置SPS修正标志
-
-    // 创建硬件加速器（默认尝试自动选择最佳硬件加速方式）
-    hwAccel_ = HardwareAccelFactory::getInstance().createHardwareAccel(hwAccelType_, deviceIndex_,
-                                                                       hwContextCallbeck_);
-    if (!hwAccel_) {
-        LOG_WARN("Hardware acceleration not available, using software decode");
-        return false;
-    }
-
-    if (hwAccel_->getType() == HWAccelType::kNone) {
-        LOG_WARN("Hardware acceleration not available, using software decode");
-        hwAccel_.reset();
-        return false;
-    } else {
-        LOG_INFO("Using hardware accelerator: {} ({}), device index: {}", hwAccel_->getDeviceName(),
-                 hwAccel_->getDeviceDescription(), std::to_string(hwAccel_->getDeviceIndex()));
-
-        // 设置解码器上下文使用硬件加速
-        if (!hwAccel_->setupDecoder(codecCtx_)) {
-            LOG_WARN("Hardware acceleration setup failed, falling back to software");
-            hwAccel_.reset();
-            return false;
-        }
-    }
-
-    // 如果创建的是D3D11、DXVA2类型的硬解码器，且是H264编码，则修复异常的SPS profile
-    if ((hwAccel_->getType() == HWAccelType::kD3d11va ||
-         hwAccel_->getType() == HWAccelType::kDxva2) &&
-        codecCtx_->codec_id == AV_CODEC_ID_H264 && codecCtx_->extradata &&
-        codecCtx_->extradata_size > 0) {
-        needFixSPSProfile_ = fixH264ProfileIfNeeded(codecCtx_);
-    }
-
-    return true;
-}
-
-AVMediaType VideoDecoder::type() const
-{
-    return AVMEDIA_TYPE_VIDEO;
-}
-
-void VideoDecoder::requireFrameInSystemMemory(bool required)
-{
-    requireFrameInMemory_ = required;
-}
-
-double VideoDecoder::getFrameRate() const
-{
-    return frameRate_;
-}
-
-void VideoDecoder::updateFrameRate(AVRational frameRate)
-{
-    if (frameRate.num == 0 || frameRate.den == 0) {
-        return;
-    }
-
-    double newFrameRate = av_q2d(frameRate);
-    if (utils::equal(frameRate_, newFrameRate)) {
-        return;
-    }
-
-    frameRate_ = newFrameRate;
 }
 
 bool VideoDecoder::shouldFallbackToSoftware(int errorCode) const

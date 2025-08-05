@@ -563,6 +563,33 @@ bool HardwareAccel::initHWDevice(AVHWDeviceType deviceType, int deviceIndex,
     return true;
 }
 
+AVHWDeviceType HardwareAccel::findBestHWAccelType()
+{
+    // 优先级顺序：CUDA > D3D11VA > DXVA2 > QSV > VAAPI > VDPAU > VIDEOTOOLBOX
+    std::vector<AVHWDeviceType> priorityList = {
+        AV_HWDEVICE_TYPE_CUDA,        AV_HWDEVICE_TYPE_D3D11VA, AV_HWDEVICE_TYPE_DXVA2,
+        AV_HWDEVICE_TYPE_QSV,         AV_HWDEVICE_TYPE_VAAPI,   AV_HWDEVICE_TYPE_VDPAU,
+        AV_HWDEVICE_TYPE_VIDEOTOOLBOX};
+
+    for (const AVHWDeviceType &type : priorityList) {
+        if (isAvailableHWAccelType(fromAVHWDeviceType(type))) {
+            return type;
+        }
+    }
+
+    return AV_HWDEVICE_TYPE_NONE;
+}
+
+bool HardwareAccel::isAvailableHWAccelType(HWAccelType type) const
+{
+    const auto &supportedType = getSupportedHWAccelTypes();
+    const auto findIter = std::find_if(
+        supportedType.begin(), supportedType.end(),
+        [type](const HWAccelInfo &info) { return info.available && info.type == type; });
+
+    return findIter != supportedType.end();
+}
+
 bool HardwareAccel::validateUserHWContext(void *userContext, AVHWDeviceType expectedType)
 {
     if (!userContext) {
@@ -674,6 +701,7 @@ int HardwareAccel::createHWDeviceFromUserContext(void *userContext, AVHWDeviceTy
             CUcontext cuContext = static_cast<CUcontext>(userContext);
 
             cudaContext->cuda_ctx = cuContext;
+            cudaContext->stream = nullptr;
             // 注意：CUDA上下文的生命周期由用户管理，这里不需要额外的引用计数
 
             break;
@@ -703,33 +731,6 @@ int HardwareAccel::createHWDeviceFromUserContext(void *userContext, AVHWDeviceTy
     }
 
     return 0;
-}
-
-AVHWDeviceType HardwareAccel::findBestHWAccelType()
-{
-    // 优先级顺序：CUDA > D3D11VA > DXVA2 > QSV > VAAPI > VDPAU > VIDEOTOOLBOX
-    std::vector<AVHWDeviceType> priorityList = {
-        AV_HWDEVICE_TYPE_CUDA,        AV_HWDEVICE_TYPE_D3D11VA, AV_HWDEVICE_TYPE_DXVA2,
-        AV_HWDEVICE_TYPE_QSV,         AV_HWDEVICE_TYPE_VAAPI,   AV_HWDEVICE_TYPE_VDPAU,
-        AV_HWDEVICE_TYPE_VIDEOTOOLBOX};
-
-    for (const AVHWDeviceType &type : priorityList) {
-        if (isAvailableHWAccelType(fromAVHWDeviceType(type))) {
-            return type;
-        }
-    }
-
-    return AV_HWDEVICE_TYPE_NONE;
-}
-
-bool HardwareAccel::isAvailableHWAccelType(HWAccelType type) const
-{
-    const auto &supportedType = getSupportedHWAccelTypes();
-    const auto findIter = std::find_if(
-        supportedType.begin(), supportedType.end(),
-        [type](const HWAccelInfo &info) { return info.available && info.type == type; });
-
-    return findIter != supportedType.end();
 }
 
 AVPixelFormat HardwareAccel::getHWPixelFormatForDevice(AVHWDeviceType deviceType)

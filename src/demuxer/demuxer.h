@@ -1,4 +1,4 @@
-#ifndef DECODER_SDK_INTERNAL_DEMUXER_H
+﻿#ifndef DECODER_SDK_INTERNAL_DEMUXER_H
 #define DECODER_SDK_INTERNAL_DEMUXER_H
 
 #include <atomic>
@@ -38,13 +38,12 @@ public:
     /**
      * @brief 打开媒体文件
      * @param url 媒体文件路径
-     * @param isRealTime 是否是实时流
-     * @param decodeMediaType 解码的媒体类型
-     * @param isReopen 是否重新打开
+     * @param config 配置
+     * @param preBufferCallback 预缓冲回调（如果有）
      * @return 是否成功打开
      */
-    bool open(const std::string &url, bool isRealTime, Config::DecodeMediaType decodeMediaType,
-              bool isReopen = false);
+    bool open(const std::string &url, const Config &config,
+              const std::function<void()> &preBufferCallback = nullptr);
     /**
      * @brief 关闭媒体文件
      * @return 是否成功关闭
@@ -130,16 +129,6 @@ public:
     bool isRecording() const;
 
     /**
-     * @brief 设置预缓冲配置
-     * @param videoFrames 视频缓冲帧数
-     * @param audioPackets 音频缓冲包数
-     * @param requireBoth 是否需要同时缓冲视频和音频
-     * @param onPreBufferReady 预缓冲就绪回调
-     */
-    void setPreBufferConfig(int videoFrames, int audioPackets, bool requireBoth,
-                            std::function<void()> onPreBufferReady = nullptr);
-
-    /**
      * @brief 检查预缓冲状态
      * @return 是否已达到预缓冲要求
      */
@@ -150,11 +139,6 @@ public:
      * @return 预缓冲进度
      */
     PreBufferProgress getPreBufferProgress() const;
-
-    /**
-     * @brief 清理预缓冲回调
-     */
-    void clearPreBufferCallback();
 
     /**
      * @brief 设置循环播放模式
@@ -188,15 +172,6 @@ protected:
 
 private:
     /**
-     * @brief 启动解复用线程
-     */
-    void start();
-    /**
-     * @brief 停止解复用线程
-     */
-    void stop();
-
-    /**
      * @brief 处理文件结束
      * @param pkt 数据包
      */
@@ -206,10 +181,6 @@ private:
      * @param pkt 数据包
      */
     void distributePacket(AVPacket *pkt);
-    /**
-     * @brief 等待队列清空
-     */
-    void waitForQueueEmpty();
 
     /**
      * @brief 文件流解复用循环
@@ -248,6 +219,21 @@ private:
     void checkPreBufferStatus();
 
     /**
+     * @brief 清理预缓冲回调
+     */
+    void clearPreBufferCallback();
+
+    /**
+     * @brief 设置预缓冲配置
+     * @param videoFrames 视频缓冲帧数
+     * @param audioPackets 音频缓冲包数
+     * @param requireBoth 是否需要同时缓冲视频和音频
+     * @param onPreBufferReady 预缓冲就绪回调
+     */
+    void setPreBufferConfig(uint32_t videoFrames, uint32_t audioPackets, bool requireBoth,
+                            std::function<void()> onPreBufferReady = nullptr);
+
+    /**
      * @brief 处理循环播放
      * @return true 成功开始新的循环; false 不需要循环或循环失败
      */
@@ -267,10 +253,42 @@ private:
      */
     bool handleSeekRequest();
 
+    /**
+     * @brief 打开解复用器，内部调用，不加锁
+     */
+    bool openInternal(const std::string &url, const Config &config,
+                      const std::function<void()> &preBufferCallback);
+    /**
+     * @brief 关闭解复用器，内部调用，不加锁
+     */
+    bool closeInternal();
+    /**
+     * @brief 暂停解复用器，内部调用，不加锁
+     */
+    bool pauseInternal();
+    /**
+     * @brief 恢复解复用器，内部调用，不加锁
+     */
+    bool resumeInternal();
+
+    /**
+     * @brief 启动解复用线程，内部调用，不加锁
+     */
+    void start();
+    /**
+     * @brief 停止解复用线程，内部调用，不加锁
+     */
+    void stop();
+
 private:
+    // 解复用器状态
+    bool isOpened_ = false;
+    bool isStarted_ = false;
+    std::string url_;
+    bool isRealTime_ = false;
+
     // 同步原语
-    std::mutex mutex_;
-    std::condition_variable pauseCv_;
+    mutable std::mutex mutex_;
 
     // FFmpeg相关
     AVFormatContext *formatContext_ = nullptr;
@@ -285,12 +303,13 @@ private:
 
     // 线程管理
     std::thread thread_;
-    std::atomic<bool> isRunning_{false};
+    std::atomic<bool> requestInterruption_{false};
     std::atomic<bool> isPaused_{false};
-    std::atomic<bool> isSeeking_{false};
+    std::condition_variable pauseCv_;
+    std::mutex pauseMutex_;
 
     // seek位置原子变量
-    std::atomic_int seekMsPos_ = -1;
+    std::atomic_int64_t seekMsPos_ = -1;
 
     // 录制器
     std::unique_ptr<RealTimeStreamRecorder> realTimeStreamRecorder_;
@@ -298,25 +317,18 @@ private:
     // 事件分发器
     std::shared_ptr<EventDispatcher> eventDispatcher_;
 
-    // 状态信息
-    std::string url_;
-    std::atomic_bool isRealTime_ = false;
-    bool needClose_ = false;
-    bool isReopen_ = false;
-
     // 预缓冲配置
-    int preBufferVideoFrames_ = 0;
-    int preBufferAudioPackets_ = 0;
-    bool requireBothStreams_ = false;
-    std::atomic<bool> preBufferEnabled_{false};
-    std::atomic<bool> preBufferReady_{false};
+    uint32_t preBufferVideoFrames_ = 0;
+    uint32_t preBufferAudioPackets_ = 0;
+    uint32_t requireBothStreams_ = false;
+    bool preBufferEnabled_{false};
+    bool preBufferReady_{false};
     std::function<void()> preBufferReadyCallback_;
 
     // 循环播放相关成员变量
     std::atomic<LoopMode> loopMode_{LoopMode::kNone};
     std::atomic<int> maxLoops_{-1};
     std::atomic<int> currentLoopCount_{0};
-    std::mutex loopMutex_;
 };
 
 INTERNAL_NAMESPACE_END

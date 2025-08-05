@@ -1,4 +1,4 @@
-#include "real_time_stream_recorder.h"
+﻿#include "real_time_stream_recorder.h"
 
 extern "C" {
 #include <libavutil/avutil.h>
@@ -74,7 +74,6 @@ bool RealTimeStreamRecorder::startRecording(const std::string &outputPath,
 
     // 重置状态
     shouldStop_.store(false);
-    hasKeyFrame_.store(false);
 
     // 启动录制线程
     isRecording_.store(true);
@@ -92,6 +91,8 @@ bool RealTimeStreamRecorder::startRecording(const std::string &outputPath,
 
 bool RealTimeStreamRecorder::stopRecording()
 {
+    std::lock_guard<std::mutex> lock(mutex_);
+
     if (!isRecording_.load()) {
         return false;
     }
@@ -110,8 +111,6 @@ bool RealTimeStreamRecorder::stopRecording()
     if (recordingThread_.joinable()) {
         recordingThread_.join();
     }
-
-    std::lock_guard<std::mutex> lock(mutex_);
 
     // 清理资源
     cleanup();
@@ -155,6 +154,151 @@ std::string RealTimeStreamRecorder::getRecordingPath() const
 {
     std::lock_guard<std::mutex> lock(mutex_);
     return outputPath_;
+}
+
+std::vector<ContainerFormatInfo> RealTimeStreamRecorder::getSupportedFormats()
+{
+    std::vector<ContainerFormatInfo> formats;
+    const auto &formatMap = getFormatInfoMap();
+
+    for (const auto &pair : formatMap) {
+        if (pair.first != ContainerFormat::UNKNOWN) {
+            formats.push_back(pair.second);
+        }
+    }
+
+    return formats;
+}
+
+ContainerFormat RealTimeStreamRecorder::detectContainerFormat(const std::string &filePath)
+{
+    // 获取文件扩展名
+    std::filesystem::path path(filePath);
+    std::string extension = path.extension().string();
+
+    // 转换为小写
+    std::transform(extension.begin(), extension.end(), extension.begin(), ::tolower);
+
+    // 移除点号
+    if (!extension.empty() && extension[0] == '.') {
+        extension = extension.substr(1);
+    }
+
+    // 匹配扩展名
+    const auto &formatMap = getFormatInfoMap();
+    for (const auto &pair : formatMap) {
+        if (pair.second.extension == extension) {
+            return pair.first;
+        }
+    }
+
+    return ContainerFormat::UNKNOWN;
+}
+
+bool RealTimeStreamRecorder::validateFormatCompatibility(ContainerFormat format,
+                                                         AVFormatContext *inputFormatCtx,
+                                                         std::string &errorMsg)
+{
+    if (format == ContainerFormat::UNKNOWN) {
+        errorMsg = "Unknown container format";
+        return false;
+    }
+
+    if (!inputFormatCtx) {
+        errorMsg = "Input format context is null";
+        return false;
+    }
+
+    const auto &formatInfo = getFormatInfoMap().at(format);
+
+    bool hasVideo = false;
+    bool hasAudio = false;
+    std::vector<std::string> unsupportedCodecs;
+
+    // 检查每个流
+    for (unsigned int i = 0; i < inputFormatCtx->nb_streams; i++) {
+        AVStream *stream = inputFormatCtx->streams[i];
+        const char *codecName = avcodec_get_name(stream->codecpar->codec_id);
+
+        if (stream->codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
+            hasVideo = true;
+            if (std::find(formatInfo.supportedVideoCodecs.begin(),
+                          formatInfo.supportedVideoCodecs.end(),
+                          codecName) == formatInfo.supportedVideoCodecs.end()) {
+                unsupportedCodecs.push_back(std::string("Video: ") + codecName);
+            }
+        } else if (stream->codecpar->codec_type == AVMEDIA_TYPE_AUDIO) {
+            hasAudio = true;
+            if (std::find(formatInfo.supportedAudioCodecs.begin(),
+                          formatInfo.supportedAudioCodecs.end(),
+                          codecName) == formatInfo.supportedAudioCodecs.end()) {
+                unsupportedCodecs.push_back(std::string("Audio: ") + codecName);
+            }
+        }
+    }
+
+    // 检查格式是否支持视频/音频
+    if (hasVideo && !formatInfo.supportVideo) {
+        errorMsg = formatInfo.description + " format does not support video streams";
+        return false;
+    }
+
+    if (hasAudio && !formatInfo.supportAudio) {
+        errorMsg = formatInfo.description + " format does not support audio streams";
+        return false;
+    }
+
+    // 检查不支持的编解码器
+    if (!unsupportedCodecs.empty()) {
+        errorMsg = "Unsupported codecs for " + formatInfo.description + " format: ";
+        for (size_t i = 0; i < unsupportedCodecs.size(); ++i) {
+            if (i > 0)
+                errorMsg += ", ";
+            errorMsg += unsupportedCodecs[i];
+        }
+        return false;
+    }
+
+    return true;
+}
+
+void RealTimeStreamRecorder::recordingLoop()
+{
+    AVPacket *tempPacket = av_packet_alloc();
+    if (!tempPacket) {
+        LOG_ERROR("Failed to allocate temporary packet");
+        return;
+    }
+
+    bool hasKeyFrame = false;
+    while (!shouldStop_.load()) {
+        bool hasData = false;
+
+        // 处理视频数据包
+        Packet videoPacket;
+        if (videoPacketQueue_->pop(videoPacket, 1)) {
+            if (processPacket(videoPacket, AVMEDIA_TYPE_VIDEO, hasKeyFrame)) {
+                hasData = true;
+            }
+        }
+
+        // 处理音频数据包（只有在有关键帧后才处理）
+        if (hasKeyFrame) {
+            Packet audioPacket;
+            if (audioPacketQueue_->pop(audioPacket, 1)) {
+                if (processPacket(audioPacket, AVMEDIA_TYPE_AUDIO, hasKeyFrame)) {
+                    hasData = true;
+                }
+            }
+        }
+
+        // 如果没有数据，短暂休眠
+        if (!hasData) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+    }
+
+    av_packet_free(&tempPacket);
 }
 
 bool RealTimeStreamRecorder::initOutputContext(const std::string &outputPath,
@@ -239,6 +383,48 @@ bool RealTimeStreamRecorder::initOutputContext(const std::string &outputPath,
     return true;
 }
 
+void RealTimeStreamRecorder::cleanup()
+{
+    // 写入文件尾
+    if (outputFormatCtx_) {
+        av_write_trailer(outputFormatCtx_);
+
+        // 关闭输出文件
+        if (!(outputFormatCtx_->oformat->flags & AVFMT_NOFILE)) {
+            avio_closep(&outputFormatCtx_->pb);
+        }
+
+        // 释放输出格式上下文
+        avformat_free_context(outputFormatCtx_);
+        outputFormatCtx_ = nullptr;
+    }
+
+    // 清空输入格式上下文引用
+    inputFormatCtx_ = nullptr;
+
+    // 释放流映射表
+    if (streamMapping_) {
+        av_free(streamMapping_);
+        streamMapping_ = nullptr;
+    }
+
+    // 清空队列
+    if (videoPacketQueue_) {
+        videoPacketQueue_->flush();
+    }
+    if (audioPacketQueue_) {
+        audioPacketQueue_->flush();
+    }
+
+    // 清空首帧PTS和DTS映射
+    firstPtsMap_.clear();
+    firstDtsMap_.clear();
+
+    outputPath_.clear();
+    streamCount_ = 0;
+    currentFormat_ = ContainerFormat::UNKNOWN;
+}
+
 bool RealTimeStreamRecorder::createStreamMapping(AVFormatContext *inputFormatCtx)
 {
     streamCount_ = inputFormatCtx->nb_streams;
@@ -262,45 +448,8 @@ bool RealTimeStreamRecorder::createStreamMapping(AVFormatContext *inputFormatCtx
     return true;
 }
 
-void RealTimeStreamRecorder::recordingLoop()
-{
-    AVPacket *tempPacket = av_packet_alloc();
-    if (!tempPacket) {
-        LOG_ERROR("Failed to allocate temporary packet");
-        return;
-    }
-
-    while (!shouldStop_.load()) {
-        bool hasData = false;
-
-        // 处理视频数据包
-        Packet videoPacket;
-        if (videoPacketQueue_->pop(videoPacket, 1)) {
-            if (processPacket(videoPacket, AVMEDIA_TYPE_VIDEO)) {
-                hasData = true;
-            }
-        }
-
-        // 处理音频数据包（只有在有关键帧后才处理）
-        if (hasKeyFrame_.load()) {
-            Packet audioPacket;
-            if (audioPacketQueue_->pop(audioPacket, 1)) {
-                if (processPacket(audioPacket, AVMEDIA_TYPE_AUDIO)) {
-                    hasData = true;
-                }
-            }
-        }
-
-        // 如果没有数据，短暂休眠
-        if (!hasData) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
-        }
-    }
-
-    av_packet_free(&tempPacket);
-}
-
-bool RealTimeStreamRecorder::processPacket(const Packet &packet, AVMediaType mediaType)
+bool RealTimeStreamRecorder::processPacket(const Packet &packet, AVMediaType mediaType,
+                                           bool &hasKeyFrame)
 {
     if (!outputFormatCtx_ || !inputFormatCtx_ || !streamMapping_) {
         return false;
@@ -313,11 +462,11 @@ bool RealTimeStreamRecorder::processPacket(const Packet &packet, AVMediaType med
 
     // 检查视频关键帧
     if (mediaType == AVMEDIA_TYPE_VIDEO) {
-        if (!hasKeyFrame_.load() && (pkt->flags & AV_PKT_FLAG_KEY) == 0) {
+        if (!hasKeyFrame && (pkt->flags & AV_PKT_FLAG_KEY) == 0) {
             return false; // 等待关键帧
         }
-        if (!hasKeyFrame_.load()) {
-            hasKeyFrame_.store(true);
+        if (!hasKeyFrame) {
+            hasKeyFrame = true;
         }
     }
 
@@ -450,154 +599,6 @@ bool RealTimeStreamRecorder::processPacket(const Packet &packet, AVMediaType med
 
     av_packet_unref(tempPacket);
     av_packet_free(&tempPacket);
-    return true;
-}
-
-void RealTimeStreamRecorder::cleanup()
-{
-    // 写入文件尾
-    if (outputFormatCtx_) {
-        av_write_trailer(outputFormatCtx_);
-
-        // 关闭输出文件
-        if (!(outputFormatCtx_->oformat->flags & AVFMT_NOFILE)) {
-            avio_closep(&outputFormatCtx_->pb);
-        }
-
-        // 释放输出格式上下文
-        avformat_free_context(outputFormatCtx_);
-        outputFormatCtx_ = nullptr;
-    }
-
-    // 清空输入格式上下文引用
-    inputFormatCtx_ = nullptr;
-
-    // 释放流映射表
-    if (streamMapping_) {
-        av_free(streamMapping_);
-        streamMapping_ = nullptr;
-    }
-
-    // 清空队列
-    if (videoPacketQueue_) {
-        videoPacketQueue_->flush();
-    }
-    if (audioPacketQueue_) {
-        audioPacketQueue_->flush();
-    }
-
-    // 清空首帧PTS和DTS映射
-    firstPtsMap_.clear();
-    firstDtsMap_.clear();
-
-    outputPath_.clear();
-    streamCount_ = 0;
-    currentFormat_ = ContainerFormat::UNKNOWN;
-}
-
-std::vector<ContainerFormatInfo> RealTimeStreamRecorder::getSupportedFormats()
-{
-    std::vector<ContainerFormatInfo> formats;
-    const auto &formatMap = getFormatInfoMap();
-
-    for (const auto &pair : formatMap) {
-        if (pair.first != ContainerFormat::UNKNOWN) {
-            formats.push_back(pair.second);
-        }
-    }
-
-    return formats;
-}
-
-ContainerFormat RealTimeStreamRecorder::detectContainerFormat(const std::string &filePath)
-{
-    // 获取文件扩展名
-    std::filesystem::path path(filePath);
-    std::string extension = path.extension().string();
-
-    // 转换为小写
-    std::transform(extension.begin(), extension.end(), extension.begin(), ::tolower);
-
-    // 移除点号
-    if (!extension.empty() && extension[0] == '.') {
-        extension = extension.substr(1);
-    }
-
-    // 匹配扩展名
-    const auto &formatMap = getFormatInfoMap();
-    for (const auto &pair : formatMap) {
-        if (pair.second.extension == extension) {
-            return pair.first;
-        }
-    }
-
-    return ContainerFormat::UNKNOWN;
-}
-
-bool RealTimeStreamRecorder::validateFormatCompatibility(ContainerFormat format,
-                                                         AVFormatContext *inputFormatCtx,
-                                                         std::string &errorMsg)
-{
-    if (format == ContainerFormat::UNKNOWN) {
-        errorMsg = "Unknown container format";
-        return false;
-    }
-
-    if (!inputFormatCtx) {
-        errorMsg = "Input format context is null";
-        return false;
-    }
-
-    const auto &formatInfo = getFormatInfoMap().at(format);
-
-    bool hasVideo = false;
-    bool hasAudio = false;
-    std::vector<std::string> unsupportedCodecs;
-
-    // 检查每个流
-    for (unsigned int i = 0; i < inputFormatCtx->nb_streams; i++) {
-        AVStream *stream = inputFormatCtx->streams[i];
-        const char *codecName = avcodec_get_name(stream->codecpar->codec_id);
-
-        if (stream->codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
-            hasVideo = true;
-            if (std::find(formatInfo.supportedVideoCodecs.begin(),
-                          formatInfo.supportedVideoCodecs.end(),
-                          codecName) == formatInfo.supportedVideoCodecs.end()) {
-                unsupportedCodecs.push_back(std::string("Video: ") + codecName);
-            }
-        } else if (stream->codecpar->codec_type == AVMEDIA_TYPE_AUDIO) {
-            hasAudio = true;
-            if (std::find(formatInfo.supportedAudioCodecs.begin(),
-                          formatInfo.supportedAudioCodecs.end(),
-                          codecName) == formatInfo.supportedAudioCodecs.end()) {
-                unsupportedCodecs.push_back(std::string("Audio: ") + codecName);
-            }
-        }
-    }
-
-    // 检查格式是否支持视频/音频
-    if (hasVideo && !formatInfo.supportVideo) {
-        errorMsg = formatInfo.description + " format does not support video streams";
-        return false;
-    }
-
-    if (hasAudio && !formatInfo.supportAudio) {
-        errorMsg = formatInfo.description + " format does not support audio streams";
-        return false;
-    }
-
-    // 检查不支持的编解码器
-    if (!unsupportedCodecs.empty()) {
-        errorMsg = "Unsupported codecs for " + formatInfo.description + " format: ";
-        for (size_t i = 0; i < unsupportedCodecs.size(); ++i) {
-            if (i > 0)
-                errorMsg += ", ";
-            errorMsg += unsupportedCodecs[i];
-        }
-        return false;
-    }
-
     return true;
 }
 

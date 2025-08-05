@@ -1,4 +1,4 @@
-#ifndef DECODER_SDK_INTERNAL_AUDIO_DECODER_H
+﻿#ifndef DECODER_SDK_INTERNAL_AUDIO_DECODER_H
 #define DECODER_SDK_INTERNAL_AUDIO_DECODER_H
 #include <chrono>
 #include <optional>
@@ -26,7 +26,7 @@ public:
     /**
      * @brief 析构函数
      */
-    virtual ~AudioDecoder();
+    virtual ~AudioDecoder() override;
 
     /**
      * @brief 初始化音频解码器
@@ -34,6 +34,10 @@ public:
      */
     void init(const Config &config);
 
+    /**
+     * @brief 获取音频解码器类型
+     * @return 音频解码器类型
+     */
     AVMediaType type() const override;
 
 protected:

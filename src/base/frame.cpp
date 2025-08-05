@@ -460,7 +460,8 @@ int Frame::getBufferSize() const
 
 int Frame::getAudioBufferSize() const
 {
-    return frame_ ? av_samples_get_buffer_size(nullptr, channels(), static_cast<int>(nbSamples()), sampleFormat(), 1)
+    return frame_ ? av_samples_get_buffer_size(nullptr, channels(), static_cast<int>(nbSamples()),
+                                               sampleFormat(), 1)
                   : 0;
 }
 
@@ -471,19 +472,19 @@ void Frame::ensureAllocated()
     }
 }
 
-void Frame::unref()
-{
-    if (frame_) {
-        av_frame_unref(frame_);
-    }
-}
-
 void Frame::release()
 {
     if (frame_) {
         unref();
         av_frame_free(&frame_);
         frame_ = nullptr;
+    }
+}
+
+void Frame::unref()
+{
+    if (frame_) {
+        av_frame_unref(frame_);
     }
 }
 

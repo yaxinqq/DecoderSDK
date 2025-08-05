@@ -1,4 +1,4 @@
-#ifndef DECODER_SDK_INTERNAL_VIDEO_DECODER_H
+﻿#ifndef DECODER_SDK_INTERNAL_VIDEO_DECODER_H
 #define DECODER_SDK_INTERNAL_VIDEO_DECODER_H
 #include <memory>
 #include <optional>
@@ -27,7 +27,7 @@ public:
     /**
      * @brief 析构函数
      */
-    virtual ~VideoDecoder();
+    virtual ~VideoDecoder() override;
 
     /**
      * @brief 初始化视频解码器
@@ -35,11 +35,6 @@ public:
      */
     void init(const Config &config);
 
-    /**
-     * @brief 打开视频解码器
-     * @return 是否成功打开
-     */
-    bool open() override;
     AVMediaType type() const override;
 
     /**
@@ -66,12 +61,6 @@ protected:
     bool setupHardwareDecode() override;
 
 private:
-    /**
-     * @brief 更新视频帧率
-     * @param frameRate 帧率
-     */
-    void updateFrameRate(AVRational frameRate);
-
     /**
      * @brief 处理帧格式转换
      * @param inputFrame 输入帧
@@ -108,9 +97,6 @@ private:
     bool reinitializeWithSoftwareDecoder();
 
 private:
-    // 检测到的帧率
-    double frameRate_;
-
     // 硬件加速器
     std::shared_ptr<HardwareAccel> hwAccel_;
     // 硬解加速类型

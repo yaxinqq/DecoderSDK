@@ -91,21 +91,6 @@ void EventDispatcher::triggerEvent(EventType eventType, std::shared_ptr<EventArg
     }
 }
 
-void EventDispatcher::triggerEventSync(EventType eventType, std::shared_ptr<EventArgs> args)
-{
-    try {
-        unifiedDispatcher_->dispatch(eventType, args);
-    } catch (const std::exception &e) {
-        LOG_ERROR("Exception in sync event dispatch: {}", e.what());
-    }
-}
-
-void EventDispatcher::triggerEventAsync(EventType eventType, std::shared_ptr<EventArgs> args)
-{
-    // 将事件加入异步队列
-    asyncQueue_->enqueue(eventType, args);
-}
-
 bool EventDispatcher::processAsyncEvents()
 {
     // 处理异步队列中的事件
@@ -180,6 +165,21 @@ ConnectionType EventDispatcher::determineConnectionType(ConnectionType requested
 bool EventDispatcher::isMainThread() const
 {
     return std::this_thread::get_id() == mainThreadId_;
+}
+
+void EventDispatcher::triggerEventSync(EventType eventType, std::shared_ptr<EventArgs> args)
+{
+    try {
+        unifiedDispatcher_->dispatch(eventType, args);
+    } catch (const std::exception &e) {
+        LOG_ERROR("Exception in sync event dispatch: {}", e.what());
+    }
+}
+
+void EventDispatcher::triggerEventAsync(EventType eventType, std::shared_ptr<EventArgs> args)
+{
+    // 将事件加入异步队列
+    asyncQueue_->enqueue(eventType, args);
 }
 
 INTERNAL_NAMESPACE_END

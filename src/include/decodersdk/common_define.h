@@ -133,9 +133,9 @@ enum class EventType : uint32_t {
     kStreamLooped,       // 流循环播放（新增）
 
     // 解码相关事件
-    kDecodeStarted = 20,   // 解码已开始（调用startDecode成功）
-    kDecodeStopped,        // 解码已停止（调用stopDecode成功）
-    kDecodePaused,         // 解码已暂停（调用pauseDecode成功）
+    kDecodeStarted = 20,   // 解码已开始
+    kDecodeStopped,        // 解码已停止
+    kDecodePaused,         // 解码已暂停
     kCreateDecoderSuccess, // 创建解码器成功
     kCreateDecoderFailed,  // 创建解码器失败
     kDestoryDecoder,       // 销毁解码器
@@ -433,8 +433,8 @@ struct Config {
 
     // 重连配置
     bool enableAutoReconnect = true; // 是否启用自动重连
-    int maxReconnectAttempts = -1;   // 最大重连次数
-    int reconnectIntervalMs = 1000;  // 重连间隔(毫秒)
+    int maxReconnectAttempts = 5;    // 最大重连次数（-1表示无限重连）
+    int reconnectIntervalMs = 3000;  // 重连间隔(毫秒)，建议3秒
 
     // 预缓冲配置
     struct PreBufferConfig {

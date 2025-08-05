@@ -116,7 +116,7 @@ void initLoggerWithConfig(const LogConfig &cfg, std::shared_ptr<spdlog::logger> 
         spdlog::register_logger(logger);
         logger->set_level(lvl);
         logger->flush_on(spdlog::level::warn);
-        spdlog::flush_every(std::chrono::seconds(1));        
+        spdlog::flush_every(std::chrono::seconds(1));
     } catch (const std::exception &e) {
         std::cerr << "Logger 初始化失败: " << e.what() << std::endl;
     }
@@ -146,6 +146,17 @@ void Logger::initFromConfig(const std::string &configPath)
     initialized_ = true;
 }
 
+std::shared_ptr<spdlog::logger> Logger::getLogger()
+{
+    ensureInitialized();
+    return logger_;
+}
+
+void Logger::setDefaultConfigPath(const std::string &configPath)
+{
+    defaultConfigPath_ = configPath;
+}
+
 void Logger::ensureInitialized()
 {
     if (!initialized_) {
@@ -166,24 +177,11 @@ void Logger::ensureInitialized()
             // 注册程序退出时的清理函数
             static bool cleanup_registered = false;
             if (!cleanup_registered) {
-                std::atexit([]() {
-                    Logger::shutdown();
-                });
+                std::atexit([]() { Logger::shutdown(); });
                 cleanup_registered = true;
             }
         }
     }
-}
-
-std::shared_ptr<spdlog::logger> Logger::getLogger()
-{
-    ensureInitialized();
-    return logger_;
-}
-
-void Logger::setDefaultConfigPath(const std::string &configPath)
-{
-    defaultConfigPath_ = configPath;
 }
 
 void Logger::shutdown()

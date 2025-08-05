@@ -33,97 +33,11 @@ Demuxer::~Demuxer()
     close();
 }
 
-bool Demuxer::open(const std::string &url, bool isRealTime, Config::DecodeMediaType decodeMediaType,
-                   bool isReopen)
+bool Demuxer::open(const std::string &url, const Config &config,
+                   const std::function<void()> &preBufferCallback)
 {
     std::lock_guard<std::mutex> lock(mutex_);
-
-    // 上报流正在打开事件
-    auto event = std::make_shared<StreamEventArgs>(url, "Demuxer", "Stream Opening");
-    eventDispatcher_->triggerEvent(EventType::kStreamOpening, event);
-
-    const auto sendFailedEvent = [this, url]() {
-        auto event = std::make_shared<StreamEventArgs>(url, "Demuxer", "Stream Open Failed");
-        eventDispatcher_->triggerEvent(EventType::kStreamOpenFailed, event);
-    };
-
-    // 设置FFmpeg选项
-    AVDictionary *options = nullptr;
-    av_dict_set(&options, "timeout", "2000000", 0); // 2秒超时
-    av_dict_set(&options, "max_delay", "100000", 0);
-    av_dict_set(&options, "buffer_size", "10000000", 0); // 1MB缓冲
-    av_dict_set(&options, "analyzeduration", "1000000", 0);
-
-    if (isRealTime) {
-        av_dict_set(&options, "rtsp_transport", "tcp", 0);
-        av_dict_set(&options, "fflags", "nobuffer", 0);
-        av_dict_set(&options, "stimeout", "2000000", 0);
-    }
-
-    // 打开输入
-    int ret = avformat_open_input(&formatContext_, url.c_str(), nullptr, &options);
-    av_dict_free(&options);
-
-    if (ret != 0) {
-        LOG_ERROR("Failed to open input: {} - {}", url, utils::avErr2Str(ret));
-        sendFailedEvent();
-        return false;
-    }
-
-    // 查找流信息
-    ret = avformat_find_stream_info(formatContext_, nullptr);
-    if (ret < 0) {
-        LOG_ERROR("Failed to find stream info: {}", utils::avErr2Str(ret));
-        sendFailedEvent();
-        avformat_close_input(&formatContext_);
-        return false;
-    }
-
-    // 重置到文件开始位置
-    if (formatContext_->pb && formatContext_->pb->seekable) {
-        avio_seek(formatContext_->pb, 0, SEEK_SET);
-    }
-
-    // 查找最佳流
-    videoStreamIndex_ = av_find_best_stream(formatContext_, AVMEDIA_TYPE_VIDEO, -1, -1, nullptr, 0);
-    audioStreamIndex_ = av_find_best_stream(formatContext_, AVMEDIA_TYPE_AUDIO, -1, -1, nullptr, 0);
-
-    // 创建数据包队列
-    if (videoStreamIndex_ >= 0 && (decodeMediaType & Config::DecodeMediaType::kVideo)) {
-        videoPacketQueue_ = std::make_shared<PacketQueue>(1000);
-    }
-    if (audioStreamIndex_ >= 0 && (decodeMediaType & Config::DecodeMediaType::kAudio)) {
-        audioPacketQueue_ = std::make_shared<PacketQueue>(1000);
-    }
-
-    // 设置状态
-    url_ = url;
-    isRealTime_.store(isRealTime);
-    needClose_ = true;
-    isReopen_ = isReopen;
-
-    // 启动解复用器
-    start();
-
-    // 获取流总时长（以秒为单位）
-    std::optional<int> totalTime;
-    if (formatContext_ && formatContext_->duration != AV_NOPTS_VALUE) {
-        // 将时长从微秒转换为秒
-        totalTime = static_cast<int>(formatContext_->duration / AV_TIME_BASE);
-    }
-
-    // 上报成功事件
-    event = std::make_shared<StreamEventArgs>(url, "Demuxer", "Stream Opened");
-    event->totalTime = totalTime;
-    eventDispatcher_->triggerEvent(EventType::kStreamOpened, event);
-
-    if (isReopen) {
-        event = std::make_shared<StreamEventArgs>(url, "Demuxer", "Stream Recovery");
-        eventDispatcher_->triggerEvent(EventType::kStreamReadRecovery, event);
-    }
-
-    LOG_INFO("Successfully opened: {}", url);
-    return true;
+    return openInternal(url, config, preBufferCallback);
 }
 
 bool Demuxer::close()
@@ -133,80 +47,34 @@ bool Demuxer::close()
         stopRecording();
     }
 
-    // 停止解复用线程
-    stop();
-
-    if (!needClose_) {
-        return true;
-    }
-
-    // 上报流关闭事件
-    const auto event = std::make_shared<StreamEventArgs>(url_, "Demuxer", "Stream Close");
-    eventDispatcher_->triggerEvent(EventType::kStreamClose, event);
-
     std::lock_guard<std::mutex> lock(mutex_);
-
-    // 销毁上下文
-    if (formatContext_) {
-        avformat_close_input(&formatContext_);
-        formatContext_ = nullptr;
-    }
-
-    // 重置队列
-    videoPacketQueue_.reset();
-    audioPacketQueue_.reset();
-
-    // 重置状态
-    videoStreamIndex_ = -1;
-    audioStreamIndex_ = -1;
-    url_.clear();
-    isRealTime_.store(false);
-    needClose_ = false;
-    isReopen_ = false;
-
-    return true;
+    return closeInternal();
 }
 
 bool Demuxer::pause()
 {
-    if (isPaused_.load()) {
-        return true;
-    }
-
-    isPaused_.store(true);
-    return true;
+    std::lock_guard<std::mutex> lock(mutex_);
+    return pauseInternal();
 }
 
 bool Demuxer::resume()
 {
-    if (!isPaused_.load()) {
-        return true;
-    }
-
-    // 如果是实时流，恢复前先清空队列
-    if (isRealTime_.load()) {
-        if (videoPacketQueue_) {
-            videoPacketQueue_->flush();
-        }
-        if (audioPacketQueue_) {
-            audioPacketQueue_->flush();
-        }
-    }
-
-    isPaused_.store(false);
-    pauseCv_.notify_all();
-    return true;
+    std::lock_guard<std::mutex> lock(mutex_);
+    return resumeInternal();
 }
 
 bool Demuxer::seek(double position)
 {
-    if (!formatContext_ || isRealTime_.load() || !utils::greaterAndEqual(position, 0.0)) {
-        return false;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!formatContext_ || isRealTime_ || !utils::greaterAndEqual(position, 0.0)) {
+            return false;
+        }
     }
 
     // 防止并发seek - 检查是否已经有pending的seek
-    int expected = -1;
-    std::atomic_int desired = static_cast<int>(position * 1000);
+    int64_t expected = -1;
+    std::atomic_int64_t desired = static_cast<int64_t>(position * 1000);
 
     if (!seekMsPos_.compare_exchange_strong(expected, desired)) {
         LOG_WARN("Seek request pending, replacing with new position: {:.2f}s", position);
@@ -217,132 +85,6 @@ bool Demuxer::seek(double position)
     return true;
 }
 
-void Demuxer::fileStreamDemuxLoop(AVPacket *pkt)
-{
-    std::optional<std::chrono::high_resolution_clock::time_point> occuredErrorTime;
-    bool readFirstPacket = false;
-    std::optional<bool> isEof = std::nullopt;
-
-    while (isRunning_.load()) {
-        // 检查是否有pending的seek请求
-        if (handleSeekRequest()) {
-            // seek完成后继续循环
-            continue;
-        }
-
-        // 处理暂停状态 - 文件流暂停时完全停止读取
-        if (!handleFileStreamPause()) {
-            break;
-        }
-
-        // 读取并处理数据包
-        int result =
-            readAndProcessPacket(pkt, occuredErrorTime, readFirstPacket, isEof.value_or(false));
-        if (result == 1) {
-            isEof = true;
-            // 文件结束
-            if ((!videoPacketQueue_ || videoPacketQueue_->isEmpty()) &&
-                (!audioPacketQueue_ || audioPacketQueue_->isEmpty()) && isEof.value_or(false)) {
-                auto event = std::make_shared<StreamEventArgs>(url_, "Demuxer", "Stream Ended");
-                eventDispatcher_->triggerEvent(EventType::kStreamEnded, event);
-
-                // 检查是否需要循环播放（仅对文件流有效）
-                if (!isRealTime_.load() && handleLoopPlayback()) {
-                    // 成功开始新的循环，不发送结束包
-                    av_packet_unref(pkt);
-                }
-                isEof.reset();
-            }
-            continue;
-        } else if (result == -2) {
-            // 严重错误，退出循环
-            break;
-        } else if (result == -1) {
-            // 需要继续循环
-            continue;
-        }
-
-        isEof.reset();
-        // 分发数据包
-        distributePacket(pkt);
-        av_packet_unref(pkt);
-    }
-}
-
-void Demuxer::realTimeStreamDemuxLoop(AVPacket *pkt)
-{
-    std::optional<std::chrono::high_resolution_clock::time_point> occuredErrorTime;
-    bool readFirstPacket = false;
-
-    while (isRunning_.load()) {
-        // 实时流不支持seek，清除任何pending的seek请求
-        if (seekMsPos_.load() > 0) {
-            seekMsPos_.store(-1);
-            LOG_WARN("Seek not supported for real-time streams, ignoring seek request");
-        }
-
-        // 读取并处理数据包
-        int result = readAndProcessPacket(pkt, occuredErrorTime, readFirstPacket);
-        if (result == 1) {
-            // 实时流EOF，短暂等待后继续
-            std::this_thread::sleep_for(std::chrono::milliseconds(10));
-            continue;
-        } else if (result == -2) {
-            // 严重错误，退出循环
-            break;
-        } else if (result == -1) {
-            // 需要继续循环
-            continue;
-        }
-
-        // 分发数据包
-        distributePacket(pkt);
-        av_packet_unref(pkt);
-    }
-}
-
-bool Demuxer::handleSeekRequest()
-{
-    auto seekMsPosition = seekMsPos_.load();
-    if (seekMsPosition < 0) {
-        return false;
-    }
-
-    // 清除seek请求
-    seekMsPos_.store(-1);
-
-    // 设置seeking状态
-    isSeeking_.store(true);
-
-    double position = seekMsPosition / 1000.0;
-
-    // 转换时间戳
-    int64_t timestamp = static_cast<int64_t>(position * AV_TIME_BASE);
-
-    // 执行seek
-    int ret = av_seek_frame(formatContext_, -1, timestamp, AVSEEK_FLAG_BACKWARD);
-    if (ret < 0) {
-        LOG_ERROR("Seek failed: {}", utils::avErr2Str(ret));
-        isSeeking_.store(false);
-        return false;
-    }
-
-    avformat_flush(formatContext_);
-
-    // 刷新队列
-    if (videoPacketQueue_) {
-        videoPacketQueue_->flush();
-    }
-    if (audioPacketQueue_) {
-        audioPacketQueue_->flush();
-    }
-
-    isSeeking_.store(false);
-    LOG_INFO("{} seek completed to position: {:.2f}s", url_, position);
-
-    return true;
-}
-
 AVFormatContext *Demuxer::formatContext() const
 {
     return formatContext_;
@@ -350,6 +92,7 @@ AVFormatContext *Demuxer::formatContext() const
 
 int Demuxer::streamIndex(AVMediaType mediaType) const
 {
+    std::lock_guard<std::mutex> lock(mutex_);
     switch (mediaType) {
         case AVMEDIA_TYPE_VIDEO:
             return videoStreamIndex_;
@@ -362,6 +105,7 @@ int Demuxer::streamIndex(AVMediaType mediaType) const
 
 std::shared_ptr<PacketQueue> Demuxer::packetQueue(AVMediaType mediaType) const
 {
+    std::lock_guard<std::mutex> lock(mutex_);
     switch (mediaType) {
         case AVMEDIA_TYPE_VIDEO:
             return videoPacketQueue_;
@@ -374,11 +118,13 @@ std::shared_ptr<PacketQueue> Demuxer::packetQueue(AVMediaType mediaType) const
 
 bool Demuxer::hasVideo() const
 {
+    std::lock_guard<std::mutex> lock(mutex_);
     return videoStreamIndex_ >= 0;
 }
 
 bool Demuxer::hasAudio() const
 {
+    std::lock_guard<std::mutex> lock(mutex_);
     return audioStreamIndex_ >= 0;
 }
 
@@ -389,17 +135,20 @@ bool Demuxer::isPaused() const
 
 bool Demuxer::isRealTime() const
 {
-    return isRealTime_.load();
+    std::lock_guard<std::mutex> lock(mutex_);
+    return isRealTime_;
 }
 
 std::string Demuxer::url() const
 {
+    std::lock_guard<std::mutex> lock(mutex_);
     return url_;
 }
 
 bool Demuxer::startRecording(const std::string &outputPath)
 {
-    if (!isRealTime_.load()) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!isRealTime_) {
         LOG_WARN("Record only support real-time stream");
         return false;
     }
@@ -414,35 +163,25 @@ bool Demuxer::startRecording(const std::string &outputPath)
 
 bool Demuxer::stopRecording()
 {
+    std::lock_guard<std::mutex> lock(mutex_);
     return realTimeStreamRecorder_->stopRecording();
 }
 
 bool Demuxer::isRecording() const
 {
+    std::lock_guard<std::mutex> lock(mutex_);
     return realTimeStreamRecorder_->isRecording();
-}
-
-void Demuxer::setPreBufferConfig(int videoFrames, int audioPackets, bool requireBoth,
-                                 std::function<void()> onPreBufferReady)
-{
-    preBufferVideoFrames_ = videoFrames;
-    preBufferAudioPackets_ = audioPackets;
-    requireBothStreams_ = requireBoth;
-    preBufferEnabled_ = (videoFrames > 0 || audioPackets > 0);
-    preBufferReady_ = false;
-    preBufferReadyCallback_ = onPreBufferReady;
-
-    LOG_INFO("PreBuffer config set: video={}, audio={}, requireBoth={}", videoFrames, audioPackets,
-             requireBoth);
 }
 
 bool Demuxer::isPreBufferReady() const
 {
-    return preBufferReady_.load();
+    std::lock_guard<std::mutex> lock(mutex_);
+    return preBufferReady_;
 }
 
 PreBufferProgress Demuxer::getPreBufferProgress() const
 {
+    std::lock_guard<std::mutex> lock(mutex_);
     PreBufferProgress progress{};
 
     progress.videoRequiredFrames = preBufferVideoFrames_;
@@ -479,55 +218,28 @@ PreBufferProgress Demuxer::getPreBufferProgress() const
     return progress;
 }
 
-void Demuxer::start()
+void Demuxer::setLoopMode(LoopMode mode, int maxLoops)
 {
-    if (isRunning_.load()) {
-        return;
+    utils::atomicUpdateIfNotEqual<LoopMode>(loopMode_, mode);
+    utils::atomicUpdateIfNotEqual<int>(maxLoops_, maxLoops);
+    if (mode == LoopMode::kNone) {
+        utils::atomicUpdateIfNotEqual<int>(currentLoopCount_, 0);
     }
-
-    // 启动队列
-    if (videoPacketQueue_) {
-        videoPacketQueue_->start();
-    }
-    if (audioPacketQueue_) {
-        audioPacketQueue_->start();
-    }
-
-    // 启动解复用线程
-    isRunning_.store(true);
-    thread_ = std::thread(&Demuxer::demuxLoop, this);
-
-    LOG_INFO("{} demuxer started!", url_);
 }
 
-void Demuxer::stop()
+LoopMode Demuxer::getLoopMode() const
 {
-    if (!isRunning_.load()) {
-        return;
-    }
+    return loopMode_.load();
+}
 
-    isRunning_.store(false);
+int Demuxer::getCurrentLoopCount() const
+{
+    return currentLoopCount_.load();
+}
 
-    // 清理预缓冲状态
-    clearPreBufferCallback();
-
-    // 唤醒暂停的线程
-    pauseCv_.notify_all();
-
-    // 中止队列
-    if (videoPacketQueue_) {
-        videoPacketQueue_->abort();
-    }
-    if (audioPacketQueue_) {
-        audioPacketQueue_->abort();
-    }
-
-    // 等待线程结束
-    if (thread_.joinable()) {
-        thread_.join();
-    }
-
-    LOG_INFO("{} demuxer stopped!", url_);
+void Demuxer::resetLoopCount()
+{
+    utils::atomicUpdateIfNotEqual<int>(currentLoopCount_, 0);
 }
 
 void Demuxer::demuxLoop()
@@ -539,7 +251,7 @@ void Demuxer::demuxLoop()
     }
 
     // 根据流类型选择不同的处理策略
-    if (isRealTime_.load()) {
+    if (isRealTime_) {
         realTimeStreamDemuxLoop(pkt);
     } else {
         fileStreamDemuxLoop(pkt);
@@ -547,72 +259,6 @@ void Demuxer::demuxLoop()
 
     av_packet_free(&pkt);
     LOG_INFO("{} demux loop ended.", url_);
-}
-
-bool Demuxer::handleFileStreamPause()
-{
-    if (isPaused_.load()) {
-        std::unique_lock<std::mutex> lock(mutex_);
-        pauseCv_.wait(lock, [this] { return !isPaused_.load() || !isRunning_.load(); });
-
-        if (!isRunning_.load()) {
-            return false;
-        }
-    }
-    return true;
-}
-
-int Demuxer::readAndProcessPacket(
-    AVPacket *pkt, std::optional<std::chrono::high_resolution_clock::time_point> &occuredErrorTime,
-    bool &readFirstPacket, bool isEof)
-{
-    // 读取数据包
-    int ret;
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        // 在锁保护下读取数据包
-        ret = av_read_frame(formatContext_, pkt);
-    }
-
-    // 成功读取数据包
-    if (ret >= 0) {
-        occuredErrorTime.reset();
-
-        if (!readFirstPacket) {
-            readFirstPacket = true;
-            auto event = std::make_shared<StreamEventArgs>(url_, "Demuxer", "Stream Read Data");
-            eventDispatcher_->triggerEvent(EventType::kStreamReadData, event);
-        }
-
-        return 0;
-    }
-
-    // 实时流暂停状态下不处理其他错误
-    if (isRealTime_.load() && isPaused_.load()) {
-        return -1;
-    }
-
-    // 处理EOF（对所有流类型都适用）
-    if (ret == AVERROR_EOF || avio_feof(formatContext_->pb)) {
-        if (!isEof) {
-            handleEndOfFile(pkt);
-        }
-
-        // 实时流的EOF可能是临时的，应该累计错误计数
-        if (isRealTime_.load()) {
-            return handleReadError(occuredErrorTime);
-        }
-
-        return 1; // 非实时流的正常EOF
-    }
-
-    // 处理EAGAIN（需要重试）
-    if (ret == AVERROR(EAGAIN)) {
-        return -1;
-    }
-
-    // 处理其他读取错误
-    return handleReadError(occuredErrorTime);
 }
 
 void Demuxer::handleEndOfFile(AVPacket *pkt)
@@ -665,8 +311,149 @@ void Demuxer::distributePacket(AVPacket *pkt)
     checkPreBufferStatus();
 }
 
+void Demuxer::fileStreamDemuxLoop(AVPacket *pkt)
+{
+    std::optional<std::chrono::high_resolution_clock::time_point> occuredErrorTime;
+    bool readFirstPacket = false;
+    std::optional<bool> isEof = std::nullopt;
+
+    while (!requestInterruption_.load()) {
+        // 检查是否有pending的seek请求
+        if (handleSeekRequest()) {
+            // seek完成后继续循环
+            continue;
+        }
+
+        // 处理暂停状态 - 文件流暂停时完全停止读取
+        if (!handleFileStreamPause()) {
+            break;
+        }
+
+        // 读取并处理数据包
+        const int result =
+            readAndProcessPacket(pkt, occuredErrorTime, readFirstPacket, isEof.value_or(false));
+        if (result == 1) {
+            isEof = true;
+            // 文件结束
+            if ((!videoPacketQueue_ || videoPacketQueue_->isEmpty()) &&
+                (!audioPacketQueue_ || audioPacketQueue_->isEmpty()) && isEof.value_or(false)) {
+                auto event = std::make_shared<StreamEventArgs>(url_, "Demuxer", "Stream Ended");
+                eventDispatcher_->triggerEvent(EventType::kStreamEnded, event);
+
+                // 检查是否需要循环播放（仅对文件流有效）
+                if (handleLoopPlayback()) {
+                    // 成功开始新的循环，不发送结束包
+                    av_packet_unref(pkt);
+                }
+                isEof.reset();
+            }
+            continue;
+        } else if (result == -2) {
+            // 严重错误，退出循环
+            break;
+        } else if (result == -1) {
+            // 需要继续循环
+            continue;
+        }
+
+        isEof.reset();
+        // 分发数据包
+        distributePacket(pkt);
+        av_packet_unref(pkt);
+    }
+}
+
+void Demuxer::realTimeStreamDemuxLoop(AVPacket *pkt)
+{
+    std::optional<std::chrono::high_resolution_clock::time_point> occuredErrorTime;
+    bool readFirstPacket = false;
+
+    while (!requestInterruption_.load()) {
+        // 实时流不支持seek，清除任何pending的seek请求
+        if (seekMsPos_.load() > 0) {
+            seekMsPos_.store(-1);
+            LOG_WARN("Seek not supported for real-time streams, ignoring seek request");
+        }
+
+        // 读取并处理数据包
+        int result = readAndProcessPacket(pkt, occuredErrorTime, readFirstPacket);
+        if (result == 1) {
+            // 实时流EOF，短暂等待后继续
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            continue;
+        } else if (result == -2) {
+            // 严重错误，退出循环
+            break;
+        } else if (result == -1) {
+            // 需要继续循环
+            continue;
+        }
+
+        // 分发数据包
+        distributePacket(pkt);
+        av_packet_unref(pkt);
+    }
+}
+
+bool Demuxer::handleFileStreamPause()
+{
+    if (isPaused_.load()) {
+        std::unique_lock<std::mutex> lock(pauseMutex_);
+        pauseCv_.wait(lock, [this] { return !isPaused_.load() || requestInterruption_.load(); });
+
+        if (requestInterruption_.load()) {
+            return false;
+        }
+    }
+    return true;
+}
+
+int Demuxer::readAndProcessPacket(
+    AVPacket *pkt, std::optional<std::chrono::high_resolution_clock::time_point> &occuredErrorTime,
+    bool &readFirstPacket, bool isEof)
+{
+    // 读取数据包
+    const int ret = av_read_frame(formatContext_, pkt);
+
+    // 成功读取数据包
+    if (ret >= 0) {
+        occuredErrorTime.reset();
+
+        if (!readFirstPacket) {
+            readFirstPacket = true;
+            auto event = std::make_shared<StreamEventArgs>(url_, "Demuxer", "Stream Read Data");
+            eventDispatcher_->triggerEvent(EventType::kStreamReadData, event);
+        }
+
+        return 0;
+    }
+
+    // 处理EOF（对所有流类型都适用）
+    if (ret == AVERROR_EOF || avio_feof(formatContext_->pb)) {
+        if (!isEof) {
+            handleEndOfFile(pkt);
+        }
+
+        // 实时流的EOF可能是临时的，应该累计错误计数
+        if (isRealTime_) {
+            return handleReadError(occuredErrorTime);
+        }
+
+        return 1; // 非实时流的正常EOF
+    }
+
+    // 处理EAGAIN（需要重试）
+    if (ret == AVERROR(EAGAIN)) {
+        return -1;
+    }
+
+    // 处理其他读取错误
+    return handleReadError(occuredErrorTime);
+}
+
 void Demuxer::checkPreBufferStatus()
 {
+    // 这里不加锁是因为只会在解复用线程中调用这个函数。解复用线程的开始和结束会确保这个函数的调用是线程安全的。
     if (!preBufferEnabled_ || preBufferReady_) {
         return;
     }
@@ -710,17 +497,37 @@ void Demuxer::checkPreBufferStatus()
     }
 }
 
+void Demuxer::clearPreBufferCallback()
+{
+    preBufferReadyCallback_ = nullptr;
+    preBufferEnabled_ = false;
+    preBufferReady_ = false;
+}
+
+void Demuxer::setPreBufferConfig(uint32_t videoFrames, uint32_t audioPackets, bool requireBoth,
+                                 std::function<void()> onPreBufferReady)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    preBufferVideoFrames_ = videoFrames;
+    preBufferAudioPackets_ = audioPackets;
+    requireBothStreams_ = requireBoth;
+    preBufferEnabled_ = (videoFrames > 0 || audioPackets > 0);
+    preBufferReady_ = false;
+    preBufferReadyCallback_ = onPreBufferReady;
+
+    LOG_INFO("PreBuffer config set: video={}, audio={}, requireBoth={}", videoFrames, audioPackets,
+             requireBoth);
+}
+
 bool Demuxer::handleLoopPlayback()
 {
-    std::lock_guard<std::mutex> lock(loopMutex_);
-
     LoopMode mode = loopMode_.load();
     if (mode == LoopMode::kNone) {
         return false;
     }
 
-    int currentLoop = currentLoopCount_.load();
-    int maxLoops = maxLoops_.load();
+    const int currentLoop = currentLoopCount_.load();
+    const int maxLoops = maxLoops_.load();
 
     // 检查是否达到最大循环次数
     if (mode == LoopMode::kSingle && maxLoops > 0 && currentLoop >= maxLoops) {
@@ -745,8 +552,8 @@ bool Demuxer::handleLoopPlayback()
     currentLoopCount_.fetch_add(1);
 
     // 触发循环播放事件
-    auto loopEvent = std::make_shared<LoopEventArgs>(currentLoopCount_.load(), maxLoops_.load(),
-                                                     "Demuxer", "Stream Looped");
+    auto loopEvent =
+        std::make_shared<LoopEventArgs>(currentLoopCount_, maxLoops_, "Demuxer", "Stream Looped");
     eventDispatcher_->triggerEvent(EventType::kStreamLooped, loopEvent);
 
     LOG_INFO("Stream looped: current={}, max={}", currentLoopCount_.load(), maxLoops_.load());
@@ -775,37 +582,256 @@ int Demuxer::handleReadError(
     return -1; // 需要继续
 }
 
-void Demuxer::clearPreBufferCallback()
+bool Demuxer::handleSeekRequest()
 {
-    std::lock_guard<std::mutex> lock(mutex_);
-    preBufferReadyCallback_ = nullptr;
-    preBufferEnabled_ = false;
-    preBufferReady_ = false;
-}
-
-void Demuxer::setLoopMode(LoopMode mode, int maxLoops)
-{
-    std::lock_guard<std::mutex> lock(loopMutex_);
-    loopMode_.store(mode);
-    maxLoops_.store(maxLoops);
-    if (mode == LoopMode::kNone) {
-        currentLoopCount_.store(0);
+    auto seekMsPosition = seekMsPos_.load();
+    if (seekMsPosition < 0) {
+        return false;
     }
+
+    // 清除seek请求
+    seekMsPos_.store(-1);
+
+    // 转换时间戳
+    const double position = seekMsPosition * 0.001;
+    int64_t timestamp = static_cast<int64_t>(position * AV_TIME_BASE);
+
+    // 执行seek
+    int ret = av_seek_frame(formatContext_, -1, timestamp, AVSEEK_FLAG_BACKWARD);
+    if (ret < 0) {
+        LOG_ERROR("Seek failed: {}", utils::avErr2Str(ret));
+        return false;
+    }
+    avformat_flush(formatContext_);
+
+    // 刷新队列
+    if (videoPacketQueue_) {
+        videoPacketQueue_->flush();
+    }
+    if (audioPacketQueue_) {
+        audioPacketQueue_->flush();
+    }
+
+    LOG_INFO("{} seek completed to position: {:.2f}s", url_, position);
+    return true;
 }
 
-LoopMode Demuxer::getLoopMode() const
+bool Demuxer::openInternal(const std::string &url, const Config &config,
+                           const std::function<void()> &preBufferCallback)
 {
-    return loopMode_.load();
+    if (isOpened_) {
+        closeInternal();
+    }
+
+    // 上报流正在打开事件
+    auto event = std::make_shared<StreamEventArgs>(url, "Demuxer", "Stream Opening");
+    eventDispatcher_->triggerEvent(EventType::kStreamOpening, event);
+
+    const auto sendFailedEvent = [this, url]() {
+        auto event = std::make_shared<StreamEventArgs>(url, "Demuxer", "Stream Open Failed");
+        eventDispatcher_->triggerEvent(EventType::kStreamOpenFailed, event);
+    };
+
+    // 设置FFmpeg选项
+    AVDictionary *options = nullptr;
+    av_dict_set(&options, "timeout", "2000000", 0); // 2秒超时
+    av_dict_set(&options, "max_delay", "0", 0);
+    av_dict_set(&options, "buffer_size", "1048576", 0); // 1MB缓冲
+    av_dict_set(&options, "analyzeduration", "1000000", 0);
+
+    if (isRealTime_) {
+        av_dict_set(&options, "rtsp_transport", "tcp", 0);
+        av_dict_set(&options, "fflags", "nobuffer", 0);
+        av_dict_set(&options, "stimeout", "2000000", 0);
+    }
+
+    // 打开输入
+    int ret = avformat_open_input(&formatContext_, url.c_str(), nullptr, &options);
+    av_dict_free(&options);
+
+    if (ret != 0) {
+        LOG_ERROR("Failed to open input: {} - {}", url, utils::avErr2Str(ret));
+        sendFailedEvent();
+        return false;
+    }
+
+    // 查找流信息
+    ret = avformat_find_stream_info(formatContext_, nullptr);
+    if (ret < 0) {
+        LOG_ERROR("Failed to find stream info: {}", utils::avErr2Str(ret));
+        sendFailedEvent();
+        avformat_close_input(&formatContext_);
+        return false;
+    }
+
+    // 重置到文件开始位置
+    if (formatContext_->pb && formatContext_->pb->seekable) {
+        avio_seek(formatContext_->pb, 0, SEEK_SET);
+    }
+
+    // 查找最佳流
+    videoStreamIndex_ = av_find_best_stream(formatContext_, AVMEDIA_TYPE_VIDEO, -1, -1, nullptr, 0);
+    audioStreamIndex_ = av_find_best_stream(formatContext_, AVMEDIA_TYPE_AUDIO, -1, -1, nullptr, 0);
+
+    // 创建数据包队列
+    if (videoStreamIndex_ >= 0 && (config.decodeMediaType & Config::DecodeMediaType::kVideo)) {
+        videoPacketQueue_ = std::make_shared<PacketQueue>(1000);
+    }
+    if (audioStreamIndex_ >= 0 && (config.decodeMediaType & Config::DecodeMediaType::kAudio)) {
+        audioPacketQueue_ = std::make_shared<PacketQueue>(1000);
+    }
+
+    // 设置状态
+    url_ = url;
+    isRealTime_ = utils::isRealtime(url);
+    isOpened_ = true;
+
+    // 设置预缓冲
+    if (config.preBufferConfig.enablePreBuffer) {
+        setPreBufferConfig(config.preBufferConfig.videoPreBufferFrames,
+                           config.preBufferConfig.audioPreBufferPackets,
+                           config.preBufferConfig.requireBothStreams, preBufferCallback);
+    }
+
+    // 启动解复用器
+    start();
+
+    // 获取流总时长（以秒为单位）
+    std::optional<int> totalTime;
+    if (formatContext_ && formatContext_->duration != AV_NOPTS_VALUE) {
+        // 将时长从微秒转换为秒
+        totalTime = static_cast<int>(formatContext_->duration / AV_TIME_BASE);
+    }
+
+    // 上报成功事件
+    event = std::make_shared<StreamEventArgs>(url, "Demuxer", "Stream Opened");
+    event->totalTime = totalTime;
+    eventDispatcher_->triggerEvent(EventType::kStreamOpened, event);
+
+    LOG_INFO("Successfully opened: {}", url);
+    return true;
 }
 
-int Demuxer::getCurrentLoopCount() const
+bool Demuxer::closeInternal()
 {
-    return currentLoopCount_.load();
+    // 停止解复用线程
+    stop();
+    if (!isOpened_)
+        return true;
+
+    // 销毁上下文
+    if (formatContext_) {
+        avformat_close_input(&formatContext_);
+        formatContext_ = nullptr;
+    }
+
+    // 重置队列
+    videoPacketQueue_.reset();
+    audioPacketQueue_.reset();
+
+    // 清除预缓冲
+    clearPreBufferCallback();
+
+    // 重置状态
+    videoStreamIndex_ = -1;
+    audioStreamIndex_ = -1;
+    url_.clear();
+    isRealTime_ = false;
+    isOpened_ = false;
+
+    // 上报流关闭事件
+    const auto event = std::make_shared<StreamEventArgs>(url_, "Demuxer", "Stream Close");
+    eventDispatcher_->triggerEvent(EventType::kStreamClose, event);
+
+    return true;
 }
 
-void Demuxer::resetLoopCount()
+bool Demuxer::pauseInternal()
 {
-    currentLoopCount_.store(0);
+    if (!isOpened_ || !isStarted_) {
+        return false;
+    }
+
+    if (isPaused_.load()) {
+        return true;
+    }
+
+    isPaused_.store(true);
+    return true;
+}
+
+bool Demuxer::resumeInternal()
+{
+    if (!isOpened_ || !isStarted_) {
+        return false;
+    }
+
+    if (!isPaused_.load()) {
+        return true;
+    }
+
+    // 如果是实时流，恢复前先清空队列
+    if (isRealTime_) {
+        if (videoPacketQueue_) {
+            videoPacketQueue_->flush();
+        }
+        if (audioPacketQueue_) {
+            audioPacketQueue_->flush();
+        }
+    }
+
+    isPaused_.store(false);
+    pauseCv_.notify_all();
+    return true;
+}
+
+void Demuxer::start()
+{
+    if (isStarted_) {
+        return;
+    }
+
+    // 启动队列
+    if (videoPacketQueue_) {
+        videoPacketQueue_->start();
+    }
+    if (audioPacketQueue_) {
+        audioPacketQueue_->start();
+    }
+
+    // 启动解复用线程
+    requestInterruption_.store(false);
+    thread_ = std::thread(&Demuxer::demuxLoop, this);
+    isStarted_ = true;
+
+    LOG_INFO("{} demuxer started!", url_);
+}
+
+void Demuxer::stop()
+{
+    if (!isStarted_) {
+        return;
+    }
+
+    // 唤醒暂停的线程
+    pauseCv_.notify_all();
+
+    // 中止队列
+    if (videoPacketQueue_) {
+        videoPacketQueue_->abort();
+    }
+    if (audioPacketQueue_) {
+        audioPacketQueue_->abort();
+    }
+
+    // 等待线程结束
+    requestInterruption_.store(true);
+    if (thread_.joinable()) {
+        thread_.join();
+    }
+
+    isStarted_ = false;
+    LOG_INFO("{} demuxer stopped!", url_);
 }
 
 INTERNAL_NAMESPACE_END

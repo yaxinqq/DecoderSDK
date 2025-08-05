@@ -1,4 +1,4 @@
-#ifndef DECODER_SDK_INTERNAL_CONTROLLER_H
+﻿#ifndef DECODER_SDK_INTERNAL_CONTROLLER_H
 #define DECODER_SDK_INTERNAL_CONTROLLER_H
 #include <atomic>
 #include <future>
@@ -96,11 +96,11 @@ public:
      */
     bool isDecodeStopped() const;
     /**
-     * @brief 解码是否已暂停
+     * @brief 是否已暂停
      *
      * @return true 已停止; false 未停止
      */
-    bool isDecodePaused() const;
+    bool isPaused() const;
 
     /**
      * @brief 定位
@@ -238,17 +238,6 @@ public:
      * @return true 正在运行; false 已停止
      */
     bool isAsyncProcessingActive() const;
-    /**
-     * @brief 停止重连任务
-     *
-     */
-    void stopReconnect();
-    /**
-     * @brief 检查是否正在重连
-     *
-     * @return true 正在重连; false 未重连
-     */
-    bool isReconnecting() const;
 
     /**
      * @brief 检查是否为实时流地址
@@ -283,7 +272,17 @@ public:
      */
     bool resetLoopCount();
 
-public:
+    /**
+     * @brief 检查是否正在重连
+     * @return true 正在重连; false 未重连
+     */
+    bool isReconnecting() const;
+
+    /**
+     * @brief 手动停止重连
+     */
+    void stopReconnectManually();
+
     /**
      * @brief 获取预缓冲状态
      *
@@ -299,33 +298,40 @@ public:
 
 private:
     /**
-     * @brief 重新打开
+     * @brief 同步打开的内部实现，不加锁
      *
-     * @param url 流地址
+     * @param url 媒体文件URL
+     * @param config 配置项
      * @return true 成功; false 失败
      */
-    bool reopen(const std::string &url);
+    bool openInternal(const std::string &url, const Config &config);
     /**
-     * @brief 处理重连
+     * @brief 异步打开的内部实现，不加锁
      *
-     * @param url 流地址
+     * @param url 媒体文件URL
+     * @param config 配置项
+     * @return true 成功; false 失败
      */
-    void handleReconnect(const std::string &url);
+    bool openAsyncInternal(const std::string &url, const Config &config);
+    /**
+     * @brief 关闭的内部实现，不加锁
+     *
+     * @return true 成功; false 失败
+     */
+    bool closeInternal();
 
     /**
      * @brief 内部开始解码
      *
-     * @param reopen 是否重新打开
      * @return true 成功; false 失败
      */
-    bool startDecodeInternal(bool reopen);
+    bool startDecodeInternal();
     /**
      * @brief 内部停止解码
      *
-     * @param reopen 是否重新打开
      * @return true 成功; false 失败
      */
-    bool stopDecodeInternal(bool reopen);
+    bool stopDecodeInternal();
 
     /**
      * @brief 预缓冲结束后的回调
@@ -334,24 +340,43 @@ private:
     // 清理预缓冲状态
     void cleanupPreBufferState();
 
-    // 异步打开的内部实现
-    bool openAsyncInternal(const std::string &filePath, const Config &config);
+    /**
+     * @brief 开始重连流程
+     */
+    void startReconnect();
+
+    /**
+     * @brief 停止重连流程
+     */
+    void stopReconnect();
+
+    /**
+     * @brief 重连线程主循环
+     */
+    void reconnectLoop();
+
+    /**
+     * @brief 执行单次重连尝试
+     * @return true 重连成功; false 重连失败
+     */
+    bool attemptReconnect();
+
+    /**
+     * @brief 清理重连状态
+     */
+    void cleanupReconnectState();
 
 private:
-    std::shared_ptr<EventDispatcher> eventDispatcher_; // 事件分发器
-
-    std::shared_ptr<Demuxer> demuxer_;                  // 解复用器
-    std::shared_ptr<VideoDecoder> videoDecoder_;        // 视频解码器
-    std::shared_ptr<AudioDecoder> audioDecoder_;        // 音频解码器
+    std::shared_ptr<EventDispatcher> eventDispatcher_;  // 事件分发器
     std::shared_ptr<StreamSyncManager> syncController_; // 流同步管理器
 
-    std::atomic_bool isStartDecoding_ = false; // 当前是否正在解码
+    std::shared_ptr<Demuxer> demuxer_;           // 解复用器
+    std::shared_ptr<VideoDecoder> videoDecoder_; // 视频解码器
+    std::shared_ptr<AudioDecoder> audioDecoder_; // 音频解码器
 
-    Config config_; // 解码器配置项
-
-    std::atomic<int> reconnectAttempts_{0};       // 重连尝试次数
-    std::atomic_bool isReconnecting_{false};      // 是否正在重连
-    std::atomic_bool shouldStopReconnect_{false}; // 添加重连停止标志
+    Config config_;          // 解码器配置项
+    bool isDecoding_{false}; // 是否正在解码
+    bool isPaused_{false};   // 是否已暂停
 
     // 预缓冲状态
     std::atomic<PreBufferState> preBufferState_{PreBufferState::kDisabled};
@@ -361,6 +386,17 @@ private:
     std::future<void> asyncOpenFuture_;              // 异步打开操作的future对象
     AsyncOpenCallback asyncOpenCallback_;            // 异步打开回调函数
     std::mutex asyncCallbackMutex_;                  // 异步回调函数的互斥锁
+
+    mutable std::mutex mutex_; // 互斥锁，保护内部状态
+
+    // 重连相关成员变量
+    std::atomic<bool> isReconnecting_{false};                 // 是否正在重连
+    std::atomic<bool> shouldStopReconnect_{false};            // 是否应该停止重连
+    std::atomic<int> currentReconnectAttempt_{0};             // 当前重连次数
+    std::atomic<bool> hasDecoderWhenReconnected_{false};      // 记录重连时是否有解码器
+    std::atomic<bool> isDemuxerPausedWhenReconnected_{false}; // 记录重连时解复用器是否暂停
+    std::string originalUrl_;                                 // 原始URL，用于重连
+    std::thread reconnectThread_;                             // 重连线程
 };
 
 INTERNAL_NAMESPACE_END

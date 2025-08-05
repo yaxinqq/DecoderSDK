@@ -1,4 +1,4 @@
-#include "decoder_base.h"
+﻿#include "decoder_base.h"
 
 #include <algorithm>
 #include <thread>
@@ -11,18 +11,6 @@
 
 namespace {
 constexpr int kFrameQueueDefaultSize = 3;
-
-decoder_sdk::MediaType transAVMediaType(AVMediaType type)
-{
-    switch (type) {
-        case AVMEDIA_TYPE_VIDEO:
-            return decoder_sdk::MediaType::kMediaTypeVideo;
-        case AVMEDIA_TYPE_AUDIO:
-            return decoder_sdk::MediaType::kMediaTypeAudio;
-        default:
-            return decoder_sdk::MediaType::kMediaTypeUnknown;
-    }
-}
 } // namespace
 
 DECODER_SDK_NAMESPACE_BEGIN
@@ -34,8 +22,7 @@ DecoderBase::DecoderBase(std::shared_ptr<Demuxer> demuxer,
     : demuxer_(demuxer),
       syncController_(StreamSyncManager),
       eventDispatcher_(eventDispatcher),
-      frameQueue_(new FrameQueue(kFrameQueueDefaultSize, false)),
-      isRunning_(false),
+      frameQueue_(new FrameQueue(kFrameQueueDefaultSize, false, false)),
       lastFrameTime_(std::nullopt)
 {
     statistics_.reset();
@@ -48,169 +35,38 @@ DecoderBase::~DecoderBase()
 
 bool DecoderBase::open()
 {
-    // 如果解码器已经打开，则先关闭
-    if (needClose_) {
-        close();
-    }
-
-    const auto sendFailedEvent = [this]() {
-        auto event = std::make_shared<DecoderEventArgs>(codecCtx_ ? codecCtx_->codec->name : "",
-                                                        streamIndex_, transAVMediaType(type()),
-                                                        false, "Decoder", "Decode Created Failed");
-        eventDispatcher_->triggerEvent(EventType::kCreateDecoderFailed, event);
-    };
-
-    auto *const formatContext = demuxer_->formatContext();
-    if (!formatContext) {
-        sendFailedEvent();
-        return false;
-    }
-
-    streamIndex_ = demuxer_->streamIndex(type());
-    if (streamIndex_ < 0) {
-        sendFailedEvent();
-        return false;
-    }
-
-    stream_ = formatContext->streams[streamIndex_];
-
-    const AVCodec *codec = avcodec_find_decoder(stream_->codecpar->codec_id);
-    if (!codec) {
-        sendFailedEvent();
-        return false;
-    }
-
-    codecCtx_ = avcodec_alloc_context3(codec);
-    if (!codecCtx_) {
-        sendFailedEvent();
-        return false;
-    }
-
-    if (avcodec_parameters_to_context(codecCtx_, stream_->codecpar) < 0) {
-        sendFailedEvent();
-        return false;
-    }
-
-    // 尝试设置硬解
-    const bool useHw = setupHardwareDecode();
-
-    if (avcodec_open2(codecCtx_, codec, nullptr) < 0) {
-        sendFailedEvent();
-        return false;
-    }
-
-    // 发送解码器创建成功的事件
-    auto event = std::make_shared<DecoderEventArgs>(codecCtx_->codec->name, streamIndex_,
-                                                    transAVMediaType(type()), useHw, "Decoder",
-                                                    "Decode Created Success");
-    eventDispatcher_->triggerEvent(EventType::kCreateDecoderSuccess, event);
-
-    needClose_ = true;
-    statistics_.reset();
-    return true;
+    std::lock_guard<std::mutex> lock(mutex_);
+    return openInternal();
 }
 
 void DecoderBase::start()
 {
-    if (isRunning_.load())
-        return;
-
-    // 获取对应的包队列
-    auto packetQueue = demuxer_->packetQueue(type());
-    if (!packetQueue)
-        return;
-
-    // 设置帧队列的序列号与包队列一致
-    frameQueue_->setSerial(packetQueue->serial());
-    // 设置帧队列的中止状态与包队列一致
-    frameQueue_->setAbortStatus(packetQueue->isAborted());
-
-    // 清空seek节点
-    {
-        std::lock_guard<std::mutex> lock(configMutex_);
-        seekPos_ = 0.0;
-    }
-
-    isRunning_.store(true);
-    thread_ = std::thread(&DecoderBase::decodeLoop, this);
-
-    // 发送解码已开始的事件
-    auto event = std::make_shared<DecoderEventArgs>(
-        codecCtx_->codec->name, streamIndex_, transAVMediaType(type()),
-        codecCtx_->hw_device_ctx != nullptr, "Decoder", "Decode Started");
-    eventDispatcher_->triggerEvent(EventType::kDecodeStarted, event);
+    std::lock_guard<std::mutex> lock(mutex_);
+    startInternal();
 }
 
 void DecoderBase::stop()
 {
-    if (!isRunning_.load())
-        return;
-
-    isPaused_.store(false);
-    isRunning_.store(false);
-    frameQueue_->setAbortStatus(true);
-
-    // 唤醒暂停的线程
-    pauseCv_.notify_all();
-
-    if (thread_.joinable())
-        thread_.join();
-
-    // 发送解码已停止的事件
-    auto event = std::make_shared<DecoderEventArgs>(
-        codecCtx_->codec->name, streamIndex_, transAVMediaType(type()),
-        codecCtx_->hw_device_ctx != nullptr, "Decoder", "Decode Stopped");
-    eventDispatcher_->triggerEvent(EventType::kDecodeStopped, event);
+    std::unique_lock<std::mutex> lock(mutex_);
+    stopInternal();
 }
 
 void DecoderBase::pause()
 {
-    if (!isRunning_.load())
-        return;
-
-    isPaused_.store(true);
-
-    // 发送解码已暂停的事件
-    auto event = std::make_shared<DecoderEventArgs>(
-        codecCtx_->codec->name, streamIndex_, transAVMediaType(type()),
-        codecCtx_->hw_device_ctx != nullptr, "Decoder", "Decode Paused");
-    eventDispatcher_->triggerEvent(EventType::kDecodePaused, event);
+    std::lock_guard<std::mutex> lock(mutex_);
+    pauseInternal();
 }
 
 void DecoderBase::resume()
 {
-    if (!isRunning_.load() || !isPaused_.load())
-        return;
-
-    isPaused_.store(false);
-    pauseCv_.notify_all();
-
-    // 发送解码已开始的事件
-    auto event = std::make_shared<DecoderEventArgs>(
-        codecCtx_->codec->name, streamIndex_, transAVMediaType(type()),
-        codecCtx_->hw_device_ctx != nullptr, "Decoder", "Decode Started");
-    eventDispatcher_->triggerEvent(EventType::kDecodeStarted, event);
+    std::lock_guard<std::mutex> lock(mutex_);
+    resumeInternal();
 }
 
 void DecoderBase::close()
 {
-    stop();
-    if (!needClose_)
-        return;
-
-    const auto codecName = codecCtx_ ? codecCtx_->codec->name : "";
-    const bool useHw = codecCtx_ ? codecCtx_->hw_device_ctx != nullptr : false;
-
-    if (codecCtx_) {
-        avcodec_free_context(&codecCtx_);
-    }
-
-    needClose_ = false;
-
-    // 发送解码已销毁的事件
-    auto event = std::make_shared<DecoderEventArgs>(
-        codecName, streamIndex_, transAVMediaType(type()), useHw, "Decoder", "Decode Destroyed");
-    eventDispatcher_->triggerEvent(EventType::kDestoryDecoder, event);
+    std::lock_guard<std::mutex> lock(mutex_);
+    closeInternal();
 }
 
 std::shared_ptr<FrameQueue> DecoderBase::frameQueue()
@@ -220,61 +76,43 @@ std::shared_ptr<FrameQueue> DecoderBase::frameQueue()
 
 void DecoderBase::setSeekPos(double pos)
 {
-    std::lock_guard<std::mutex> lock(configMutex_);
-    seekPos_ = pos;
-    demuxerSeeking_ = true;
+    utils::atomicUpdateIfNotEqual<bool>(demuxerSeeking_, true);
+    utils::atomicUpdateIfNotEqual<int64_t>(seekPosMs_, static_cast<int64_t>(pos * 1000));
 }
 
 double DecoderBase::seekPos() const
 {
-    std::lock_guard<std::mutex> lock(configMutex_);
-    return seekPos_;
+    return seekPosMs_.load() * 0.001;
 }
 
 bool DecoderBase::setSpeed(double speed)
 {
-    if (speed <= 0.0f) {
+    if (speed <= 0.0f || utils::greater(speed, 64.0)) {
         return false;
     }
 
-    std::lock_guard<std::mutex> lock(configMutex_);
-    if (utils::equal(speed_, speed)) {
-        return false;
-    }
-
-    speed_ = speed;
-    syncController_->setSpeed(speed);
+    utils::atomicUpdateIfNotEqual<uint16_t>(speed_, static_cast<uint16_t>(speed * 1000));
     return true;
 }
 
 double DecoderBase::speed() const
 {
-    std::lock_guard<std::mutex> lock(configMutex_);
-    return speed_;
+    return speed_ * 0.001;
 }
 
 void DecoderBase::setMaxFrameQueueSize(uint32_t size)
 {
-    if (maxFrameQueueSize_.load() == size) {
-        return;
-    }
-
-    maxFrameQueueSize_.store(size);
     frameQueue_->setMaxCount(size);
 }
 
 uint32_t DecoderBase::maxFrameQueueSize() const
 {
-    return maxFrameQueueSize_.load();
+    return frameQueue_->capacity();
 }
 
 void DecoderBase::setFrameRateControl(bool enable)
 {
-    if (enableFrameControl_.load() == enable) {
-        return;
-    }
-
-    enableFrameControl_.store(enable);
+    utils::atomicUpdateIfNotEqual<bool>(enableFrameControl_, enable);
 }
 
 bool DecoderBase::isFrameRateControlEnabled() const
@@ -284,11 +122,7 @@ bool DecoderBase::isFrameRateControlEnabled() const
 
 void DecoderBase::setMaxConsecutiveErrors(uint16_t maxErrors)
 {
-    if (maxConsecutiveErrors_.load() == maxErrors) {
-        return;
-    }
-
-    maxConsecutiveErrors_.store(maxErrors);
+    utils::atomicUpdateIfNotEqual<uint16_t>(maxConsecutiveErrors_, maxErrors);
 }
 
 uint16_t DecoderBase::maxConsecutiveErrors() const
@@ -298,11 +132,7 @@ uint16_t DecoderBase::maxConsecutiveErrors() const
 
 void DecoderBase::setRecoveryInterval(uint16_t interval)
 {
-    if (recoveryInterval_.load() == interval) {
-        return;
-    }
-
-    recoveryInterval_.store(interval);
+    utils::atomicUpdateIfNotEqual<uint16_t>(recoveryInterval_, interval);
 }
 
 uint16_t DecoderBase::recoveryInterval() const
@@ -327,9 +157,14 @@ void DecoderBase::updateTotalDecodeTime()
                                       .count();
 }
 
+AVMediaType DecoderBase::type() const
+{
+    return AVMEDIA_TYPE_UNKNOWN;
+}
+
 void DecoderBase::setWaitingForPreBuffer(bool waiting)
 {
-    waitingForPreBuffer_.store(waiting);
+    utils::atomicUpdateIfNotEqual(waitingForPreBuffer_, waiting);
 }
 
 bool DecoderBase::isWaitingForPreBuffer() const
@@ -399,7 +234,7 @@ bool DecoderBase::handleDecodeRecovery(const std::string &decoderName, MediaType
 
 double DecoderBase::calculateFrameDisplayTime(
     double pts, double duration,
-    std::optional<std::chrono::steady_clock::time_point> &lastFrameTime)
+    std::optional<std::chrono::steady_clock::time_point> &lastFrameTime) const
 {
     if (std::isnan(pts)) {
         return 0.0;
@@ -450,7 +285,180 @@ bool DecoderBase::checkAndUpdateSerial(int &currentSerial, PacketQueue *packetQu
 
 bool DecoderBase::shouldContinueDecoding() const
 {
-    return isRunning_.load() && statistics_.consecutiveErrors.load() < maxConsecutiveErrors_;
+    return !requestInterruption_.load() &&
+           statistics_.consecutiveErrors.load() < maxConsecutiveErrors_;
+}
+
+bool DecoderBase::openInternal()
+{
+    if (isOpened_) {
+        closeInternal();
+    }
+
+    const auto sendFailedEvent = [this]() {
+        auto event = std::make_shared<DecoderEventArgs>(
+            codecCtx_ ? codecCtx_->codec->name : "", streamIndex_,
+            utils::avMediaType2MediaType(type()), false, "Decoder", "Decode Created Failed");
+        eventDispatcher_->triggerEvent(EventType::kCreateDecoderFailed, event);
+    };
+
+    auto *const formatContext = demuxer_->formatContext();
+    if (!formatContext) {
+        sendFailedEvent();
+        return false;
+    }
+
+    streamIndex_ = demuxer_->streamIndex(type());
+    if (streamIndex_ < 0) {
+        sendFailedEvent();
+        return false;
+    }
+
+    stream_ = formatContext->streams[streamIndex_];
+
+    const AVCodec *codec = avcodec_find_decoder(stream_->codecpar->codec_id);
+    if (!codec) {
+        sendFailedEvent();
+        return false;
+    }
+
+    codecCtx_ = avcodec_alloc_context3(codec);
+    if (!codecCtx_) {
+        sendFailedEvent();
+        return false;
+    }
+
+    if (avcodec_parameters_to_context(codecCtx_, stream_->codecpar) < 0) {
+        sendFailedEvent();
+        return false;
+    }
+
+    // 尝试设置硬解
+    const bool useHw = setupHardwareDecode();
+
+    if (avcodec_open2(codecCtx_, codec, nullptr) < 0) {
+        sendFailedEvent();
+        return false;
+    }
+
+    frameQueue_->init();
+
+    // 发送解码器创建成功的事件
+    auto event = std::make_shared<DecoderEventArgs>(codecCtx_->codec->name, streamIndex_,
+                                                    utils::avMediaType2MediaType(type()), useHw,
+                                                    "Decoder", "Decode Created Success");
+    eventDispatcher_->triggerEvent(EventType::kCreateDecoderSuccess, event);
+
+    isOpened_ = true;
+    statistics_.reset();
+    return true;
+}
+
+void DecoderBase::closeInternal()
+{
+    stopInternal();
+    if (!isOpened_)
+        return;
+
+    const auto codecName = codecCtx_ ? codecCtx_->codec->name : "";
+    const bool useHw = codecCtx_ ? codecCtx_->hw_device_ctx != nullptr : false;
+
+    if (codecCtx_) {
+        avcodec_free_context(&codecCtx_);
+    }
+
+    // 清空帧队列
+    frameQueue_->uninit();
+
+    isOpened_ = false;
+
+    // 发送解码已销毁的事件
+    auto event = std::make_shared<DecoderEventArgs>(codecName, streamIndex_,
+                                                    utils::avMediaType2MediaType(type()), useHw,
+                                                    "Decoder", "Decode Destroyed");
+    eventDispatcher_->triggerEvent(EventType::kDestoryDecoder, event);
+}
+
+void DecoderBase::startInternal()
+{
+    if (isStarted_)
+        return;
+
+    // 获取对应的包队列
+    auto packetQueue = demuxer_->packetQueue(type());
+    if (!packetQueue)
+        return;
+
+    // 设置帧队列的序列号与包队列一致
+    frameQueue_->setSerial(packetQueue->serial());
+    // 设置帧队列的中止状态与包队列一致
+    frameQueue_->setAbortStatus(packetQueue->isAborted());
+
+    // 清空seek节点
+    seekPosMs_.store(0);
+    requestInterruption_.store(false);
+    thread_ = std::thread(&DecoderBase::decodeLoop, this);
+
+    isStarted_ = true;
+
+    // 发送解码已开始的事件
+    auto event = std::make_shared<DecoderEventArgs>(
+        codecCtx_->codec->name, streamIndex_, utils::avMediaType2MediaType(type()),
+        codecCtx_->hw_device_ctx != nullptr, "Decoder", "Decode Started");
+    eventDispatcher_->triggerEvent(EventType::kDecodeStarted, event);
+}
+
+void DecoderBase::stopInternal()
+{
+    if (!isStarted_)
+        return;
+
+    isPaused_.store(false);
+    requestInterruption_.store(true);
+    frameQueue_->setAbortStatus(true);
+
+    // 唤醒暂停的线程
+    pauseCv_.notify_all();
+
+    if (thread_.joinable()) {
+        thread_.join();
+    }
+    isStarted_ = false;
+
+    // 发送解码已停止的事件
+    auto event = std::make_shared<DecoderEventArgs>(
+        codecCtx_->codec->name, streamIndex_, utils::avMediaType2MediaType(type()),
+        codecCtx_->hw_device_ctx != nullptr, "Decoder", "Decode Stopped");
+    eventDispatcher_->triggerEvent(EventType::kDecodeStopped, event);
+}
+
+void DecoderBase::pauseInternal()
+{
+    if (!isOpened_ || !isStarted_ || isPaused_.load())
+        return;
+
+    isPaused_.store(true);
+
+    // 发送解码已暂停的事件
+    auto event = std::make_shared<DecoderEventArgs>(
+        codecCtx_->codec->name, streamIndex_, utils::avMediaType2MediaType(type()),
+        codecCtx_->hw_device_ctx != nullptr, "Decoder", "Decode Paused");
+    eventDispatcher_->triggerEvent(EventType::kDecodePaused, event);
+}
+
+void DecoderBase::resumeInternal()
+{
+    if (!isOpened_ || !isStarted_ || !isPaused_.load())
+        return;
+
+    isPaused_.store(false);
+    pauseCv_.notify_all();
+
+    // 发送解码已开始的事件
+    auto event = std::make_shared<DecoderEventArgs>(
+        codecCtx_->codec->name, streamIndex_, utils::avMediaType2MediaType(type()),
+        codecCtx_->hw_device_ctx != nullptr, "Decoder", "Decode Started");
+    eventDispatcher_->triggerEvent(EventType::kDecodeStarted, event);
 }
 
 INTERNAL_NAMESPACE_END

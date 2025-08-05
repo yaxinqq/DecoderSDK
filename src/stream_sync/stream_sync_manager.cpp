@@ -29,6 +29,33 @@ double atomicFetchAdd(std::atomic<double> &atomic, double delta)
         // old 会被更新为当前值
     }
 }
+
+// EMA 平滑函数（改进版）
+double smoothEMA(double alpha, double prev, double current, double speed, double maxChange = 0.1)
+{
+    // 根据速度调整参数
+    double speedFactor = std::min(speed, 4.0); // 限制最大影响
+    double adjustedMaxChange = maxChange * speedFactor;
+    double adjustedAlpha = std::min(alpha * speedFactor, 0.9); // 限制最大alpha
+
+    // 检测方向变化（从正变负或从负变正）
+    bool directionChange = (prev > 0 && current < 0) || (prev < 0 && current > 0);
+
+    // 方向变化时使用更大的变化量限制
+    double effectiveMaxChange = directionChange ? adjustedMaxChange * 2.0 : adjustedMaxChange;
+
+    // 限制单次变化量
+    double change = std::clamp(current - prev, -effectiveMaxChange, effectiveMaxChange);
+
+    // 方向变化时使用更大的alpha值加速收敛
+    double effectiveAlpha = directionChange ? std::min(adjustedAlpha * 2.0, 1.0) : adjustedAlpha;
+
+    // 计算新值
+    double newValue = prev + effectiveAlpha * change;
+
+    // 限制累积漂移范围，根据速度调整
+    return std::clamp(newValue, -0.2 * speedFactor, 0.2 * speedFactor);
+}
 } // namespace
 
 DECODER_SDK_NAMESPACE_BEGIN
@@ -101,59 +128,6 @@ void StreamSyncManager::resetClocks()
     syncQualityCounter_.store(0, std::memory_order_release);
 }
 
-double StreamSyncManager::getMasterClock() const
-{
-    return getMasterClockCached();
-}
-
-double StreamSyncManager::getMasterClockCached() const
-{
-    double masterClock;
-
-    switch (master_.load(std::memory_order_acquire)) {
-        case MasterClock::kAudio:
-            masterClock = audioClock_.getClock();
-            break;
-        case MasterClock::kVideo:
-            masterClock = videoClock_.getClock();
-            break;
-        case MasterClock::kExternal:
-            masterClock = externalClock_.getClock();
-            break;
-        default:
-            masterClock = audioClock_.getClock();
-            break;
-    }
-
-    return masterClock;
-}
-
-// EMA 平滑函数（改进版）
-double smoothEMA(double alpha, double prev, double current, double speed, double maxChange = 0.1)
-{
-    // 根据速度调整参数
-    double speedFactor = std::min(speed, 4.0); // 限制最大影响
-    double adjustedMaxChange = maxChange * speedFactor;
-    double adjustedAlpha = std::min(alpha * speedFactor, 0.9); // 限制最大alpha
-
-    // 检测方向变化（从正变负或从负变正）
-    bool directionChange = (prev > 0 && current < 0) || (prev < 0 && current > 0);
-
-    // 方向变化时使用更大的变化量限制
-    double effectiveMaxChange = directionChange ? adjustedMaxChange * 2.0 : adjustedMaxChange;
-
-    // 限制单次变化量
-    double change = std::clamp(current - prev, -effectiveMaxChange, effectiveMaxChange);
-
-    // 方向变化时使用更大的alpha值加速收敛
-    double effectiveAlpha = directionChange ? std::min(adjustedAlpha * 2.0, 1.0) : adjustedAlpha;
-
-    // 计算新值
-    double newValue = prev + effectiveAlpha * change;
-
-    // 限制累积漂移范围，根据速度调整
-    return std::clamp(newValue, -0.2 * speedFactor, 0.2 * speedFactor);
-}
 double StreamSyncManager::computeVideoDelay(double framePts, double frameDuration, double baseDelay,
                                             double speed)
 {
@@ -287,7 +261,28 @@ SyncQualityStats StreamSyncManager::getSyncQualityStats() const
             maxDrift_.load(std::memory_order_acquire)};
 }
 
-// 私有方法实现
+double StreamSyncManager::getMasterClock() const
+{
+    double masterClock;
+
+    switch (master_.load(std::memory_order_acquire)) {
+        case MasterClock::kAudio:
+            masterClock = audioClock_.getClock();
+            break;
+        case MasterClock::kVideo:
+            masterClock = videoClock_.getClock();
+            break;
+        case MasterClock::kExternal:
+            masterClock = externalClock_.getClock();
+            break;
+        default:
+            masterClock = audioClock_.getClock();
+            break;
+    }
+
+    return masterClock;
+}
+
 void StreamSyncManager::updateSyncQuality(double drift)
 {
     // 递增总的同步质量计数器

@@ -1,4 +1,4 @@
-#ifndef DECODER_SDK_INTERNAL_REAL_TIME_STREAM_RECORDER_H
+﻿#ifndef DECODER_SDK_INTERNAL_REAL_TIME_STREAM_RECORDER_H
 #define DECODER_SDK_INTERNAL_REAL_TIME_STREAM_RECORDER_H
 #include <atomic>
 #include <condition_variable>
@@ -153,9 +153,10 @@ private:
      * @brief 处理数据包写入
      * @param packet 数据包
      * @param mediaType 媒体类型
+     * @param hasKeyFrame 是否是关键帧
      * @return 是否成功写入
      */
-    bool processPacket(const Packet &packet, AVMediaType mediaType);
+    bool processPacket(const Packet &packet, AVMediaType mediaType, bool &hasKeyFrame);
 
     /**
      * @brief 获取容器格式信息映射表
@@ -190,9 +191,6 @@ private:
     // 流映射表
     int *streamMapping_ = nullptr;
     int streamCount_ = 0;
-
-    // 关键帧标志
-    std::atomic<bool> hasKeyFrame_{false};
 
     // 流初始pts和dts映射表
     std::unordered_map<AVMediaType, int64_t> firstPtsMap_;

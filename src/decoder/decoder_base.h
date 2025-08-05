@@ -1,4 +1,4 @@
-#ifndef DECODER_SDK_INTERNAL_DECODER_BASE_H
+﻿#ifndef DECODER_SDK_INTERNAL_DECODER_BASE_H
 #define DECODER_SDK_INTERNAL_DECODER_BASE_H
 #include <atomic>
 #include <chrono>
@@ -158,7 +158,7 @@ public:
      * @brief 获取解码器的媒体类型
      * @return AVMediaType 媒体类型
      */
-    virtual AVMediaType type() const = 0;
+    virtual AVMediaType type() const;
 
     /**
      * @brief 设置预缓冲等待状态
@@ -230,7 +230,7 @@ protected:
      */
     double calculateFrameDisplayTime(
         double pts, double duration,
-        std::optional<std::chrono::steady_clock::time_point> &lastFrameTime);
+        std::optional<std::chrono::steady_clock::time_point> &lastFrameTime) const;
 
     /**
      * @brief 检查并更新序列号
@@ -248,7 +248,10 @@ protected:
 
 protected:
     AVCodecContext *codecCtx_ = nullptr; // 解码器上下文
-    bool needClose_ = false;             // 是否需要关闭解码器
+
+    mutable std::mutex mutex_; // 同步原语
+    bool isOpened_ = false;    // 解码器是否已开启
+    bool isStarted_ = false;   // 解码器是否开始工作
 
     int streamIndex_ = -1;       // 流索引
     AVStream *stream_ = nullptr; // 流信息
@@ -256,25 +259,23 @@ protected:
     std::shared_ptr<Demuxer> demuxer_;       // 解复用器
     std::shared_ptr<FrameQueue> frameQueue_; // 帧队列
 
-    std::thread thread_;                 // 解码线程
-    std::atomic_bool isRunning_ = false; // 解码线程运行状态
-    std::atomic_bool isPaused_ = false;  // 解码线程暂停运行状态
-    std::mutex pauseMutex_;              // 同步原语
-    std::condition_variable pauseCv_;    // 用于暂停的条件变量
+    std::thread thread_;                // 解码线程
+    std::atomic_bool isPaused_ = false; // 解码线程暂停运行状态
+    std::mutex pauseMutex_;             // 同步原语
+    std::condition_variable pauseCv_;   // 用于暂停的条件变量
+
+    std::atomic_bool requestInterruption_ = false; // 是否请求中断解码线程
 
     // 解码时间戳
     std::optional<std::chrono::steady_clock::time_point> lastFrameTime_;
 
-    // 使用mutex保护的配置变量
-    mutable std::mutex configMutex_;
-    // 速度
-    double speed_ = 1.0;
-    // 跳转时间戳
-    double seekPos_ = 0.0;
+    // 配置
+    // 速度 此处存为整型，单位为 1000 倍
+    std::atomic_uint16_t speed_ = 1000;
+    // 跳转时间戳 ms，此处存为整型
+    std::atomic_int64_t seekPosMs_ = -1;
     // demuxer是否正在seeking
-    bool demuxerSeeking_ = false;
-    // 最大帧队列大小
-    std::atomic_uint32_t maxFrameQueueSize_{3};
+    std::atomic_bool demuxerSeeking_ = false;
     // 是否按帧率去推送
     std::atomic_bool enableFrameControl_{true};
     // 解码最大连续错误容忍次数
@@ -293,6 +294,34 @@ protected:
 
     // 预缓冲状态
     std::atomic<bool> waitingForPreBuffer_{false};
+
+private:
+    /**
+     * @brief 打开解码器，内部调用，不加锁
+     */
+    bool openInternal();
+    /**
+     * @brief 关闭解码器，内部调用，不加锁
+     */
+    void closeInternal();
+
+    /**
+     * @brief 启动解码器，内部调用，不加锁
+     */
+    void startInternal();
+    /**
+     * @brief 停止解码器，内部调用，不加锁
+     */
+    void stopInternal();
+
+    /**
+     * @brief 暂停解码器，内部调用，不加锁
+     */
+    void pauseInternal();
+    /**
+     * @brief 恢复解码器，内部调用，不加锁
+     */
+    void resumeInternal();
 };
 
 INTERNAL_NAMESPACE_END

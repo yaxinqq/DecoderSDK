@@ -1,4 +1,4 @@
-#ifndef DECODER_SDK_INTERNAL_FRAME_QUEUE_H
+﻿#ifndef DECODER_SDK_INTERNAL_FRAME_QUEUE_H
 #define DECODER_SDK_INTERNAL_FRAME_QUEUE_H
 
 #include <atomic>
@@ -22,8 +22,9 @@ public:
      * @brief 构造函数
      * @param maxSize 最大帧数量
      * @param keepLast 是否保留最后一帧
+     * @param autoInit 是否自动初始化
      */
-    FrameQueue(int maxSize = 3, bool keepLast = false);
+    FrameQueue(int maxSize = 3, bool keepLast = false, bool autoInit = true);
 
     /**
      * @brief 析构函数
@@ -136,6 +137,15 @@ public:
      * @return 成功返回true，失败返回false
      */
     bool setMaxCount(int maxCount);
+
+    /**
+     * @brief 反初始化队列，释放所有Frame
+     */
+    void uninit();
+    /**
+     * @brief 初始化队列，创建所有Frame
+     */
+    void init();
 
 private:
     /**

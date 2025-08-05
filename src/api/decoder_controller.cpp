@@ -1,4 +1,4 @@
-#include "include/decodersdk/decoder_controller.h"
+﻿#include "include/decodersdk/decoder_controller.h"
 
 #include "decoder_controller.h"
 
@@ -57,7 +57,7 @@ bool DecoderController::isDecodeStopped() const
 
 bool DecoderController::isDecodePaused() const
 {
-    return impl_ ? impl_->isDecodePaused() : false;
+    return impl_ ? impl_->isPaused() : false;
 }
 
 bool DecoderController::seek(double position)

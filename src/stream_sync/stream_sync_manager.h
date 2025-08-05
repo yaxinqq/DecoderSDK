@@ -144,11 +144,6 @@ public:
 private:
     // 内部方法
     /**
-     * @brief 获取缓存的主时钟时间
-     * @return double 缓存的主时钟时间（秒）
-     */
-    double getMasterClockCached() const;
-    /**
      * @brief 更新同步质量统计
      * @param drift 同步漂移（秒）
      */

@@ -3,7 +3,7 @@
 DECODER_SDK_NAMESPACE_BEGIN
 INTERNAL_NAMESPACE_BEGIN
 
-FrameQueue::FrameQueue(int maxSize, bool keepLast)
+FrameQueue::FrameQueue(int maxSize, bool keepLast, bool autoInit)
     : head_(0),
       tail_(0),
       size_(0),
@@ -13,9 +13,8 @@ FrameQueue::FrameQueue(int maxSize, bool keepLast)
       serial_(0),
       aborted_(false)
 {
-    queue_.resize(maxSize_);
-    for (int i = 0; i < maxSize_; ++i) {
-        queue_[i].ensureAllocated();
+    if (autoInit) {
+        init();
     }
 }
 
@@ -44,11 +43,11 @@ bool FrameQueue::push(const Frame &frame, int timeout)
         cond_.wait(lock, hasSpace);
     }
 
-    if (aborted_.load()) {
+    if (aborted_.load() || queue_.empty()) {
         return false;
     }
 
-    return pushInternal(std::move(frame));
+    return pushInternal(frame);
 }
 
 bool FrameQueue::pop(Frame &frame, int timeout)
@@ -60,7 +59,7 @@ bool FrameQueue::pop(Frame &frame, int timeout)
         return shouldReturnLastFrame() ? (frame = queue_[head_], true) : false;
     }
 
-    if (aborted_.load()) {
+    if (aborted_.load() || queue_.empty()) {
         return false;
     }
 
@@ -96,7 +95,7 @@ Frame *FrameQueue::getWritableFrame(int timeout)
         cond_.wait(lock, hasSpace);
     }
 
-    if (aborted_.load() || size_ >= maxSize_) {
+    if (aborted_.load() || size_ >= maxSize_ || queue_.empty()) {
         return nullptr;
     }
 
@@ -136,6 +135,7 @@ int FrameQueue::size() const
 
 int FrameQueue::capacity() const
 {
+    std::lock_guard<std::mutex> lock(mutex_);
     return maxSize_;
 }
 
@@ -200,6 +200,7 @@ void FrameQueue::setKeepLast(bool keepLast)
 
 bool FrameQueue::isKeepLast() const
 {
+    std::lock_guard<std::mutex> lock(mutex_);
     return keepLast_;
 }
 
@@ -255,6 +256,37 @@ bool FrameQueue::setMaxCount(int maxCount)
     notifyWaiters();
 
     return true;
+}
+
+void FrameQueue::uninit()
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    head_ = 0;
+    tail_ = 0;
+    size_ = 0;
+    pendingWriteIndex_ = -1;
+
+    if (queue_.empty())
+        return;
+
+    // 清空所有帧
+    for (int i = 0; i < queue_.size(); ++i) {
+        queue_[i].release();
+    }
+    queue_.clear();
+
+    notifyWaiters();
+}
+
+void FrameQueue::init()
+{
+    uninit();
+
+    std::lock_guard<std::mutex> lock(mutex_);
+    queue_.resize(maxSize_);
+    for (int i = 0; i < maxSize_; ++i) {
+        queue_[i].ensureAllocated();
+    }
 }
 
 bool FrameQueue::pushInternal(const Frame &frame)

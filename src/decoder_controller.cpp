@@ -1,4 +1,4 @@
-#include "decoder_controller.h"
+﻿#include "decoder_controller.h"
 
 extern "C" {
 #include "libavdevice/avdevice.h"
@@ -12,9 +12,8 @@ INTERNAL_NAMESPACE_BEGIN
 
 DecoderController::DecoderController()
     : eventDispatcher_(std::make_shared<EventDispatcher>()),
-      demuxer_(std::make_shared<Demuxer>(eventDispatcher_)),
       syncController_(std::make_shared<StreamSyncManager>()),
-      reconnectAttempts_(0),
+      demuxer_(std::make_shared<Demuxer>(eventDispatcher_)),
       asyncOpenInProgress_(false),
       shouldCancelAsyncOpen_(false)
 {
@@ -25,23 +24,31 @@ DecoderController::DecoderController()
     // 开启异步线程处理函数
     eventDispatcher_->startAsyncProcessing();
 
-    // 注册事件处理函数
+    // 注册事件处理函数 - 新增重连逻辑
     eventDispatcher_->addEventListener(
         EventType::kStreamReadError, [this](EventType, std::shared_ptr<EventArgs> event) {
             StreamEventArgs *streamEvent = dynamic_cast<StreamEventArgs *>(event.get());
             if (streamEvent && config_.enableAutoReconnect && !shouldStopReconnect_.load()) {
-                // 设置重连状态
-                isReconnecting_.store(true);
-                // 异步执行重连，避免死锁
-                std::thread([this, url = streamEvent->filePath]() {
-                    handleReconnect(url);
-                }).detach();
+                LOG_WARN("Stream read error detected, starting reconnect for: {}",
+                         streamEvent->filePath);
+                startReconnect();
             }
         });
 }
 
 DecoderController::~DecoderController()
 {
+    {
+        std::lock_guard<std::mutex> lock(asyncCallbackMutex_);
+        asyncOpenCallback_ = nullptr;
+    }
+
+    // 停止重连
+    stopReconnect();
+    // 等待重连线程结束，有可能在reconnectLoop中就重连好了，但没有join
+    if (reconnectThread_.joinable())
+        reconnectThread_.join();
+
     // 取消任何正在进行的异步操作
     cancelAsyncOpen();
     close();
@@ -54,28 +61,11 @@ bool DecoderController::open(const std::string &url, const Config &config)
     // 取消任何正在进行的异步打开操作
     cancelAsyncOpen();
 
-    // 停止任何正在进行的重连任务
-    shouldStopReconnect_.store(true);
+    // 停止任何正在进行的重连
+    stopReconnect();
 
-    // 等待重连任务结束
-    while (isReconnecting_.load()) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
-
-    // 重置重连相关状态
-    reconnectAttempts_.store(0);
-    shouldStopReconnect_.store(false);
-    // 重置预加载状态
-    preBufferState_ = PreBufferState::kDisabled;
-
-    config_ = config;
-
-    // 打开媒体文件，并启用解复用器
-    if (!demuxer_->open(url, utils::isRealtime(url), config.decodeMediaType)) {
-        return false;
-    }
-
-    return true;
+    std::lock_guard<std::mutex> lock(mutex_);
+    return openInternal(url, config);
 }
 
 void DecoderController::openAsync(const std::string &url, const Config &config,
@@ -83,6 +73,8 @@ void DecoderController::openAsync(const std::string &url, const Config &config,
 {
     // 取消任何正在进行的异步打开操作
     cancelAsyncOpen();
+
+    std::lock_guard<std::mutex> lock(mutex_);
 
     // 保存回调函数
     {
@@ -101,6 +93,8 @@ void DecoderController::openAsync(const std::string &url, const Config &config,
         std::string errorMessage;
 
         try {
+            std::lock_guard<std::mutex> lock(mutex_);
+
             // 检查是否需要取消
             if (shouldCancelAsyncOpen_.load()) {
                 result = AsyncOpenResult::kCancelled;
@@ -172,58 +166,13 @@ bool DecoderController::isAsyncOpenInProgress() const
     return asyncOpenInProgress_.load();
 }
 
-bool DecoderController::openAsyncInternal(const std::string &filePath, const Config &config)
-{
-    // 检查是否需要取消
-    if (shouldCancelAsyncOpen_.load()) {
-        return false;
-    }
-
-    // 停止任何正在进行的重连任务
-    shouldStopReconnect_.store(true);
-
-    // 等待重连任务结束
-    while (isReconnecting_.load()) {
-        if (shouldCancelAsyncOpen_.load()) {
-            return false;
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
-
-    // 再次检查是否需要取消
-    if (shouldCancelAsyncOpen_.load()) {
-        return false;
-    }
-
-    // 重置重连相关状态
-    reconnectAttempts_.store(0);
-    shouldStopReconnect_.store(false);
-    // 重置预加载状态
-    preBufferState_ = PreBufferState::kDisabled;
-
-    config_ = config;
-
-    // 检查是否需要取消
-    if (shouldCancelAsyncOpen_.load()) {
-        return false;
-    }
-
-    // 打开媒体文件，并启用解复用器
-    return demuxer_->open(filePath, utils::isRealtime(filePath), config.decodeMediaType);
-}
-
 bool DecoderController::close()
 {
+    // 停止重连
+    stopReconnect();
+
     // 取消任何正在进行的异步打开操作
     cancelAsyncOpen();
-
-    // 停止任何正在进行的重连任务
-    shouldStopReconnect_.store(true);
-
-    // 等待重连任务结束
-    while (isReconnecting_.load()) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
 
     // 清理预缓冲状态
     cleanupPreBufferState();
@@ -231,17 +180,14 @@ bool DecoderController::close()
     // 停止解码
     stopDecode();
 
-    // 重置重连相关状态
-    reconnectAttempts_.store(0);
-    shouldStopReconnect_.store(false);
-
-    const auto ret = demuxer_->close();
-
-    return ret;
+    std::lock_guard<std::mutex> lock(mutex_);
+    return closeInternal();
 }
 
 bool DecoderController::pause()
 {
+    std::lock_guard<std::mutex> lock(mutex_);
+
     if (!demuxer_) {
         return false;
     }
@@ -251,11 +197,14 @@ bool DecoderController::pause()
     if (audioDecoder_)
         audioDecoder_->pause();
 
+    isDemuxerPausedWhenReconnected_.store(true);
     return demuxer_->pause();
 }
 
 bool DecoderController::resume()
 {
+    std::lock_guard<std::mutex> lock(mutex_);
+
     if (!demuxer_) {
         return false;
     }
@@ -269,41 +218,40 @@ bool DecoderController::resume()
     if (audioDecoder_)
         audioDecoder_->resume();
 
+    isDemuxerPausedWhenReconnected_.store(false);
     return demuxer_->resume();
 }
 
 bool DecoderController::startDecode()
 {
-    if (!demuxer_) {
-        return false;
-    }
-
-    // 启动解码器（非阻塞）
-    bool success = startDecodeInternal(false);
-    if (!success) {
-        return false;
-    }
-
-    return true;
+    std::lock_guard<std::mutex> lock(mutex_);
+    hasDecoderWhenReconnected_.store(true);
+    return startDecodeInternal();
 }
 
 bool DecoderController::stopDecode()
 {
-    return stopDecodeInternal(false);
+    std::lock_guard<std::mutex> lock(mutex_);
+    hasDecoderWhenReconnected_.store(false);
+    return stopDecodeInternal();
 }
 
 bool DecoderController::isDecodeStopped() const
 {
-    return !isStartDecoding_.load();
+    std::lock_guard<std::mutex> lock(mutex_);
+    return isDecoding_;
 }
 
-bool DecoderController::isDecodePaused() const
+bool DecoderController::isPaused() const
 {
+    std::lock_guard<std::mutex> lock(mutex_);
     return demuxer_->isPaused();
 }
 
 bool DecoderController::seek(double position)
 {
+    std::lock_guard<std::mutex> lock(mutex_);
+
     // 发送开始seek的事件
     auto event = std::make_shared<SeekEventArgs>(syncController_->getMasterClock(), position,
                                                  "DecoderController", "Seek Started");
@@ -378,6 +326,8 @@ bool DecoderController::seek(double position)
 
 bool DecoderController::setSpeed(double speed)
 {
+    std::lock_guard<std::mutex> lock(mutex_);
+
     if (speed <= 0.0f) {
         return false;
     }
@@ -429,10 +379,14 @@ double DecoderController::getVideoFrameRate() const
 
 void DecoderController::setFrameRateControl(bool enable)
 {
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        config_.enableFrameRateControl = enable;
+    }
+
     if (videoDecoder_) {
         videoDecoder_->setFrameRateControl(enable);
     }
-    config_.enableFrameRateControl = enable;
 }
 
 bool DecoderController::isFrameRateControlEnabled() const
@@ -442,6 +396,7 @@ bool DecoderController::isFrameRateControlEnabled() const
 
 double DecoderController::curSpeed() const
 {
+    std::lock_guard<std::mutex> lock(mutex_);
     return config_.speed;
 }
 
@@ -508,25 +463,6 @@ bool DecoderController::isAsyncProcessingActive() const
     return eventDispatcher_->isAsyncProcessingActive();
 }
 
-void DecoderController::stopReconnect()
-{
-    shouldStopReconnect_.store(true);
-
-    // 等待重连任务结束
-    while (isReconnecting_.load()) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
-
-    // 重置状态
-    reconnectAttempts_.store(0);
-    shouldStopReconnect_.store(false);
-}
-
-bool DecoderController::isReconnecting() const
-{
-    return isReconnecting_.load();
-}
-
 bool DecoderController::isRealTimeUrl() const
 {
     return demuxer_ ? demuxer_->isRealTime() : false;
@@ -573,6 +509,16 @@ bool DecoderController::resetLoopCount()
     return true;
 }
 
+bool DecoderController::isReconnecting() const
+{
+    return isReconnecting_.load();
+}
+
+void DecoderController::stopReconnectManually()
+{
+    stopReconnect();
+}
+
 PreBufferState DecoderController::getPreBufferState() const
 {
     return preBufferState_;
@@ -583,102 +529,64 @@ PreBufferProgress DecoderController::getPreBufferProgress() const
     return demuxer_ ? demuxer_->getPreBufferProgress() : PreBufferProgress();
 }
 
-bool DecoderController::reopen(const std::string &url)
+bool DecoderController::openInternal(const std::string &url, const Config &config)
 {
-    LOG_INFO("Start reconnect stream: {}", url);
-    isReconnecting_.store(true);
+    // 保存原始URL用于重连
+    originalUrl_ = url;
 
-    // 停止当前解码
-    bool wasDecoding = isStartDecoding_.load();
-    if (wasDecoding) {
-        stopDecodeInternal(true);
-    }
+    // 重置预加载状态
+    preBufferState_ = PreBufferState::kDisabled;
 
-    // 关闭当前连接
-    demuxer_->close();
+    config_ = config;
 
-    // 等待一段时间后重新连接
-    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
-
-    // 重新打开流，标记为重连
-    bool reopenSuccess = demuxer_->open(url, utils::isRealtime(url), config_.decodeMediaType, true);
-
-    if (reopenSuccess && wasDecoding) {
-        // 如果重连成功且之前在解码，则重新开始解码
-        startDecodeInternal(true);
-    }
-
-    if (reopenSuccess) {
-        LOG_INFO("reconnect success: {}", url);
-    } else {
-        LOG_ERROR("reconnect failed: {}", url);
-    }
-
-    isReconnecting_.store(!reopenSuccess);
-    return reopenSuccess;
-}
-
-// 添加新的重连处理方法
-void DecoderController::handleReconnect(const std::string &url)
-{
-    const auto checkStopReconnection = [this, url]() {
-        // 检查是否需要停止重连
-        if (shouldStopReconnect_.load()) {
-            LOG_INFO("Receive stop reconnect signal, stop reconnect task: {}", url);
-            isReconnecting_.store(false);
-            reconnectAttempts_.store(0);
-            return true;
-        }
+    // 打开媒体文件，并启用解复用器
+    if (!demuxer_->open(url, config, std::bind(&DecoderController::onPreBufferReady, this))) {
         return false;
-    };
-
-    // 检查是否需要停止重连
-    if (checkStopReconnection()) {
-        return;
     }
 
-    if (config_.maxReconnectAttempts >= 0 && reconnectAttempts_ >= config_.maxReconnectAttempts) {
-        LOG_ERROR("Reached max reconnect times {}, stop reconnect!", config_.maxReconnectAttempts);
-        reconnectAttempts_.store(0);
-        isReconnecting_.store(false);
-        return;
+    // 根据配置初始化解码器
+    if (demuxer_->hasVideo() && (config_.decodeMediaType & Config::DecodeMediaType::kVideo)) {
+        videoDecoder_ = std::make_shared<VideoDecoder>(demuxer_, syncController_, eventDispatcher_);
     }
 
-    reconnectAttempts_++;
-    LOG_INFO("Try to {} reconnect: {}", reconnectAttempts_.load(), url);
-
-    if (reopen(url)) {
-        reconnectAttempts_.store(0); // 重连成功，重置计数器
-        isReconnecting_.store(false);
-    } else {
-        // 重连失败，等待后再次尝试
-        // 在等待期间也要检查停止标志
-        for (int i = 0; i < config_.reconnectIntervalMs; i += 100) {
-            if (checkStopReconnection()) {
-                return;
-            }
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        }
-        if (checkStopReconnection()) {
-            return;
-        }
-        handleReconnect(url);
+    // 开启音频解码器
+    if (demuxer_->hasAudio() && (config_.decodeMediaType & Config::DecodeMediaType::kAudio)) {
+        audioDecoder_ = std::make_shared<AudioDecoder>(demuxer_, syncController_, eventDispatcher_);
     }
+    return true;
 }
 
-bool DecoderController::startDecodeInternal(bool reopen)
+bool DecoderController::openAsyncInternal(const std::string &url, const Config &config)
 {
-    // 如果当前已开始解码，则先停止
-    if (isStartDecoding_.load()) {
-        stopDecodeInternal(reopen);
+    // 检查是否需要取消
+    if (shouldCancelAsyncOpen_.load()) {
+        return false;
     }
 
+    return openInternal(url, config);
+}
+
+bool DecoderController::closeInternal()
+{
+    // 析构解码器
+    if (videoDecoder_) {
+        videoDecoder_.reset();
+    }
+    if (audioDecoder_) {
+        audioDecoder_.reset();
+    }
+
+    return demuxer_->close();
+}
+
+bool DecoderController::startDecodeInternal()
+{
     // 重置同步控制器
     syncController_->resetClocks();
 
-    // 创建视频解码器
-    if (demuxer_->hasVideo() && (config_.decodeMediaType & Config::DecodeMediaType::kVideo)) {
-        videoDecoder_ = std::make_shared<VideoDecoder>(demuxer_, syncController_, eventDispatcher_);
+    // 开启视频解码器
+    if (demuxer_->hasVideo() && (config_.decodeMediaType & Config::DecodeMediaType::kVideo) &&
+        videoDecoder_) {
         videoDecoder_->init(config_);
         videoDecoder_->setFrameRateControl(config_.enableFrameRateControl);
         videoDecoder_->setSpeed(config_.speed);
@@ -687,9 +595,9 @@ bool DecoderController::startDecodeInternal(bool reopen)
         }
     }
 
-    // 创建音频解码器
-    if (demuxer_->hasAudio() && (config_.decodeMediaType & Config::DecodeMediaType::kAudio)) {
-        audioDecoder_ = std::make_shared<AudioDecoder>(demuxer_, syncController_, eventDispatcher_);
+    // 开启音频解码器
+    if (demuxer_->hasAudio() && (config_.decodeMediaType & Config::DecodeMediaType::kAudio) &&
+        audioDecoder_) {
         audioDecoder_->init(config_);
         audioDecoder_->setSpeed(config_.speed);
         if (!audioDecoder_->open()) {
@@ -716,14 +624,6 @@ bool DecoderController::startDecodeInternal(bool reopen)
             audioDecoder_->setWaitingForPreBuffer(true);
         }
 
-        // 设置预缓冲配置和完成回调
-        demuxer_->setPreBufferConfig(config_.preBufferConfig.videoPreBufferFrames,
-                                     config_.preBufferConfig.audioPreBufferPackets,
-                                     config_.preBufferConfig.requireBothStreams, [this]() {
-                                         // 预缓冲完成回调
-                                         this->onPreBufferReady();
-                                     });
-
         LOG_INFO("Decoder started, waiting for pre-buffer to complete...");
     }
 
@@ -736,34 +636,25 @@ bool DecoderController::startDecodeInternal(bool reopen)
         audioDecoder_->start();
     }
 
-    if (!reopen) {
-        isStartDecoding_.store(true);
-    }
+    isDecoding_ = true;
 
     return true;
 }
 
-bool DecoderController::stopDecodeInternal(bool reopen)
+bool DecoderController::stopDecodeInternal()
 {
-    // 清理预缓冲状态（如果不是重新打开）
-    if (!reopen) {
-        cleanupPreBufferState();
-    }
-
-    // 停止解码器，并销毁
+    // 停止解码器
     if (videoDecoder_) {
         videoDecoder_->stop();
-        videoDecoder_.reset();
+        videoDecoder_->close();
     }
 
     if (audioDecoder_) {
         audioDecoder_->stop();
-        audioDecoder_.reset();
+        audioDecoder_->close();
     }
 
-    if (!reopen) {
-        isStartDecoding_.store(false);
-    }
+    isDecoding_ = false;
 
     return true;
 }
@@ -791,6 +682,8 @@ void DecoderController::onPreBufferReady()
 
 void DecoderController::cleanupPreBufferState()
 {
+    std::lock_guard<std::mutex> lock(mutex_);
+
     // 重置预缓冲状态
     preBufferState_ = PreBufferState::kDisabled;
 
@@ -801,11 +694,169 @@ void DecoderController::cleanupPreBufferState()
     if (audioDecoder_) {
         audioDecoder_->setWaitingForPreBuffer(false);
     }
+}
 
-    // 清理Demuxer的预缓冲回调
-    if (demuxer_) {
-        demuxer_->clearPreBufferCallback();
+void DecoderController::startReconnect()
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    // 如果已经在重连中，则不重复启动
+    if (isReconnecting_.load()) {
+        return;
     }
+
+    // 如果重连被禁用，则不启动重连
+    if (!config_.enableAutoReconnect) {
+        return;
+    }
+
+    // 设置重连状态
+    isReconnecting_.store(true);
+    shouldStopReconnect_.store(false);
+    currentReconnectAttempt_.store(0);
+
+    // 启动重连线程
+    if (reconnectThread_.joinable()) {
+        reconnectThread_.join();
+    }
+    reconnectThread_ = std::thread(&DecoderController::reconnectLoop, this);
+
+    LOG_INFO("Reconnect started for URL: {}", originalUrl_);
+}
+
+void DecoderController::stopReconnect()
+{
+    std::unique_lock<std::mutex> lock(mutex_);
+
+    if (!isReconnecting_.load()) {
+        return;
+    }
+
+    // 设置停止标志
+    shouldStopReconnect_.store(true);
+
+    // 等待重连线程结束
+    if (reconnectThread_.joinable()) {
+        lock.unlock();
+        reconnectThread_.join();
+        lock.lock();
+    }
+
+    cleanupReconnectState();
+    isReconnecting_.store(false);
+    LOG_INFO("Reconnect stopped for URL: {}", originalUrl_);
+}
+
+void DecoderController::reconnectLoop()
+{
+    while (!shouldStopReconnect_.load()) {
+        // 检查是否达到最大重连次数
+        int currentAttempt = currentReconnectAttempt_.load();
+        if (config_.maxReconnectAttempts > 0 && currentAttempt >= config_.maxReconnectAttempts) {
+            LOG_INFO("Max reconnect attempts ({}) reached for URL: {}",
+                     config_.maxReconnectAttempts, originalUrl_);
+            break;
+        }
+
+        // 增加重连次数
+        currentReconnectAttempt_.fetch_add(1);
+        currentAttempt = currentReconnectAttempt_.load();
+
+        // 触发重连开始事件
+        LOG_INFO("Attempting reconnect {}/{} for URL: {}", currentAttempt,
+                 config_.maxReconnectAttempts > 0 ? std::to_string(config_.maxReconnectAttempts)
+                                                  : "unlimited",
+                 originalUrl_);
+
+        // 尝试重连
+        if (attemptReconnect()) {
+            // 重连成功
+            LOG_INFO("Reconnect successful after {} attempts for URL: {}", currentAttempt,
+                     originalUrl_);
+            break;
+        } else {
+            LOG_WARN("Reconnect attempt {} failed for URL: {}", currentAttempt, originalUrl_);
+        }
+
+        // 等待重连间隔
+        auto waitStart = std::chrono::steady_clock::now();
+        while (!shouldStopReconnect_.load()) {
+            auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                               std::chrono::steady_clock::now() - waitStart)
+                               .count();
+            if (elapsed >= config_.reconnectIntervalMs) {
+                break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+    }
+
+    // 如果是被手动停止的，触发中止事件
+    if (shouldStopReconnect_.load()) {
+        LOG_INFO("Reconnect aborted for URL: {}", originalUrl_);
+    }
+
+    cleanupReconnectState();
+    isReconnecting_.store(false);
+}
+
+bool DecoderController::attemptReconnect()
+{
+    try {
+        // 先关闭当前连接
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+
+            // 停止解码
+            stopDecodeInternal();
+
+            // 关闭解复用器
+            if (!demuxer_->close()) {
+                return false;
+            }
+        }
+
+        // 短暂等待，确保资源完全释放
+        std::this_thread::sleep_for(std::chrono::milliseconds(300));
+
+        // 检查是否应该停止重连
+        if (shouldStopReconnect_.load()) {
+            return false;
+        }
+
+        // 尝试重新打开
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            if (!demuxer_->open(originalUrl_, config_,
+                                std::bind(&DecoderController::onPreBufferReady, this))) {
+                return false;
+            }
+
+            // 如果之前的demuxer是暂停状态，则重新暂停
+            if (isDemuxerPausedWhenReconnected_.load()) {
+                demuxer_->pause();
+            }
+
+            // 如果重连之前，存在解码器，则开启
+            if (hasDecoderWhenReconnected_.load()) {
+                if (!startDecodeInternal()) {
+                    return false;
+                }
+            }
+        }
+
+        return true;
+    } catch (const std::exception &e) {
+        LOG_ERROR("Exception during reconnect attempt: {}", e.what());
+        return false;
+    }
+}
+
+void DecoderController::cleanupReconnectState()
+{
+    isReconnecting_.store(false);
+    shouldStopReconnect_.store(false);
+    currentReconnectAttempt_.store(0);
 }
 
 INTERNAL_NAMESPACE_END

@@ -1,4 +1,4 @@
-#ifndef DECODER_SDK_INTERNAL_COMMON_UTILS_H
+﻿#ifndef DECODER_SDK_INTERNAL_COMMON_UTILS_H
 #define DECODER_SDK_INTERNAL_COMMON_UTILS_H
 #include <chrono>
 #include <string>
@@ -62,6 +62,20 @@ MediaType avMediaType2MediaType(AVMediaType type);
 // MediaType 转为 AVMediaType
 AVMediaType mediaType2AVMediaType(MediaType type);
 
+// 原子变量更新函数
+template <typename T>
+bool atomicUpdateIfNotEqual(std::atomic<T> &atomicVar, T newValue, int maxRetry = 100)
+{
+    T current = atomicVar.load();
+    int retry = 0;
+    while (current != newValue && retry < maxRetry) {
+        if (atomicVar.compare_exchange_weak(current, newValue)) {
+            return true; // 成功更新
+        }
+        ++retry;
+    }
+    return retry < maxRetry;
+}
 } // namespace utils
 
 INTERNAL_NAMESPACE_END

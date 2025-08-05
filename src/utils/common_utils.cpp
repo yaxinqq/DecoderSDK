@@ -1,4 +1,4 @@
-#include "common_utils.h"
+﻿#include "common_utils.h"
 
 #include <algorithm>
 #include <cmath>
@@ -116,32 +116,33 @@ std::string convertPathForFFmpeg(const std::string &path)
     // 在Windows系统中，需要确保路径是UTF-8编码
     // 如果路径已经是UTF-8编码，直接返回
     // 如果是ANSI编码，需要转换为UTF-8
-    
+
     // 首先尝试将路径转换为宽字符
     int wideSize = MultiByteToWideChar(CP_ACP, 0, path.c_str(), -1, nullptr, 0);
     if (wideSize == 0) {
         // 转换失败，可能已经是UTF-8编码，直接返回
         return path;
     }
-    
+
     std::wstring widePath(wideSize, 0);
     MultiByteToWideChar(CP_ACP, 0, path.c_str(), -1, &widePath[0], wideSize);
-    
+
     // 将宽字符转换为UTF-8
-    int utf8Size = WideCharToMultiByte(CP_UTF8, 0, widePath.c_str(), -1, nullptr, 0, nullptr, nullptr);
+    int utf8Size =
+        WideCharToMultiByte(CP_UTF8, 0, widePath.c_str(), -1, nullptr, 0, nullptr, nullptr);
     if (utf8Size == 0) {
         // 转换失败，返回原路径
         return path;
     }
-    
+
     std::string utf8Path(utf8Size, 0);
     WideCharToMultiByte(CP_UTF8, 0, widePath.c_str(), -1, &utf8Path[0], utf8Size, nullptr, nullptr);
-    
+
     // 移除末尾的空字符
     if (!utf8Path.empty() && utf8Path.back() == '\0') {
         utf8Path.pop_back();
     }
-    
+
     return utf8Path;
 #else
     // 在非Windows系统中，通常已经是UTF-8编码，直接返回
@@ -323,7 +324,6 @@ AVMediaType mediaType2AVMediaType(MediaType type)
     }
     return AVMEDIA_TYPE_UNKNOWN;
 }
-
 } // namespace utils
 
 INTERNAL_NAMESPACE_END
