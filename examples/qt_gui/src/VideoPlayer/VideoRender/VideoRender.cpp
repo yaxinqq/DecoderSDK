@@ -1,4 +1,4 @@
-#include "VideoRender.h"
+﻿#include "VideoRender.h"
 
 #include <QDateTime>
 #include <QOpenGLContext>
@@ -32,11 +32,9 @@ const char *fsrc = R"(
     )";
 } // namespace
 
-VideoRender::VideoRender() 
-    : initialized_{false}
-    , fboDrawResourcesInitialized_{false}
+VideoRender::VideoRender() : initialized_{false}, fboDrawResourcesInitialized_{false}
 {
-    bufferQueue_ = std::make_unique<RenderBufferQueue>(10); // 增加到10个缓冲区
+    bufferQueue_ = std::make_unique<RenderBufferQueue>(3);
 }
 
 VideoRender::~VideoRender()
@@ -67,7 +65,7 @@ void VideoRender::initialize(const std::shared_ptr<decoder_sdk::Frame> &frame,
 
     // 初始化循环缓冲队列
     if (!bufferQueue_->initialize(QSize(frame->width(), frame->height()))) {
-        qWarning() << "[VideoRender] Failed to initialize buffer queue";
+        qWarning() << QStringLiteral("[VideoRender] Failed to initialize buffer queue");
         return;
     }
 
@@ -94,7 +92,7 @@ void VideoRender::initialize(const std::shared_ptr<decoder_sdk::Frame> &frame,
 
     // 查询是否支持glFence
     supportsGlFence_ = context->hasExtension(QByteArrayLiteral("GL_ARB_sync")) ||
-                       context->hasExtension("GL_OES_EGL_sync");
+                       context->hasExtension(QByteArrayLiteral("GL_OES_EGL_sync"));
 
     initialized_.store(true);
 }
@@ -125,7 +123,7 @@ void VideoRender::render(const std::shared_ptr<decoder_sdk::Frame> &frame)
         if (supportsGlFence_) {
             fence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
             if (!fence) {
-                qWarning() << "[VideoRender] Failed to create fence";
+                qWarning() << QStringLiteral("[VideoRender] Failed to create fence");
             } else {
                 glClientWaitSync(fence, GL_SYNC_FLUSH_COMMANDS_BIT, 10000);
             }
@@ -139,7 +137,7 @@ void VideoRender::render(const std::shared_ptr<decoder_sdk::Frame> &frame)
     } else {
         // 渲染失败，释放buffer
         buffer->inUse.store(false);
-        qWarning() << "[VideoRender] Frame render failed";
+        qWarning() << QStringLiteral("[VideoRender] Frame render failed");
     }
 
     // 清理渲染资源
@@ -203,7 +201,10 @@ bool VideoRender::isValid() const
 
 RenderBufferQueue::Statistics VideoRender::getStatistics() const
 {
-    return bufferQueue_->getStatistics();
+    if (bufferQueue_) {
+        return bufferQueue_->getStatistics();
+    }
+    return {};
 }
 
 void VideoRender::initDefaultVBO(QOpenGLBuffer &vbo, const bool horizontal,

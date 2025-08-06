@@ -1,4 +1,4 @@
-#include "SoftwareRender.h"
+﻿#include "SoftwareRender.h"
 #include <QDebug>
 #include <QOpenGLContext>
 #include <chrono>
@@ -234,7 +234,7 @@ bool SoftwareRender::initRenderVbo(const bool horizontal, const bool vertical)
 bool SoftwareRender::initRenderShader(const decoder_sdk::Frame &frame)
 {
     if (!initializeShaders(frame.pixelFormat())) {
-        qWarning() << "Failed to initialize shaders!";
+        qWarning() << QStringLiteral("[SoftwareRender] Failed to initialize shaders!");
         return false;
     }
 
@@ -279,24 +279,28 @@ bool SoftwareRender::initializeShaders(decoder_sdk::ImageFormat format)
 
     // 添加顶点着色器
     if (!program_.addCacheableShaderFromSourceCode(QOpenGLShader::Vertex, getVertexShader())) {
-        qDebug() << "Failed to compile vertex shader:" << program_.log();
+        qDebug() << QStringLiteral("[SoftwareRender] Failed to compile vertex shader: %1")
+                        .arg(program_.log());
         return false;
     }
 
     // 添加片段着色器
     if (!program_.addCacheableShaderFromSourceCode(QOpenGLShader::Fragment,
                                                    getFragmentShader(format))) {
-        qDebug() << "Failed to compile fragment shader:" << program_.log();
+        qDebug() << QStringLiteral("[SoftwareRender] Failed to compile fragment shader: %1")
+                        .arg(program_.log());
         return false;
     }
 
     // 链接着色器程序
     if (!program_.link()) {
-        qDebug() << "Failed to link shader program:" << program_.log();
+        qDebug() << QStringLiteral("[SoftwareRender] Failed to link shader program: %1")
+                        .arg(program_.log());
         return false;
     }
 
-    qDebug() << "Shaders initialized successfully for format" << static_cast<int>(format);
+    qDebug() << QStringLiteral("[SoftwareRender] Shaders initialized successfully for format")
+             << static_cast<int>(format);
     return true;
 }
 
@@ -339,7 +343,7 @@ void SoftwareRender::clearTextures()
 bool SoftwareRender::uploadYUVTextures(const decoder_sdk::Frame &frame)
 {
     if (!texturesCreated_) {
-        qDebug() << "Textures not created";
+        qDebug() << QStringLiteral("[SoftwareRender] Textures not created");
         return false;
     }
 
@@ -423,7 +427,7 @@ bool SoftwareRender::uploadYUVTextures(const decoder_sdk::Frame &frame)
 bool SoftwareRender::uploadRGBTexture(const decoder_sdk::Frame &frame)
 {
     if (!texturesCreated_) {
-        qDebug() << "Textures not created";
+        qDebug() << QStringLiteral("[SoftwareRender] Textures not created");
         return false;
     }
 
@@ -624,7 +628,7 @@ bool SoftwareRender::checkGLError(const char *operation)
 {
     GLenum error = glGetError();
     if (error != GL_NO_ERROR) {
-        qDebug() << "OpenGL error in" << operation << ":" << error;
+        qDebug() << QStringLiteral("OpenGL error in %1 :").arg(operation) << error;
         return false;
     }
     return true;

@@ -1,4 +1,4 @@
-#ifdef DXVA2_AVAILABLE
+﻿#ifdef DXVA2_AVAILABLE
 #include "Nv12Render_Dxva2.h"
 #include "Commonutils.h"
 
@@ -82,12 +82,13 @@ bool Nv12Render_Dxva2::initRenderTexture(const decoder_sdk::Frame &frame)
 bool Nv12Render_Dxva2::initInteropsResource(const decoder_sdk::Frame &frame)
 {
     if (!initializeWGLInterop()) {
-        qWarning() << "[Nv12Render_Dxva2] Failed to initialize WGL interop!";
+        qWarning() << QStringLiteral("[Nv12Render_Dxva2] Failed to initialize WGL interop!");
         return false;
     }
 
     if (!registerTextureWithOpenGL(frame.width(), frame.height())) {
-        qWarning() << "[Nv12Render_Dxva2] Failed to register D3D texture to OpenGL texture!";
+        qWarning() << QStringLiteral(
+            "[Nv12Render_Dxva2] Failed to register D3D texture to OpenGL texture!");
         return false;
     }
 
@@ -103,13 +104,13 @@ bool Nv12Render_Dxva2::renderFrame(const decoder_sdk::Frame &frame)
     // 从Frame中提取DXVA2表面指针
     LPDIRECT3DSURFACE9 sourceSurface = reinterpret_cast<LPDIRECT3DSURFACE9>(frame.data(3));
     if (!sourceSurface) {
-        qWarning() << "[Nv12Render_Dxva2] Invalid DXVA2 surface!";
+        qWarning() << QStringLiteral("[Nv12Render_Dxva2] Invalid DXVA2 surface!");
         return false;
     }
 
     // 使用StretchRect转换NV12到RGB
     if (!convertNv12ToRgbStretchRect(sourceSurface, frame)) {
-        qWarning() << "[Nv12Render_Dxva2] Failed to convert NV12 to RGB!";
+        qWarning() << QStringLiteral("[Nv12Render_Dxva2] Failed to convert NV12 to RGB!");
         return false;
     }
 
@@ -120,13 +121,14 @@ bool Nv12Render_Dxva2::renderFrame(const decoder_sdk::Frame &frame)
 bool Nv12Render_Dxva2::initializeWGLInterop()
 {
     if (!d3d9Device_) {
-        qWarning() << "[Nv12Render_Dxva2] D3D9 device is null!";
+        qWarning() << QStringLiteral("[Nv12Render_Dxva2] D3D9 device is null!");
         return false;
     }
 
     HRESULT hr = d3d9Device_->TestCooperativeLevel();
     if (FAILED(hr)) {
-        qWarning() << "[Nv12Render_Dxva2] D3D9 device is in error state, HRESULT:" << hr;
+        qWarning() << QStringLiteral("[Nv12Render_Dxva2] D3D9 device is in error state, HRESULT:")
+                   << Qt::hex << hr;
         return false;
     }
 
@@ -168,7 +170,8 @@ bool Nv12Render_Dxva2::convertNv12ToRgbStretchRect(LPDIRECT3DSURFACE9 nv12Surfac
                                                    const decoder_sdk::Frame &frame)
 {
     if (!nv12Surface || !rgbRenderTarget_) {
-        qWarning() << "[Nv12Render_Dxva2] Missing surfaces for StretchRect conversion!";
+        qWarning() << QStringLiteral(
+            "[Nv12Render_Dxva2] Missing surfaces for StretchRect conversion!");
         return false;
     }
 
@@ -189,7 +192,8 @@ bool Nv12Render_Dxva2::convertNv12ToRgbStretchRect(LPDIRECT3DSURFACE9 nv12Surfac
                                                 &destRect, D3DTEXF_LINEAR);
 
     if (FAILED(hr)) {
-        qWarning() << "[Nv12Render_Dxva2] StretchRect conversion failed, HRESULT:" << hr;
+        qWarning() << QStringLiteral("[Nv12Render_Dxva2] StretchRect conversion failed, HRESULT:")
+                   << Qt::hex << hr;
         return false;
     }
 
@@ -199,7 +203,7 @@ bool Nv12Render_Dxva2::convertNv12ToRgbStretchRect(LPDIRECT3DSURFACE9 nv12Surfac
 bool Nv12Render_Dxva2::registerTextureWithOpenGL(int width, int height)
 {
     if (!d3d9Device_) {
-        qWarning() << "[Nv12Render_Dxva2] D3D9 device is null";
+        qWarning() << QStringLiteral("[Nv12Render_Dxva2] D3D9 device is null");
         return false;
     }
 
@@ -220,12 +224,14 @@ bool Nv12Render_Dxva2::registerTextureWithOpenGL(int width, int height)
     );
 
     if (FAILED(hr)) {
-        qWarning() << "[Nv12Render_Dxva2] Failed to create RGB render target, HRESULT:" << hr;
+        qWarning() << QStringLiteral(
+                          "[Nv12Render_Dxva2] Failed to create RGB render target, HRESULT:")
+                   << Qt::hex << hr;
         return false;
     }
 
     if (!sharedHandle_) {
-        qWarning() << "[Nv12Render_Dxva2] Shared handle is null!";
+        qWarning() << QStringLiteral("[Nv12Render_Dxva2] Shared handle is null!");
         return false;
     }
 
@@ -238,9 +244,10 @@ bool Nv12Render_Dxva2::registerTextureWithOpenGL(int width, int height)
     if (sharedHandle_ &&
         !wgl::wglDXSetResourceShareHandleNV(rgbRenderTarget_.Get(), sharedHandle_)) {
         DWORD error = GetLastError();
-        qWarning()
-            << "[Nv12Render_Dxva2] Failed setting Direct3D/OpenGL share handle for surface, error:"
-            << error;
+        qWarning() << QStringLiteral(
+                          "[Nv12Render_Dxva2] Failed setting Direct3D/OpenGL share handle for "
+                          "surface, error:")
+                   << error;
 
         return false;
     }
@@ -250,7 +257,8 @@ bool Nv12Render_Dxva2::registerTextureWithOpenGL(int width, int height)
                                                             GL_TEXTURE_2D, WGL_ACCESS_READ_ONLY_NV);
     if (!wglTextureHandle_) {
         DWORD error = GetLastError();
-        qWarning() << "[Nv12Render_Dxva2] Failed to register texture, error:" << error;
+        qWarning() << QStringLiteral("[Nv12Render_Dxva2] Failed to register texture, error:")
+                   << error;
 
         return false;
     }
@@ -261,7 +269,7 @@ bool Nv12Render_Dxva2::registerTextureWithOpenGL(int width, int height)
 bool Nv12Render_Dxva2::drawFrame(GLuint id)
 {
     if (!sharedTexture_ || !program_.isLinked() || !wglTextureHandle_) {
-        qWarning() << "[Nv12Render_Dxva2] Not ready for drawing!";
+        qWarning() << QStringLiteral("[Nv12Render_Dxva2] Not ready for drawing!");
         return false;
     }
 
@@ -287,7 +295,7 @@ bool Nv12Render_Dxva2::drawFrame(GLuint id)
             glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
             wglD3DDevice_.wglDXUnlockObjectsNV(1, &wglTextureHandle_);
         } else {
-            qWarning() << "[Nv12Render_Dxva2] Failed to lock WGL objects!";
+            qWarning() << QStringLiteral("[Nv12Render_Dxva2] Failed to lock WGL objects!");
         }
     }
 

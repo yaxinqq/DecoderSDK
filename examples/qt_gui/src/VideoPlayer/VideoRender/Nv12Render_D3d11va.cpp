@@ -1,4 +1,4 @@
-#ifdef D3D11VA_AVAILABLE
+﻿#ifdef D3D11VA_AVAILABLE
 #include "Nv12Render_D3d11va.h"
 #include "Commonutils.h"
 
@@ -89,17 +89,18 @@ bool Nv12Render_D3d11va::initRenderTexture(const decoder_sdk::Frame &frame)
 bool Nv12Render_D3d11va::initInteropsResource(const decoder_sdk::Frame &frame)
 {
     if (!initializeWGLInterop()) {
-        qWarning() << "[Nv12Render_D3d11va] Failed to initialize WGL interop!";
+        qWarning() << QStringLiteral("[Nv12Render_D3d11va] Failed to initialize WGL interop!");
         return false;
     }
 
     if (!initializeVideoProcessor(frame.width(), frame.height())) {
-        qWarning() << "[Nv12Render_D3d11va] Failed to initialize VideoProcessor!";
+        qWarning() << QStringLiteral("[Nv12Render_D3d11va] Failed to initialize VideoProcessor!");
         return false;
     }
 
     if (!registerTextureWithOpenGL(frame.width(), frame.height())) {
-        qWarning() << "[Nv12Render_D3d11va] Failed to register D3D texture to OpenGL texture!";
+        qWarning() << QStringLiteral(
+            "[Nv12Render_D3d11va] Failed to register D3D texture to OpenGL texture!");
         return false;
     }
 
@@ -112,7 +113,7 @@ bool Nv12Render_D3d11va::renderFrame(const decoder_sdk::Frame &frame)
         return false;
 
     if (!processNV12ToRGB(frame)) {
-        qWarning() << "[Nv12Render_D3d11va] Failed to process NV12 to RGB!";
+        qWarning() << QStringLiteral("[Nv12Render_D3d11va] Failed to process NV12 to RGB!");
         return false;
     }
 
@@ -122,13 +123,15 @@ bool Nv12Render_D3d11va::renderFrame(const decoder_sdk::Frame &frame)
 bool Nv12Render_D3d11va::initializeWGLInterop()
 {
     if (!d3d11Device_) {
-        qWarning() << "[Nv12Render_D3d11va] D3D11 device is null!";
+        qWarning() << QStringLiteral("[Nv12Render_D3d11va] D3D11 device is null!");
         return false;
     }
 
     HRESULT hr = d3d11Device_->GetDeviceRemovedReason();
     if (FAILED(hr)) {
-        qWarning() << "[Nv12Render_D3d11va] D3D11 device is in error state, HRESULT:" << hr;
+        qWarning() << QStringLiteral(
+                          "[Nv12Render_D3d11va] D3D11 device is in error state, HRESULT:")
+                   << Qt::hex << hr;
         return false;
     }
 
@@ -138,21 +141,25 @@ bool Nv12Render_D3d11va::initializeWGLInterop()
 bool Nv12Render_D3d11va::initializeVideoProcessor(int width, int height)
 {
     if (!d3d11Context_) {
-        qWarning() << "[Nv12Render_D3d11va] D3D11 context is invalid!";
+        qWarning() << QStringLiteral("[Nv12Render_D3d11va] D3D11 context is invalid!");
         return false;
     }
 
     // 获取VideoDevice接口
     HRESULT hr = d3d11Device_->QueryInterface(__uuidof(ID3D11VideoDevice), (void **)&videoDevice_);
     if (FAILED(hr)) {
-        qWarning() << "[Nv12Render_D3d11va] Failed to get VideoDevice interface, HRESULT:" << hr;
+        qWarning() << QStringLiteral(
+                          "[Nv12Render_D3d11va] Failed to get VideoDevice interface, HRESULT:")
+                   << Qt::hex << hr;
         return false;
     }
 
     // 获取VideoContext接口
     hr = d3d11Context_->QueryInterface(__uuidof(ID3D11VideoContext), (void **)&videoContext_);
     if (FAILED(hr)) {
-        qWarning() << "[Nv12Render_D3d11va] Failed to get VideoContext interface, HRESULT:" << hr;
+        qWarning() << QStringLiteral(
+                          "[Nv12Render_D3d11va] Failed to get VideoContext interface, HRESULT:")
+                   << Qt::hex << hr;
         return false;
     }
 
@@ -167,14 +174,17 @@ bool Nv12Render_D3d11va::initializeVideoProcessor(int width, int height)
 
     hr = videoDevice_->CreateVideoProcessorEnumerator(&contentDesc, &videoProcessorEnum_);
     if (FAILED(hr)) {
-        qWarning() << "Failed to create VideoProcessorEnumerator, HRESULT:" << hr;
+        qWarning() << QStringLiteral("Failed to create VideoProcessorEnumerator, HRESULT:")
+                   << Qt::hex << hr;
         return false;
     }
 
     // 创建VideoProcessor
     hr = videoDevice_->CreateVideoProcessor(videoProcessorEnum_.Get(), 0, &videoProcessor_);
     if (FAILED(hr)) {
-        qWarning() << "[Nv12Render_D3d11va] Failed to create VideoProcessor, HRESULT:" << hr;
+        qWarning() << QStringLiteral(
+                          "[Nv12Render_D3d11va] Failed to create VideoProcessor, HRESULT:")
+                   << Qt::hex << hr;
         return false;
     }
 
@@ -186,7 +196,7 @@ void Nv12Render_D3d11va::cleanup()
     // 确保WGL对象正确注销
     if (wglTextureHandle_ && wglD3DDevice_.isValid()) {
         if (!wglD3DDevice_.wglDXUnregisterObjectNV(wglTextureHandle_)) {
-            qWarning() << "[Nv12Render_D3d11va] Failed to unregister WGL object!";
+            qWarning() << QStringLiteral("[Nv12Render_D3d11va] Failed to unregister WGL object!");
         }
         wglTextureHandle_ = nullptr;
     }
@@ -242,7 +252,7 @@ bool Nv12Render_D3d11va::processNV12ToRGB(const decoder_sdk::Frame &frame)
 {
     ID3D11Texture2D *sourceTexture = reinterpret_cast<ID3D11Texture2D *>(frame.data(0));
     if (!sourceTexture || !videoProcessor_ || !videoContext_) {
-        qWarning() << "[Nv12Render_D3d11va] Missing required resources!";
+        qWarning() << QStringLiteral("[Nv12Render_D3d11va] Missing required resources!");
         return false;
     }
 
@@ -264,24 +274,30 @@ bool Nv12Render_D3d11va::processNV12ToRGB(const decoder_sdk::Frame &frame)
             HRESULT hr =
                 sourceTexture->QueryInterface(__uuidof(IDXGIResource), (void **)&dxgiResource);
             if (FAILED(hr)) {
-                qWarning() << "[Nv12Render_D3d11va] Failed to query source DXGI resource, HRESULT:"
-                           << hr;
+                qWarning()
+                    << QStringLiteral(
+                           "[Nv12Render_D3d11va] Failed to query source DXGI resource, HRESULT:")
+                    << Qt::hex << hr;
                 return false;
             }
 
             HANDLE sharedHandle = nullptr;
             hr = dxgiResource->GetSharedHandle(&sharedHandle);
             if (FAILED(hr)) {
-                qWarning() << "[Nv12Render_D3d11va] Failed to get source shared handle, HRESULT:"
-                           << hr;
+                qWarning()
+                    << QStringLiteral(
+                           "[Nv12Render_D3d11va] Failed to get source shared handle, HRESULT:")
+                    << Qt::hex << hr;
                 return false;
             }
 
             hr = d3d11Device_->OpenSharedResource(sharedHandle, __uuidof(ID3D11Texture2D),
                                                   (void **)&entry.inputTexture);
             if (FAILED(hr)) {
-                qWarning() << "[Nv12Render_D3d11va] Failed to open shared source texture, HRESULT:"
-                           << hr;
+                qWarning()
+                    << QStringLiteral(
+                           "[Nv12Render_D3d11va] Failed to open shared source texture, HRESULT:")
+                    << Qt::hex << hr;
                 return false;
             }
         }
@@ -297,8 +313,10 @@ bool Nv12Render_D3d11va::processNV12ToRGB(const decoder_sdk::Frame &frame)
         HRESULT hr = videoDevice_->CreateVideoProcessorInputView(
             entry.inputTexture.Get(), videoProcessorEnum_.Get(), &inputViewDesc, &entry.inputView);
         if (FAILED(hr)) {
-            qWarning() << "[Nv12Render_D3d11va] Failed to create VideoProcessorInputView, HRESULT:"
-                       << hr;
+            qWarning()
+                << QStringLiteral(
+                       "[Nv12Render_D3d11va] Failed to create VideoProcessorInputView, HRESULT:")
+                << Qt::hex << hr;
             return false;
         }
     }
@@ -350,7 +368,8 @@ bool Nv12Render_D3d11va::processNV12ToRGB(const decoder_sdk::Frame &frame)
         videoContext_->VideoProcessorBlt(videoProcessor_.Get(), outputView_.Get(), 0, 1, &stream);
 
     if (FAILED(hr)) {
-        qWarning() << "[Nv12Render_D3d11va] VideoProcessorBlt failed, HRESULT:" << hr;
+        qWarning() << QStringLiteral("[Nv12Render_D3d11va] VideoProcessorBlt failed, HRESULT:")
+                   << Qt::hex << hr;
         return false;
     }
 
@@ -378,7 +397,8 @@ bool Nv12Render_D3d11va::registerTextureWithOpenGL(int width, int height)
 
     HRESULT hr = d3d11Device_->CreateTexture2D(&rgbDesc, nullptr, &outputRGBTexture_);
     if (FAILED(hr)) {
-        qWarning() << "[Nv12Render_D3d11va] Failed to create RGB texture, HRESULT:" << hr;
+        qWarning() << QStringLiteral("[Nv12Render_D3d11va] Failed to create RGB texture, HRESULT:")
+                   << Qt::hex << hr;
         return false;
     }
 
@@ -386,13 +406,15 @@ bool Nv12Render_D3d11va::registerTextureWithOpenGL(int width, int height)
     ComPtr<IDXGIResource> dxgiResource;
     hr = outputRGBTexture_->QueryInterface(__uuidof(IDXGIResource), (void **)&dxgiResource);
     if (FAILED(hr)) {
-        qWarning() << "[Nv12Render_D3d11va] Failed to query DXGI resource, HRESULT:" << hr;
+        qWarning() << QStringLiteral("[Nv12Render_D3d11va] Failed to query DXGI resource, HRESULT:")
+                   << Qt::hex << hr;
         return false;
     }
 
     hr = dxgiResource->GetSharedHandle(&rgbSharedHandle_);
     if (FAILED(hr)) {
-        qWarning() << "[Nv12Render_D3d11va] Failed to get shared handle, HRESULT:" << hr;
+        qWarning() << QStringLiteral("[Nv12Render_D3d11va] Failed to get shared handle, HRESULT:")
+                   << Qt::hex << hr;
         return false;
     }
 
@@ -404,13 +426,16 @@ bool Nv12Render_D3d11va::registerTextureWithOpenGL(int width, int height)
     hr = videoDevice_->CreateVideoProcessorOutputView(
         outputRGBTexture_.Get(), videoProcessorEnum_.Get(), &outputViewDesc, &outputView_);
     if (FAILED(hr)) {
-        qWarning() << "[Nv12Render_D3d11va] Failed to create VideoProcessorOutputView, HRESULT:"
-                   << hr;
+        qWarning()
+            << QStringLiteral(
+                   "[Nv12Render_D3d11va] Failed to create VideoProcessorOutputView, HRESULT:")
+            << Qt::hex << hr;
         return false;
     }
 
     if (!wglD3DDevice_.isValid() || !outputRGBTexture_) {
-        qWarning() << "[Nv12Render_D3d11va] Missing resources for OpenGL registration!";
+        qWarning() << QStringLiteral(
+            "[Nv12Render_D3d11va] Missing resources for OpenGL registration!");
         return false;
     }
 
@@ -419,7 +444,8 @@ bool Nv12Render_D3d11va::registerTextureWithOpenGL(int width, int height)
                                                             GL_TEXTURE_2D, WGL_ACCESS_READ_ONLY_NV);
     if (!wglTextureHandle_) {
         DWORD error = GetLastError();
-        qWarning() << "[Nv12Render_D3d11va] Failed to register RGB texture with WGL, error:"
+        qWarning() << QStringLiteral(
+                          "[Nv12Render_D3d11va] Failed to register RGB texture with WGL, error:")
                    << error;
         return false;
     }
@@ -431,7 +457,7 @@ bool Nv12Render_D3d11va::drawFrame(GLuint id)
 {
     // 资源未就绪
     if (!program_.isLinked() || !wglTextureHandle_ || !outputRGBTexture_) {
-        qWarning() << "[Nv12Render_D3d11va] Not ready for drawing!";
+        qWarning() << QStringLiteral("[Nv12Render_D3d11va] Not ready for drawing!");
         return false;
     }
 
@@ -456,7 +482,7 @@ bool Nv12Render_D3d11va::drawFrame(GLuint id)
             glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
             wglD3DDevice_.wglDXUnlockObjectsNV(1, &wglTextureHandle_);
         } else {
-            qWarning() << "[Nv12Render_D3d11va] Failed to lock WGL objects!";
+            qWarning() << QStringLiteral("[Nv12Render_D3d11va] Failed to lock WGL objects!");
         }
     }
 

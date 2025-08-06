@@ -13,12 +13,18 @@ int main(int argc, char *argv[])
 
     QApplication app(argc, argv);
     app.setQuitOnLastWindowClosed(true);
-    
+
     registerVideoMetaType();
 
     SimplePlayer w;
     w.resize(1200, 600);
     w.show();
 
-    return app.exec();  
+    const auto ret = app.exec();
+
+    // 清理GPU资源，主要是D3D11和DXVA2
+    // 如果在单例析构中退出，似乎有点晚
+    clearGPUResource();
+
+    return ret;
 }

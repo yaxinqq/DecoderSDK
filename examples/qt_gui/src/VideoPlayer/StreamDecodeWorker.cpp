@@ -30,7 +30,7 @@ DecoderThread::~DecoderThread()
 void DecoderThread::run()
 {
     while (pDecoder_ && !isInterruptionRequested()) {
-        bool shouldSleep = true; 
+        bool shouldSleep = true;
         {
             // 音频。需要验证音频帧有效
             std::shared_ptr pFrame = std::make_shared<decoder_sdk::Frame>();
@@ -288,16 +288,12 @@ void StreamDecoder::streamEventCallback(decoder_sdk::EventType type,
                                         std::shared_ptr<decoder_sdk::EventArgs> event)
 {
     switch (type) {
-        case decoder_sdk::EventType::kStreamOpening:
-            isOpening_.store(true);
-            break;
         case decoder_sdk::EventType::kDecodeFirstFrame:
             decode();
             break;
         case decoder_sdk::EventType::kStreamClosed: {
             std::shared_ptr<decoder_sdk::Frame> nullFrame = std::make_shared<decoder_sdk::Frame>();
             emit videoFrameReady(nullFrame);
-            isOpening_.store(false);
             break;
         }
         case decoder_sdk::EventType::kRecordingStarted:
@@ -314,9 +310,10 @@ void StreamDecoder::streamEventCallback(decoder_sdk::EventType type,
             isSeeking_.store(false);
             break;
         default:
-            isOpening_.store(false);
             break;
     }
+
+    isOpening_.store(type == decoder_sdk::EventType::kStreamOpening);
 
     if (type != decoder_sdk::EventType::kStreamOpening && safeDeleteThread_ &&
         safeDeleteThread_->isRunning()) {

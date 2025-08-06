@@ -1,4 +1,4 @@
-#include "RenderBufferQueue.h"
+﻿#include "RenderBufferQueue.h"
 
 #include <QDateTime>
 #include <QGuiApplication>
@@ -60,7 +60,7 @@ bool RenderBufferQueue::initialize(const QSize &size, const QOpenGLFramebufferOb
     for (auto &buffer : buffers_) {
         buffer->fbo = createFbo(size, format);
         if (!buffer->fbo || !buffer->fbo->isValid()) {
-            qWarning() << "[RenderBufferQueue] Failed to create FBO";
+            qWarning() << QStringLiteral("[RenderBufferQueue] Failed to create FBO");
             cleanup();
             return false;
         }

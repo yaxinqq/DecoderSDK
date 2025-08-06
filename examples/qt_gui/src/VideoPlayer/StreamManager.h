@@ -11,8 +11,8 @@
 #include <QThread>
 
 #ifdef D3D11VA_AVAILABLE
-#include <wrl/client.h>
 #include <d3d11.h>
+#include <wrl/client.h>
 #endif
 
 class VideoPlayerImpl;
@@ -167,6 +167,13 @@ private:
      * @param type 硬件类型
      */
     void *createHwContextCallback(decoder_sdk::HWAccelType type);
+    /*
+     * @brief 销毁硬件上下文的回调
+     *
+     * @param type 硬件类型
+     * @param userHwContext 用户创建的硬件上下文
+     */
+    void freeHwContextCallback(decoder_sdk::HWAccelType type, void *userHwContext);
 
 private:
     explicit StreamManager(QObject *parent = nullptr);
@@ -176,9 +183,4 @@ private:
     QMap<VideoPlayerImpl *, QPointer<StreamDecoderWorker>> mapDecoderByWidget_;
     // Decoder的SourceKey和Decoder之间的映射
     QMap<QString, StreamDecoderWorker *> mapDecoderByKey_;
-
-private:
-#ifdef D3D11VA_AVAILABLE
-    Microsoft::WRL::ComPtr<ID3D11Device> cachedD3D11Device_;
-#endif
 };

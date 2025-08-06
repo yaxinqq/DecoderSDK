@@ -1,4 +1,4 @@
-#ifndef RENDERBUFFERQUEUE_H
+﻿#ifndef RENDERBUFFERQUEUE_H
 #define RENDERBUFFERQUEUE_H
 
 #include <QDebug>
@@ -51,7 +51,7 @@ struct RenderBuffer {
  */
 class RenderBufferQueue : protected QOpenGLExtraFunctions {
 public:
-    explicit RenderBufferQueue(int bufferCount = 6);
+    explicit RenderBufferQueue(int bufferCount = 3);
     ~RenderBufferQueue();
 
     /**

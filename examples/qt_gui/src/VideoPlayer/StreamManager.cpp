@@ -35,6 +35,8 @@ QString StreamManager::openStream(VideoPlayerImpl *player, QString url, QString 
     config.enableFrameRateControl = true;
     config.createHwContextCallback =
         std::bind(&StreamManager::createHwContextCallback, this, std::placeholders::_1);
+    config.freeHwContextCallback = std::bind(&StreamManager::freeHwContextCallback, this,
+                                             std::placeholders::_1, std::placeholders::_2);
     config.audioInterleaved = true;
     config.maxReconnectAttempts = -1;
     worker->open(url, config);
@@ -300,11 +302,7 @@ void *StreamManager::createHwContextCallback(decoder_sdk::HWAccelType type)
     switch (type) {
 #ifdef D3D11VA_AVAILABLE
         case decoder_sdk::HWAccelType::kD3d11va:
-            // 缓存ComPtr避免悬空指针
-            if (!cachedD3D11Device_) {
-                cachedD3D11Device_ = d3d11_utils::getD3D11Device();
-            }
-            return cachedD3D11Device_.Get();
+            return d3d11_utils::getD3D11Device().Get();
 #endif
 
 #ifdef DXVA2_AVAILABLE
@@ -329,6 +327,23 @@ void *StreamManager::createHwContextCallback(decoder_sdk::HWAccelType type)
     return nullptr;
 }
 
+void StreamManager::freeHwContextCallback(decoder_sdk::HWAccelType type, void *userHwContext)
+{
+    switch (type) {
+#ifdef CUDA_AVAILABLE
+        case decoder_sdk::HWAccelType::kCuda:
+            if (CUcontext cuContext = static_cast<CUcontext>(userHwContext); cuContext) {
+                cuda_utils::releaseContext();
+            }
+            break;
+#endif
+        default:
+            break;
+    }
+
+    return;
+}
+
 StreamManager::StreamManager(QObject *parent /*= nullptr*/) : QObject(parent)
 {
 }
@@ -346,8 +361,4 @@ StreamManager::~StreamManager()
     mapDecoderByKey_.clear();
     // 清理所有的播放器映射
     mapDecoderByWidget_.clear();
-
-#ifdef D3D11VA_AVAILABLE
-    cachedD3D11Device_.Reset();
-#endif
 }
