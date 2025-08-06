@@ -106,11 +106,6 @@ void AudioDecoder::decodeLoop()
             utils::atomicUpdateIfNotEqual<bool>(demuxerSeeking_, false);
         }
 
-        // 获取一个可写入的帧
-        Frame *outFrame = frameQueue_->getWritableFrame();
-        if (!outFrame)
-            break;
-
         // 从包队列中获取一个包
         Packet packet;
         bool gotPacket = packetQueue->pop(packet, 1);
@@ -131,197 +126,219 @@ void AudioDecoder::decodeLoop()
             continue;
         }
 
-        // 接收解码帧
-        ret = avcodec_receive_frame(codecCtx_, frame.get());
-        if (ret < 0) {
-            // 错误处理失败时，就continue，代表此时是EOF或是EAGAIN
-            if (handleDecodeError(kAudioDecoderName, MediaType::kMediaTypeAudio, ret,
-                                  "Decoder error: ")) {
-                occuredError = true;
+        // 循环接收所有可能的解码帧
+        while (true) {
+            ret = avcodec_receive_frame(codecCtx_, frame.get());
+            if (ret < 0) {
+                if (ret == AVERROR(EAGAIN)) {
+                    // 需要更多输入数据，跳出内层循环继续读取packet
+                    break;
+                } else {
+                    // 其他错误（如EOF），处理错误
+                    if (handleDecodeError(kAudioDecoderName, MediaType::kMediaTypeAudio, ret,
+                                          "Decoder error: ")) {
+                        occuredError = true;
+                    }
+                    break;
+                }
             }
-            continue;
-        }
 
-        // 检查是否需要重新初始化重采样
-        if (needResampleUpdate(lastSpeed)) {
-            initResampleContext();
-            lastSpeed = speed_;
-        }
-
-        // 重采样处理
-        Frame outputFrame;
-        if (needResample_ && swrCtx_) {
-            ret = 0;
-            outputFrame = resampleFrame(frame, ret);
-            if (!outputFrame.isValid()) {
-                handleDecodeError(kAudioDecoderName, MediaType::kMediaTypeAudio, ret,
-                                  "Resample frame failed!");
-                continue;
+            // 成功接收到一帧，进行处理
+            // 检查是否需要重新初始化重采样
+            if (needResampleUpdate(lastSpeed)) {
+                initResampleContext();
+                lastSpeed = speed_;
             }
-        } else {
-            outputFrame = frame; // 只在需要时拷贝
-        }
 
-        // 计算帧持续时间(单位 s)
-        // 计算帧持续时间应该使用实际的采样率
-        double actualSampleRate =
-            needResample_ ? (codecCtx_->sample_rate * speed()) : codecCtx_->sample_rate;
-        const double duration = outputFrame.nbSamples() / actualSampleRate;
-        // 计算PTS（单位s）
-        const double pts = calculatePts(outputFrame);
-        if (!std::isnan(pts)) {
-            syncController_->updateAudioClock(pts, serial);
-        }
-
-        // 如果当前小于seekPos，丢弃帧
-        {
-            // 如果当前正在seeking，直接跳过
-            if (demuxerSeeking_.load())
-                continue;
-
-            const auto targetPos = seekPos();
-            if (utils::greater(targetPos, 0)) {
-                if (!utils::greaterAndEqual(pts, targetPos)) {
+            // 重采样处理
+            Frame outputFrame;
+            if (needResample_ && swrCtx_) {
+                ret = 0;
+                outputFrame = resampleFrame(frame, ret);
+                if (!outputFrame.isValid()) {
+                    handleDecodeError(kAudioDecoderName, MediaType::kMediaTypeAudio, ret,
+                                      "Resample frame failed!");
                     frame.unref();
                     continue;
                 }
-                utils::atomicUpdateIfNotEqual<int64_t>(seekPosMs_, -1);
-            }
-        }
-
-        // 转换交错格式
-        // 根据配置决定音频数据的存储方式
-        if (!audioInterleaved_ &&
-            av_sample_fmt_is_planar(static_cast<AVSampleFormat>(outputFrame.get()->format)) == 0) {
-            // 配置要求非交错，但当前是交错格式，转换为平面格式
-            AVSampleFormat currentFormat = static_cast<AVSampleFormat>(outputFrame.get()->format);
-            AVSampleFormat targetFormat = AV_SAMPLE_FMT_NONE;
-
-            // 获取对应的平面格式
-            switch (currentFormat) {
-                case AV_SAMPLE_FMT_U8:
-                    targetFormat = AV_SAMPLE_FMT_U8P;
-                    break;
-                case AV_SAMPLE_FMT_S16:
-                    targetFormat = AV_SAMPLE_FMT_S16P;
-                    break;
-                case AV_SAMPLE_FMT_S32:
-                    targetFormat = AV_SAMPLE_FMT_S32P;
-                    break;
-                case AV_SAMPLE_FMT_FLT:
-                    targetFormat = AV_SAMPLE_FMT_FLTP;
-                    break;
-                case AV_SAMPLE_FMT_DBL:
-                    targetFormat = AV_SAMPLE_FMT_DBLP;
-                    break;
-                case AV_SAMPLE_FMT_S64:
-                    targetFormat = AV_SAMPLE_FMT_S64P;
-                    break;
-                default:
-                    LOG_WARN("Unsupported audio format for planar conversion: {}",
-                             static_cast<int>(currentFormat));
-                    break;
+            } else {
+                outputFrame = frame; // 只在需要时拷贝
             }
 
-            if (targetFormat != AV_SAMPLE_FMT_NONE) {
-                if (!convertAudioFormat(outputFrame, targetFormat)) {
-                    LOG_WARN("Failed to convert audio to planar format");
+            // 计算帧持续时间(单位 s)
+            // 计算帧持续时间应该使用实际的采样率
+            double actualSampleRate =
+                needResample_ ? (codecCtx_->sample_rate * speed()) : codecCtx_->sample_rate;
+            const double duration = outputFrame.nbSamples() / actualSampleRate;
+            // 计算PTS（单位s）
+            const double pts = calculatePts(outputFrame);
+            if (!std::isnan(pts)) {
+                syncController_->updateAudioClock(pts, serial);
+            }
+
+            // 如果当前小于seekPos，丢弃帧
+            {
+                // 如果当前正在seeking，直接跳过
+                if (demuxerSeeking_.load()) {
+                    frame.unref();
+                    continue;
+                }
+
+                const auto targetPos = seekPos();
+                if (utils::greater(targetPos, 0)) {
+                    if (!utils::greaterAndEqual(pts, targetPos)) {
+                        frame.unref();
+                        continue;
+                    }
+                    utils::atomicUpdateIfNotEqual<int64_t>(seekPosMs_, -1);
                 }
             }
-        } else if (audioInterleaved_ && av_sample_fmt_is_planar(static_cast<AVSampleFormat>(
-                                            outputFrame.get()->format)) == 1) {
-            // 配置要求交错，但当前是平面格式，转换为交错格式
-            AVSampleFormat currentFormat = static_cast<AVSampleFormat>(outputFrame.get()->format);
-            AVSampleFormat targetFormat = AV_SAMPLE_FMT_NONE;
 
-            // 获取对应的交错格式
-            switch (currentFormat) {
-                case AV_SAMPLE_FMT_U8P:
-                    targetFormat = AV_SAMPLE_FMT_U8;
-                    break;
-                case AV_SAMPLE_FMT_S16P:
-                    targetFormat = AV_SAMPLE_FMT_S16;
-                    break;
-                case AV_SAMPLE_FMT_S32P:
-                    targetFormat = AV_SAMPLE_FMT_S32;
-                    break;
-                case AV_SAMPLE_FMT_FLTP:
-                    targetFormat = AV_SAMPLE_FMT_FLT;
-                    break;
-                case AV_SAMPLE_FMT_DBLP:
-                    targetFormat = AV_SAMPLE_FMT_DBL;
-                    break;
-                case AV_SAMPLE_FMT_S64P:
-                    targetFormat = AV_SAMPLE_FMT_S64;
-                    break;
-                default:
-                    LOG_WARN("Unsupported audio format for interleaved conversion: {}",
-                             static_cast<int>(currentFormat));
-                    break;
-            }
+            // 转换交错格式
+            // 根据配置决定音频数据的存储方式
+            if (!audioInterleaved_ && av_sample_fmt_is_planar(static_cast<AVSampleFormat>(
+                                          outputFrame.get()->format)) == 0) {
+                // 配置要求非交错，但当前是交错格式，转换为平面格式
+                AVSampleFormat currentFormat =
+                    static_cast<AVSampleFormat>(outputFrame.get()->format);
+                AVSampleFormat targetFormat = AV_SAMPLE_FMT_NONE;
 
-            if (targetFormat != AV_SAMPLE_FMT_NONE) {
-                if (!convertAudioFormat(outputFrame, targetFormat)) {
-                    LOG_WARN("Failed to convert audio to interleaved format");
+                // 获取对应的平面格式
+                switch (currentFormat) {
+                    case AV_SAMPLE_FMT_U8:
+                        targetFormat = AV_SAMPLE_FMT_U8P;
+                        break;
+                    case AV_SAMPLE_FMT_S16:
+                        targetFormat = AV_SAMPLE_FMT_S16P;
+                        break;
+                    case AV_SAMPLE_FMT_S32:
+                        targetFormat = AV_SAMPLE_FMT_S32P;
+                        break;
+                    case AV_SAMPLE_FMT_FLT:
+                        targetFormat = AV_SAMPLE_FMT_FLTP;
+                        break;
+                    case AV_SAMPLE_FMT_DBL:
+                        targetFormat = AV_SAMPLE_FMT_DBLP;
+                        break;
+                    case AV_SAMPLE_FMT_S64:
+                        targetFormat = AV_SAMPLE_FMT_S64P;
+                        break;
+                    default:
+                        LOG_WARN("Unsupported audio format for planar conversion: {}",
+                                 static_cast<int>(currentFormat));
+                        break;
+                }
+
+                if (targetFormat != AV_SAMPLE_FMT_NONE) {
+                    if (!convertAudioFormat(outputFrame, targetFormat)) {
+                        LOG_WARN("Failed to convert audio to planar format");
+                    }
+                }
+            } else if (audioInterleaved_ && av_sample_fmt_is_planar(static_cast<AVSampleFormat>(
+                                                outputFrame.get()->format)) == 1) {
+                // 配置要求交错，但当前是平面格式，转换为交错格式
+                AVSampleFormat currentFormat =
+                    static_cast<AVSampleFormat>(outputFrame.get()->format);
+                AVSampleFormat targetFormat = AV_SAMPLE_FMT_NONE;
+
+                // 获取对应的交错格式
+                switch (currentFormat) {
+                    case AV_SAMPLE_FMT_U8P:
+                        targetFormat = AV_SAMPLE_FMT_U8;
+                        break;
+                    case AV_SAMPLE_FMT_S16P:
+                        targetFormat = AV_SAMPLE_FMT_S16;
+                        break;
+                    case AV_SAMPLE_FMT_S32P:
+                        targetFormat = AV_SAMPLE_FMT_S32;
+                        break;
+                    case AV_SAMPLE_FMT_FLTP:
+                        targetFormat = AV_SAMPLE_FMT_FLT;
+                        break;
+                    case AV_SAMPLE_FMT_DBLP:
+                        targetFormat = AV_SAMPLE_FMT_DBL;
+                        break;
+                    case AV_SAMPLE_FMT_S64P:
+                        targetFormat = AV_SAMPLE_FMT_S64;
+                        break;
+                    default:
+                        LOG_WARN("Unsupported audio format for interleaved conversion: {}",
+                                 static_cast<int>(currentFormat));
+                        break;
+                }
+
+                if (targetFormat != AV_SAMPLE_FMT_NONE) {
+                    if (!convertAudioFormat(outputFrame, targetFormat)) {
+                        LOG_WARN("Failed to convert audio to interleaved format");
+                    }
                 }
             }
-        }
 
-        // 如果是第一帧，发出事件
-        if (!readFirstFrame) {
-            readFirstFrame = true;
-            handleFirstFrame(kAudioDecoderName, MediaType::kMediaTypeAudio);
-        }
-
-        // 如果恢复，则发出事件
-        if (occuredError) {
-            occuredError = false;
-            handleDecodeRecovery(kAudioDecoderName, MediaType::kMediaTypeAudio);
-        }
-
-        // 将解码后的帧复制到输出帧
-        *outFrame = std::move(outputFrame);
-        outFrame->setSerial(serial);
-        outFrame->setDurationByFps(duration);
-        outFrame->setSecPts(pts);
-        outFrame->setMediaType(AVMEDIA_TYPE_AUDIO);
-
-        // 计算延时
-        // 如果启用了帧率控制，则根据帧率控制推送速度
-        if (isFrameRateControlEnabled()) {
-            // 计算基本延迟
-            double baseDelay = calculateFrameDisplayTime(pts, duration * 1000.0, lastFrameTime_);
-
-            // // 计算音频缓冲区延迟
-            // double bufferDelay = frameQueue_->size() * duration * 1000.0; //
-            // 估算缓冲区中的音频时长
-
-            // // 使用同步控制器计算实际延迟
-            // double syncDelay = syncController_->computeAudioDelay(pts, baseDelay, speed());
-
-            // // 修正：限制最大延迟，防止延迟累积
-            // const double maxDelay = 100.0; // 最大延迟100ms
-            // syncDelay = std::min(syncDelay, maxDelay);
-
-            // 使用同步后的延迟
-            if (utils::greater(baseDelay, 0.0)) {
-                std::this_thread::sleep_for(
-                    std::chrono::milliseconds(static_cast<int64_t>(baseDelay)));
+            // 如果是第一帧，发出事件
+            if (!readFirstFrame) {
+                readFirstFrame = true;
+                handleFirstFrame(kAudioDecoderName, MediaType::kMediaTypeAudio);
             }
+
+            // 如果恢复，则发出事件
+            if (occuredError) {
+                occuredError = false;
+                handleDecodeRecovery(kAudioDecoderName, MediaType::kMediaTypeAudio);
+            }
+
+            // 获取一个可写入的帧
+            Frame *outFrame = frameQueue_->getWritableFrame();
+            if (!outFrame) {
+                frame.unref();
+                break; // 队列满了，退出
+            }
+
+            // 将解码后的帧复制到输出帧
+            *outFrame = std::move(outputFrame);
+            outFrame->setSerial(serial);
+            outFrame->setDurationByFps(duration);
+            outFrame->setSecPts(pts);
+            outFrame->setMediaType(AVMEDIA_TYPE_AUDIO);
+
+            // 计算延时
+            // 如果启用了帧率控制，则根据帧率控制推送速度
+            if (isFrameRateControlEnabled()) {
+                // 计算基本延迟
+                double baseDelay =
+                    calculateFrameDisplayTime(pts, duration * 1000.0, lastFrameTime_);
+
+                // // 计算音频缓冲区延迟
+                // double bufferDelay = frameQueue_->size() * duration * 1000.0; //
+                // 估算缓冲区中的音频时长
+
+                // // 使用同步控制器计算实际延迟
+                // double syncDelay = syncController_->computeAudioDelay(pts, baseDelay, speed());
+
+                // // 修正：限制最大延迟，防止延迟累积
+                // const double maxDelay = 100.0; // 最大延迟100ms
+                // syncDelay = std::min(syncDelay, maxDelay);
+
+                // 使用同步后的延迟
+                if (utils::greater(baseDelay, 0.0)) {
+                    std::this_thread::sleep_until(
+                        std::chrono::steady_clock::now() +
+                        std::chrono::milliseconds(static_cast<int64_t>(baseDelay)));
+                }
+            }
+
+            // 提交帧到队列
+            frameQueue_->commitFrame();
+
+            // 更新统计信息
+            statistics_.framesDecoded.fetch_add(1);
+            // 每到100帧，统计一次解码时间
+            if (statistics_.framesDecoded.load() % 100 == 0) {
+                updateTotalDecodeTime();
+            }
+
+            // 清理当前帧，准备下一次解码
+            frame.unref();
         }
-
-        // 提交帧到队列
-        frameQueue_->commitFrame();
-
-        // 更新统计信息
-        statistics_.framesDecoded.fetch_add(1);
-        // 每到100帧，统计一次解码时间
-        if (statistics_.framesDecoded.load() % 100 == 0) {
-            updateTotalDecodeTime();
-        }
-
-        // 清理当前帧，准备下一次解码
-        frame.unref();
     }
 
     // 循环结束时，统计一次解码时间

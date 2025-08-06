@@ -1,4 +1,4 @@
-#ifndef DECODER_SDK_INTERNAL_HARDWARE_ACCEL_H
+﻿#ifndef DECODER_SDK_INTERNAL_HARDWARE_ACCEL_H
 #define DECODER_SDK_INTERNAL_HARDWARE_ACCEL_H
 #include <functional>
 #include <map>
@@ -41,11 +41,13 @@ public:
      * @brief 初始化硬件加速
      * @param type 硬件加速类型
      * @param deviceIndex 设备索引
-     * @param callback 创建硬件上下文的回调
+     * @param createCallback 创建硬件上下文的回调
+     * @param freeCallback 释放硬件上下文的回调
      * @return 是否初始化成功
      */
     bool init(HWAccelType type = HWAccelType::kAuto, int deviceIndex = 0,
-              const CreateHWContextCallback &callback = nullptr);
+              const CreateHWContextCallback &createCallback = nullptr,
+              const FreeHWContextCallback &freeCallback = nullptr);
 
     /**
      * @brief 设置解码器上下文
@@ -161,11 +163,13 @@ private:
      * @brief 初始化硬件设备
      * @param deviceType 设备类型
      * @param deviceIndex 设备索引
-     * @param callback 创建硬件上下文的回调
+     * @param createCallback 创建硬件上下文的回调
+     * @param freeCallback 销毁硬件上下文的回调
      * @return 是否初始化成功
      */
     bool initHWDevice(AVHWDeviceType deviceType, int deviceIndex,
-                      const CreateHWContextCallback &callback = nullptr);
+                      const CreateHWContextCallback &createCallback = nullptr,
+                      const FreeHWContextCallback &freeCallback = nullptr);
 
     /**
      * @brief 查找最佳硬件加速类型
@@ -192,9 +196,11 @@ private:
      * @brief 从用户上下文创建FFmpeg的hwdevice_ctx
      * @param userContext 用户提供的硬件上下文
      * @param deviceType 硬件设备类型
+     * @param freeCallback 销毁硬件上下文的回调，会在AVHWDeviceContext的free中调用
      * @return 创建结果，0表示成功，负值表示错误
      */
-    int createHWDeviceFromUserContext(void *userContext, AVHWDeviceType deviceType);
+    int createHWDeviceFromUserContext(void *userContext, AVHWDeviceType deviceType,
+                                      const FreeHWContextCallback &freeCallback = nullptr);
 
     /**
      * @brief 获取硬件像素格式
@@ -231,12 +237,14 @@ public:
      * @brief 创建硬件加速上下文
      * @param type 硬件加速类型
      * @param deviceIndex 设备索引
-     * @param callback 创建硬件上下文的回调
+     * @param createCallback 创建硬件上下文的回调
+     * @param freeCallback 销毁硬件上下文的回调
      * @return 硬件加速上下文指针
      */
     std::shared_ptr<HardwareAccel> createHardwareAccel(
         HWAccelType type = HWAccelType::kAuto, int deviceIndex = 0,
-        const CreateHWContextCallback &callback = nullptr);
+        const CreateHWContextCallback &createCallback = nullptr,
+        const FreeHWContextCallback &freeCallback = nullptr);
 
     /**
      * @brief 获取支持的硬件加速类型列表

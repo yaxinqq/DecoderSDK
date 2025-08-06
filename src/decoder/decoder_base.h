@@ -183,6 +183,11 @@ protected:
      * @return true 成功，false 失败
      */
     virtual bool setupHardwareDecode();
+    /**
+     * @brief 根据情况，是否清理解码器的硬件解码
+     * @return true 成功，false 失败
+     */
+    virtual bool removeHardwareDecode();
 
     /**
      * @brief 计算AVFrame对应的pts(单位 s)

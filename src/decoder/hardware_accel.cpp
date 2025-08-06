@@ -1,4 +1,4 @@
-#include "hardware_accel.h"
+﻿#include "hardware_accel.h"
 
 #include <algorithm>
 
@@ -34,6 +34,35 @@ extern "C" {
 #include <libavutil/hwcontext_vaapi.h>
 }
 #endif
+
+namespace {
+struct FreeHWContext {
+    decoder_sdk::HWAccelType type;
+    void *userHwContext;
+    decoder_sdk::FreeHWContextCallback callback;
+};
+
+// 硬件解码器上下文释放回调
+void freeHWContextCallback(struct AVHWDeviceContext *ctx)
+{
+    if (!ctx || !ctx->user_opaque)
+        return;
+
+    // 从user_opaque中获取FreeHWContext结构
+    auto *freeContext = static_cast<FreeHWContext *>(ctx->user_opaque);
+
+    // 如果有用户提供的释放回调，则调用它
+    if (freeContext && freeContext->callback) {
+        freeContext->callback(freeContext->type, freeContext->userHwContext);
+    }
+
+    // 释放FreeHWContext结构
+    delete freeContext;
+    ctx->user_opaque = nullptr;
+}
+
+} // namespace
+
 
 DECODER_SDK_NAMESPACE_BEGIN
 INTERNAL_NAMESPACE_BEGIN
@@ -80,7 +109,9 @@ HardwareAccel::~HardwareAccel()
     initialized_ = false;
 }
 
-bool HardwareAccel::init(HWAccelType type, int deviceIndex, const CreateHWContextCallback &callback)
+bool HardwareAccel::init(HWAccelType type, int deviceIndex,
+                         const CreateHWContextCallback &createCallback,
+                         const FreeHWContextCallback &freeCallback)
 
 {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -119,7 +150,7 @@ bool HardwareAccel::init(HWAccelType type, int deviceIndex, const CreateHWContex
     }
 
     // 初始化硬件设备
-    if (!initHWDevice(deviceType, deviceIndex_, callback)) {
+    if (!initHWDevice(deviceType, deviceIndex_, createCallback, freeCallback)) {
         LOG_WARN("Failed to initialize hardware device: {}", getHWAccelTypeName(type_));
         return false;
     }
@@ -499,7 +530,8 @@ AVPixelFormat HardwareAccel::getHWPixelFormat(AVCodecContext *codecCtx,
 }
 
 bool HardwareAccel::initHWDevice(AVHWDeviceType deviceType, int deviceIndex,
-                                 const CreateHWContextCallback &callback)
+                                 const CreateHWContextCallback &createCallback,
+                                 const FreeHWContextCallback &freeCallback)
 {
     if (deviceType == AV_HWDEVICE_TYPE_NONE) {
         return false;
@@ -512,17 +544,18 @@ bool HardwareAccel::initHWDevice(AVHWDeviceType deviceType, int deviceIndex,
     }
 
     // 尝试通过用户回调获取硬件设备上下文
-    if (callback) {
+    if (createCallback) {
         try {
             // 将AVHWDeviceType转换为HWAccelType用于回调
             HWAccelType sdkType = fromAVHWDeviceType(deviceType);
-            void *userHwContext = callback(sdkType);
+            void *userHwContext = createCallback(sdkType);
 
             if (userHwContext) {
                 // 验证用户提供的硬件上下文类型是否匹配
                 if (validateUserHWContext(userHwContext, deviceType)) {
                     // 从用户提供的硬件上下文创建FFmpeg的hwdevice_ctx
-                    int ret = createHWDeviceFromUserContext(userHwContext, deviceType);
+                    int ret =
+                        createHWDeviceFromUserContext(userHwContext, deviceType, freeCallback);
                     if (ret >= 0) {
                         LOG_INFO(
                             "Successfully created hardware device context from user callback!");
@@ -655,7 +688,8 @@ bool HardwareAccel::validateUserHWContext(void *userContext, AVHWDeviceType expe
     return false;
 }
 
-int HardwareAccel::createHWDeviceFromUserContext(void *userContext, AVHWDeviceType deviceType)
+int HardwareAccel::createHWDeviceFromUserContext(void *userContext, AVHWDeviceType deviceType,
+                                                 const FreeHWContextCallback &freeCallback)
 {
     if (!userContext) {
         return AVERROR(EINVAL);
@@ -723,6 +757,13 @@ int HardwareAccel::createHWDeviceFromUserContext(void *userContext, AVHWDeviceTy
             return AVERROR(ENOSYS);
     }
 
+    // 设置释放回调
+    if (freeCallback) {
+        deviceContext->free = freeHWContextCallback;
+        deviceContext->user_opaque =
+            new FreeHWContext{fromAVHWDeviceType(deviceType), userContext, freeCallback};
+    }
+
     // 初始化硬件设备上下文
     int ret = av_hwdevice_ctx_init(hwDeviceCtx_);
     if (ret < 0) {
@@ -766,10 +807,11 @@ HardwareAccelFactory &HardwareAccelFactory::getInstance()
 }
 
 std::shared_ptr<HardwareAccel> HardwareAccelFactory::createHardwareAccel(
-    HWAccelType type, int deviceIndex, const CreateHWContextCallback &callback)
+    HWAccelType type, int deviceIndex, const CreateHWContextCallback &createCallback,
+    const FreeHWContextCallback &freeCallback)
 {
     auto hwAccel = std::make_shared<HardwareAccel>();
-    if (hwAccel->init(type, deviceIndex, callback)) {
+    if (hwAccel->init(type, deviceIndex, createCallback, freeCallback)) {
         return hwAccel;
     }
     return nullptr;

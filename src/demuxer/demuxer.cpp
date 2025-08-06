@@ -632,6 +632,8 @@ bool Demuxer::openInternal(const std::string &url, const Config &config,
         eventDispatcher_->triggerEvent(EventType::kStreamOpenFailed, event);
     };
 
+    const auto isRealTime = utils::isRealtime(url);
+
     // 设置FFmpeg选项
     AVDictionary *options = nullptr;
     av_dict_set(&options, "timeout", "2000000", 0); // 2秒超时
@@ -639,7 +641,7 @@ bool Demuxer::openInternal(const std::string &url, const Config &config,
     av_dict_set(&options, "buffer_size", "1048576", 0); // 1MB缓冲
     av_dict_set(&options, "analyzeduration", "1000000", 0);
 
-    if (isRealTime_) {
+    if (isRealTime) {
         av_dict_set(&options, "rtsp_transport", "tcp", 0);
         av_dict_set(&options, "fflags", "nobuffer", 0);
         av_dict_set(&options, "stimeout", "2000000", 0);
@@ -683,7 +685,7 @@ bool Demuxer::openInternal(const std::string &url, const Config &config,
 
     // 设置状态
     url_ = url;
-    isRealTime_ = utils::isRealtime(url);
+    isRealTime_ = isRealTime;
     isOpened_ = true;
 
     // 设置预缓冲

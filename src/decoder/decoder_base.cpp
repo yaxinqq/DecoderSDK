@@ -177,6 +177,11 @@ bool DecoderBase::setupHardwareDecode()
     return false;
 }
 
+bool DecoderBase::removeHardwareDecode()
+{
+    return false;
+}
+
 double DecoderBase::calculatePts(const Frame &frame) const
 {
     if (!frame.isValid())
@@ -185,7 +190,7 @@ double DecoderBase::calculatePts(const Frame &frame) const
     const int64_t pts =
         (frame.avPts() != AV_NOPTS_VALUE) ? frame.avPts() : frame.bestEffortTimestamp();
     const double time = pts * av_q2d(stream_->time_base);
-    return time;
+    return utils::greaterAndEqual(time, 0.0) ? time : 0.0;
 }
 
 bool DecoderBase::handleFirstFrame(const std::string &decoderName, MediaType mediaType,
@@ -364,11 +369,29 @@ void DecoderBase::closeInternal()
     const bool useHw = codecCtx_ ? codecCtx_->hw_device_ctx != nullptr : false;
 
     if (codecCtx_) {
+        // 显式释放硬件设备上下文
+        if (codecCtx_->hw_device_ctx) {
+            av_buffer_unref(&codecCtx_->hw_device_ctx);
+            codecCtx_->hw_device_ctx = nullptr;
+        }
+        
+        // 显式释放硬件帧上下文
+        if (codecCtx_->hw_frames_ctx) {
+            av_buffer_unref(&codecCtx_->hw_frames_ctx);
+            codecCtx_->hw_frames_ctx = nullptr;
+        }
+        
+        // 刷新解码器缓冲区，确保所有硬件帧都被释放
+        avcodec_flush_buffers(codecCtx_);
+        
         avcodec_free_context(&codecCtx_);
     }
 
     // 清空帧队列
     frameQueue_->uninit();
+
+    // 清理硬解
+    removeHardwareDecode();
 
     isOpened_ = false;
 

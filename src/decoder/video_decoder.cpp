@@ -218,10 +218,19 @@ VideoDecoder::VideoDecoder(std::shared_ptr<Demuxer> demuxer,
 VideoDecoder::~VideoDecoder()
 {
     close();
+
+    // 确保所有帧都被释放
+    memoryFrame_.release();
+    swsFrame_.release();
+
+    // 释放软件缩放上下文
     if (swsCtx_) {
         sws_freeContext(swsCtx_);
         swsCtx_ = nullptr;
     }
+
+    // 重置硬件加速器
+    hwAccel_.reset();
 }
 
 void VideoDecoder::init(const Config &config)
@@ -231,7 +240,8 @@ void VideoDecoder::init(const Config &config)
     deviceIndex_ = config.hwDeviceIndex;
     softPixelFormat_ = utils::imageFormat2AVPixelFormat(config.swVideoOutFormat);
     requireFrameInMemory_ = config.requireFrameInSystemMemory;
-    hwContextCallbeck_ = config.createHwContextCallback;
+    createHWContextCallback_ = config.createHwContextCallback;
+    freeHWContextCallback_ = config.freeHwContextCallback;
 
     // 新增：配置硬件解码退化选项
     enableHardwareFallback_ = config.enableHardwareFallback;
@@ -289,6 +299,8 @@ void VideoDecoder::decodeLoop()
     std::vector<uint8_t> pps;
 
     resetStatistics();
+    const auto isRealTime = demuxer_->isRealTime();
+
     while (!requestInterruption_.load()) {
         // 如果在等待预缓冲，则暂停解码
         if (waitingForPreBuffer_.load()) {
@@ -327,11 +339,6 @@ void VideoDecoder::decodeLoop()
             // 结束seeking
             utils::atomicUpdateIfNotEqual<bool>(demuxerSeeking_, false);
         }
-
-        // 获取一个可写入的帧
-        Frame *outFrame = frameQueue_->getWritableFrame();
-        if (!outFrame)
-            break;
 
         // 从包队列中获取一个包
         Packet packet;
@@ -400,105 +407,147 @@ void VideoDecoder::decodeLoop()
             continue;
         }
 
-        // 接收解码帧
-        ret = avcodec_receive_frame(codecCtx_, frame.get());
-        if (ret < 0) {
-            // 错误处理失败时，就continue，代表此时是EOF或是EAGAIN
-            if (handleDecodeError(kVideoDecoderName, MediaType::kMediaTypeVideo, ret,
-                                  "Decoder error: ")) {
-                occuredError = true;
+        // 循环接收所有可能的解码帧
+        while (true) {
+            ret = avcodec_receive_frame(codecCtx_, frame.get());
+            if (ret < 0) {
+                if (ret == AVERROR(EAGAIN)) {
+                    // 需要更多输入数据，跳出内层循环继续读取packet
+                    break;
+                } else {
+                    // 其他错误（如EOF），处理错误
+                    if (handleDecodeError(kVideoDecoderName, MediaType::kMediaTypeVideo, ret,
+                                          "Decoder error: ")) {
+                        occuredError = true;
+                    }
+                    break;
+                }
             }
-            continue;
-        }
 
-        // 计算帧持续时间(单位 s)
-        const double duration = 1 / av_q2d(stream_->avg_frame_rate);
-        // 计算PTS（单位s）
-        const double pts = calculatePts(frame);
+            // 成功接收到一帧，进行处理
+            // 计算帧持续时间(单位 s)
+            const double duration = 1 / av_q2d(stream_->avg_frame_rate);
+            // 计算PTS（单位s）
+            const double pts = calculatePts(frame);
 
-        // 更新视频时钟
-        if (!std::isnan(pts)) {
-            syncController_->updateVideoClock(pts, serial);
-        }
+            // 更新视频时钟
+            if (!std::isnan(pts)) {
+                syncController_->updateVideoClock(pts, serial);
+            }
 
-        // 如果当前小于seekPos，丢弃帧
-        {
-            // 如果当前正在seeking，直接跳过
-            if (demuxerSeeking_.load())
-                continue;
-
-            const auto targetPos = seekPos();
-            if (utils::greater(targetPos, 0)) {
-                if (!utils::greaterAndEqual(pts, targetPos)) {
+            // 如果当前小于seekPos，丢弃帧
+            {
+                // 如果当前正在seeking，直接跳过
+                if (demuxerSeeking_.load()) {
                     frame.unref();
                     continue;
                 }
-                utils::atomicUpdateIfNotEqual<int64_t>(seekPosMs_, -1);
+
+                const auto targetPos = seekPos();
+                if (utils::greater(targetPos, 0)) {
+                    if (!utils::greaterAndEqual(pts, targetPos)) {
+                        frame.unref();
+                        continue;
+                    }
+                    utils::atomicUpdateIfNotEqual<int64_t>(seekPosMs_, -1);
+                }
             }
-        }
 
-        // 如果是第一帧，发出事件
-        if (!readFirstFrame) {
-            readFirstFrame = true;
-            errorStartTime.reset(); // 重置错误计时
-            handleFirstFrame(kVideoDecoderName, MediaType::kMediaTypeVideo);
-        }
+            // 如果是第一帧，发出事件
+            if (!readFirstFrame) {
+                readFirstFrame = true;
+                errorStartTime.reset(); // 重置错误计时
+                handleFirstFrame(kVideoDecoderName, MediaType::kMediaTypeVideo);
+            }
 
-        // 如果恢复，则发出事件
-        if (occuredError) {
-            occuredError = false;
-            handleDecodeRecovery(kVideoDecoderName, MediaType::kMediaTypeVideo);
-        }
+            // 如果恢复，则发出事件
+            if (occuredError) {
+                occuredError = false;
+                handleDecodeRecovery(kVideoDecoderName, MediaType::kMediaTypeVideo);
+            }
 
-        // 处理帧格式转换
-        Frame outputFrame = processFrameConversion(frame);
-        if (!outputFrame.isValid()) {
-            continue;
-        }
-
-        // 将解码后的帧复制到输出帧
-        *outFrame = std::move(outputFrame);
-        outFrame->setSerial(serial);
-        outFrame->setDurationByFps(duration);
-        outFrame->setSecPts(pts);
-        outFrame->setMediaType(AVMEDIA_TYPE_VIDEO);
-
-        // 如果启用了帧率控制，则根据帧率控制推送速度
-        if (isFrameRateControlEnabled()) {
-            // 计算基本延迟
-            const double baseDelay =
-                calculateFrameDisplayTime(pts, duration * 1000.0, lastFrameTime_);
-
-            // 使用同步控制器计算实际延迟
-            const double syncDelay =
-                syncController_->computeVideoDelay(pts, duration, baseDelay, speed());
-
-            // 检查是否需要丢弃此帧
-            if (syncDelay < 0) {
-                // 丢弃此帧，不提交到队列
+            // 处理帧格式转换
+            Frame outputFrame = processFrameConversion(frame);
+            if (!outputFrame.isValid()) {
                 frame.unref();
                 continue;
             }
 
-            // 使用同步后的延迟
-            if (utils::greater(syncDelay, 0.0)) {
-                std::this_thread::sleep_for(
-                    std::chrono::milliseconds(static_cast<int64_t>(syncDelay)));
+            // 获取一个可写入的帧
+            Frame *outFrame = frameQueue_->getWritableFrame();
+            if (!outFrame) {
+                frame.unref();
+                break; // 队列满了，退出
             }
+
+            // 将解码后的帧复制到输出帧
+            *outFrame = std::move(outputFrame);
+            outFrame->setSerial(serial);
+            outFrame->setDurationByFps(duration);
+            outFrame->setSecPts(pts);
+            outFrame->setMediaType(AVMEDIA_TYPE_VIDEO);
+
+            // 如果启用了帧率控制，则根据帧率控制推送速度
+            if (isFrameRateControlEnabled()) {
+                const auto durationMs = duration * 1000;
+                if (isRealTime) {
+                    // 实时流处理：优先保证实时性，最小化延迟
+                    const double syncDelay =
+                        syncController_->computeVideoDelay(pts, duration, 0.0, speed());
+
+                    // 对于实时流，只在严重超前时才延迟，且限制最大延迟
+                    if (syncDelay > 0.0) {
+                        const double actualDelay = std::min(syncDelay, durationMs);
+
+                        if (actualDelay > 1.0) { // 只有超过1ms才延迟
+                            auto targetTime =
+                                std::chrono::high_resolution_clock::now() +
+                                std::chrono::microseconds(static_cast<int64_t>(actualDelay * 1000));
+                            std::this_thread::sleep_until(targetTime);
+                        }
+                    } else if (syncDelay < -durationMs * 2) { // 如果落后超过2帧
+                        // 丢弃此帧，追赶实时性
+                        LOG_WARN("Video Decoder: Drop frame due to late arrival (syncDelay: {})",
+                                 syncDelay);
+                        frame.unref();
+                        continue;
+                    }
+                } else {
+                    // 非实时流（录制文件）：使用原有的帧率控制逻辑
+                    const double baseDelay =
+                        calculateFrameDisplayTime(pts, durationMs, lastFrameTime_);
+                    const double syncDelay =
+                        syncController_->computeVideoDelay(pts, duration, baseDelay, speed());
+
+                    // 检查是否需要丢弃此帧
+                    if (syncDelay < 0) {
+                        frame.unref();
+                        continue;
+                    }
+
+                    // 使用同步后的延迟
+                    if (utils::greater(syncDelay, 0.0)) {
+                        auto targetTime =
+                            std::chrono::high_resolution_clock::now() +
+                            std::chrono::microseconds(static_cast<int64_t>(syncDelay * 1000));
+                        std::this_thread::sleep_until(targetTime);
+                    }
+                }
+            }
+
+            // 提交帧到队列
+            frameQueue_->commitFrame();
+
+            // 更新统计信息
+            statistics_.framesDecoded.fetch_add(1);
+            // 每到100帧，统计一次解码时间
+            if (statistics_.framesDecoded.load() % 100 == 0) {
+                updateTotalDecodeTime();
+            }
+
+            // 清理当前帧，准备下一次解码
+            frame.unref();
         }
-
-        // 提交帧到队列
-        frameQueue_->commitFrame();
-
-        // 更新统计信息
-        statistics_.framesDecoded.fetch_add(1);
-        // 每到100帧，统计一次解码时间
-        if (statistics_.framesDecoded.load() % 100 == 0) {
-            updateTotalDecodeTime();
-        }
-
-        // 清理当前帧，准备下一次解码
-        frame.unref();
     }
 
     // 循环结束时，统计一次解码时间
@@ -510,8 +559,8 @@ bool VideoDecoder::setupHardwareDecode()
     needFixSPSProfile_ = false; // 重置SPS修正标志
 
     // 创建硬件加速器（默认尝试自动选择最佳硬件加速方式）
-    hwAccel_ = HardwareAccelFactory::getInstance().createHardwareAccel(hwAccelType_, deviceIndex_,
-                                                                       hwContextCallbeck_);
+    hwAccel_ = HardwareAccelFactory::getInstance().createHardwareAccel(
+        hwAccelType_, deviceIndex_, createHWContextCallback_, freeHWContextCallback_);
     if (!hwAccel_) {
         LOG_WARN("Hardware acceleration not available, using software decode");
         return false;
@@ -541,6 +590,12 @@ bool VideoDecoder::setupHardwareDecode()
         needFixSPSProfile_ = fixH264ProfileIfNeeded(codecCtx_);
     }
 
+    return true;
+}
+
+bool VideoDecoder::removeHardwareDecode()
+{
+    hwAccel_.reset();
     return true;
 }
 

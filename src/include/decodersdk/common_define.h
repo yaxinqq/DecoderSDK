@@ -1,4 +1,4 @@
-#ifndef DECODER_SDK_COMMON_DEFINE_H
+﻿#ifndef DECODER_SDK_COMMON_DEFINE_H
 #define DECODER_SDK_COMMON_DEFINE_H
 #include <atomic>
 #include <chrono>
@@ -394,7 +394,11 @@ struct SyncQualityStats {
 #pragma region Controller
 
 // 解码器配置
+// 创建硬件解码器上下文的回调
 using CreateHWContextCallback = std::function<void *(HWAccelType type)>;
+// 释放硬件解码器上下文的回调 会在AVHWDeviceContext的free回调中执行。
+// userHwContext 是 CreateHWContextCallback 生成的硬件解码器上下文
+using FreeHWContextCallback = std::function<void(HWAccelType type, void *userHwContext)>;
 struct Config {
     // 解码的媒体类型
     enum DecodeMediaType : uint8_t {
@@ -430,6 +434,9 @@ struct Config {
     // 如果未传入回调或是回调返回空指针，则由解码库自行创建。
     // 目前只建议D3D11和DXVA2的硬件上下文由用户自己管理。其它情况由库内部接管
     CreateHWContextCallback createHwContextCallback = nullptr;
+    // 硬件上下文销毁回调。
+    // 每次释放解码器时，会调用一次回调，用于释放当前所选解码类型对应的硬件上下文。
+    FreeHWContextCallback freeHwContextCallback = nullptr;
 
     // 重连配置
     bool enableAutoReconnect = true; // 是否启用自动重连

@@ -59,6 +59,10 @@ protected:
      * @brief 硬件解码设置
      */
     bool setupHardwareDecode() override;
+    /**
+     * @brief 根据情况，是否清理解码器的硬件解码
+     */
+    bool removeHardwareDecode() override;
 
 private:
     /**
@@ -89,7 +93,7 @@ private:
      * @return 是否应该退回到软件解码
      */
     bool shouldFallbackToSoftware(int errorCode) const;
-    
+
     /**
      * @brief 重新初始化软件解码器
      * @return 是否成功初始化
@@ -108,7 +112,9 @@ private:
     // 是否需要在内存
     bool requireFrameInMemory_ = false;
     // 硬件上下文创建回调
-    CreateHWContextCallback hwContextCallbeck_ = nullptr;
+    CreateHWContextCallback createHWContextCallback_ = nullptr;
+    // 硬件上下文销毁回调
+    FreeHWContextCallback freeHWContextCallback_ = nullptr;
 
     // 复用的转换上下文和帧
     SwsContext *swsCtx_ = nullptr;
@@ -117,7 +123,7 @@ private:
 
     // 硬件解码退化相关
     // 是否启用硬件解码退化
-    bool enableHardwareFallback_ = true; 
+    bool enableHardwareFallback_ = true;
 
     // 是否需要手动修改SPS profile
     bool needFixSPSProfile_ = false;
