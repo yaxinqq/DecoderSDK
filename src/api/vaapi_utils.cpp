@@ -4,9 +4,9 @@
 #include "vaapi/vaapi_utils.h"
 
 namespace decoder_sdk {
-VADisplay createDrmVADisplay(int &fd)
+VADisplay createDrmVADisplay(int &fd, int deviceIndex)
 {
-    return internal::va_wrapper::createDrmVADisplay(fd);
+    return internal::va_wrapper::createDrmVADisplay(fd, deviceIndex);
 }
 
 void destoryDrmVADisplay(VADisplay &vaDisplay, int &fd)
@@ -22,6 +22,6 @@ VADRMPRIMESurfaceDescriptor exportVASurfaceHandle(VADisplay vaDisplay, VASurface
 void syncVASurface(VADisplay vaDisplay, VASurfaceID vaSurfaceID)
 {
     internal::va_wrapper::syncVASurface(vaDisplay, vaSurfaceID);
-}   
 }
+} // namespace decoder_sdk
 #endif
