@@ -1,4 +1,5 @@
 ﻿#include "Commonutils.h"
+#include "StreamManager.h"
 
 #include "decodersdk/frame.h"
 
@@ -125,7 +126,26 @@ private:
         if (isInitialized_.load())
             return;
 
-        isInitialized_.store(cuInit(0) == CUDA_SUCCESS && cuDeviceGet(&device_, 0) == CUDA_SUCCESS);
+        if (cuInit(0) != CUDA_SUCCESS) {
+            qWarning() << QStringLiteral("CUDA initialized failed!");
+            return;
+        }
+
+        int deviceCount = 0;
+        if (cuDeviceGetCount(&deviceCount) != CUDA_SUCCESS) {
+            qWarning() << QStringLiteral("CUDA get device count failed!");
+            return;
+        }
+
+        int deviceIndex = StreamManager::instance()->defaultDecoderConfig().hwDeviceIndex;
+        if (deviceIndex < 0 || deviceIndex >= deviceCount) {
+            // 非法的设备索引
+            qInfo()
+                << QStringLiteral("Invalid CUDA device index: %d, use 0 instead!").arg(deviceIndex);
+            deviceIndex = 0;
+        }
+
+        isInitialized_.store(cuDeviceGet(&device_, deviceIndex) == CUDA_SUCCESS);
         if (isInitialized_.load()) {
             qDebug() << QStringLiteral("CUDA initialized successfully!");
         } else {
@@ -560,16 +580,55 @@ private:
         D3D_FEATURE_LEVEL featureLevel;
         Microsoft::WRL::ComPtr<ID3D11DeviceContext> context;
 
-        HRESULT hr = D3D11CreateDevice(nullptr,                  // 使用默认适配器
-                                       D3D_DRIVER_TYPE_HARDWARE, // 硬件驱动
-                                       nullptr,                  // 软件驱动句柄
-                                       createDeviceFlags,        // 创建标志
-                                       featureLevels,            // 特性级别数组
-                                       ARRAYSIZE(featureLevels), // 特性级别数组大小
-                                       D3D11_SDK_VERSION,        // SDK版本
-                                       &device_,                 // 输出设备
-                                       &featureLevel,            // 输出特性级别
-                                       &context                  // 输出设备上下文
+        // 选择创建D3D11设备的显卡
+        Microsoft::WRL::ComPtr<IDXGIFactory> factory;
+        Microsoft::WRL::ComPtr<IDXGIAdapter> adapter;
+
+        // 创建 DXGI 工厂
+        HRESULT hr = CreateDXGIFactory(__uuidof(IDXGIFactory), (void **)&factory);
+        if (FAILED(hr)) {
+            qCritical() << QStringLiteral("CreateDXGIFactory failed, HRESULT:") << Qt::hex << hr;
+            return;
+        }
+
+        // 按照配置文件中的设置创建显卡
+        const auto gpuId = StreamManager::instance()->defaultDecoderConfig().hwDeviceIndex;
+        hr = factory->EnumAdapters(gpuId, &adapter);
+        if (FAILED(hr)) {
+            qWarning() << QStringLiteral("EnumAdapters failed, HRESULT:") << Qt::hex << hr
+                       << QStringLiteral("used default gpu!");
+        } else {
+            // 输出相关信息
+            DXGI_ADAPTER_DESC desc;
+            if (SUCCEEDED(adapter->GetDesc(&desc))) {
+                // 将 wchar_t 名称转换为 QString
+                QString adapterName = QString::fromWCharArray(desc.Description);
+
+                // 判断是否为软件适配器，如果是的话，就忽略它
+                if (adapterName.contains(QStringLiteral("Microsoft Basic Render Driver"),
+                                         Qt::CaseInsensitive) ||
+                    desc.VendorId == 0x1414) {
+                    qWarning()
+                        << QStringLiteral("Invalid adapter index: %1. Used default!").arg(gpuId);
+                    adapter.Reset();
+                } else {
+                    // 输出信息
+                    qInfo() << QStringLiteral("Adapter Name: %1").arg(adapterName);
+                }
+            }
+        }
+
+        hr = D3D11CreateDevice(
+            adapter ? adapter.Get() : nullptr, // 如果指定的适配器有效，就是用指定，否则使用默认
+            adapter ? D3D_DRIVER_TYPE_UNKNOWN : D3D_DRIVER_TYPE_HARDWARE, // 硬件驱动
+            nullptr,                                                      // 软件驱动句柄
+            createDeviceFlags,                                            // 创建标志
+            featureLevels,                                                // 特性级别数组
+            ARRAYSIZE(featureLevels),                                     // 特性级别数组大小
+            D3D11_SDK_VERSION,                                            // SDK版本
+            &device_,                                                     // 输出设备
+            &featureLevel,                                                // 输出特性级别
+            &context                                                      // 输出设备上下文
         );
 
         if (SUCCEEDED(hr)) {
@@ -700,9 +759,19 @@ private:
             return;
         }
 
+        const UINT adapterCount = d3d9ex->GetAdapterCount();
+        UINT adapterIndex = StreamManager::instance()->defaultDecoderConfig().hwDeviceIndex;
+
+        // 这里 - 1 是为了排除Microsoft Basic Render Driver
+        if (adapterIndex >= adapterCount - 1) {
+            qWarning() << QStringLiteral("Adapter index %1 is not existed! Used default adapter!")
+                              .arg(adapterIndex);
+            adapterIndex = D3DADAPTER_DEFAULT;
+        }
+
         // 获取默认适配器信息
         D3DADAPTER_IDENTIFIER9 adapterInfo;
-        HRESULT hr = d3d9ex->GetAdapterIdentifier(D3DADAPTER_DEFAULT, 0, &adapterInfo);
+        HRESULT hr = d3d9ex->GetAdapterIdentifier(adapterIndex, 0, &adapterInfo);
         if (FAILED(hr)) {
             qWarning() << QStringLiteral("Failed to get adapter identifier, HRESULT:") << Qt::hex
                        << hr;
@@ -714,7 +783,7 @@ private:
 
         D3DDISPLAYMODEEX modeex = {0};
         modeex.Size = sizeof(D3DDISPLAYMODEEX);
-        d3d9ex->GetAdapterDisplayModeEx(D3DADAPTER_DEFAULT, &modeex, NULL);
+        d3d9ex->GetAdapterDisplayModeEx(adapterIndex, &modeex, NULL);
         if (FAILED(hr)) {
             d3d9ex->Release();
             qWarning() << QStringLiteral("Failed to get display mode, HRESULT:") << Qt::hex << hr;
@@ -733,7 +802,7 @@ private:
         presentParams.hDeviceWindow = NULL;
 
         // 添加多线程支持标志
-        hr = d3d9ex->CreateDeviceEx(D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, NULL,
+        hr = d3d9ex->CreateDeviceEx(adapterIndex, D3DDEVTYPE_HAL, NULL,
                                     D3DCREATE_NOWINDOWCHANGES | D3DCREATE_FPU_PRESERVE |
                                         D3DCREATE_HARDWARE_VERTEXPROCESSING |
                                         D3DCREATE_DISABLE_PSGP_THREADING | D3DCREATE_MULTITHREADED,
@@ -934,7 +1003,8 @@ private:
     {
         egl::loadFuncTable();
 
-        vaDisplay_ = decoder_sdk::createDrmVADisplay(fd_);
+        const auto gpuId = StreamManager::instance()->defaultDecoderConfig().hwDeviceIndex;
+        vaDisplay_ = decoder_sdk::createDrmVADisplay(fd_, gpuId);
         if (vaDisplay_ == nullptr) {
             qWarning() << QStringLiteral("VADisplay initialize failed!");
         } else {

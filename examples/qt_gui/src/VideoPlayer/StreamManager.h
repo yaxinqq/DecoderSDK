@@ -135,6 +135,13 @@ public:
      */
     bool isStreamExist(const QString &key) const;
 
+    /*
+     * @brief 获取默认的解码器配置
+     *
+     * @return 解码器配置
+     */
+    const decoder_sdk::Config &defaultDecoderConfig() const;
+
 private slots:
     /*
      * @brief 响应 StreamDecoderWorker准备被删除 的信号
@@ -162,6 +169,11 @@ private:
                                             QString &key);
 
     /*
+     * @brief 初始化默认的解码器配置
+     */
+    void initDefaultDecoderConfig();
+
+    /*
      * @brief 创建硬件上下文的回调
      *
      * @param type 硬件类型
@@ -183,4 +195,7 @@ private:
     QMap<VideoPlayerImpl *, QPointer<StreamDecoderWorker>> mapDecoderByWidget_;
     // Decoder的SourceKey和Decoder之间的映射
     QMap<QString, StreamDecoderWorker *> mapDecoderByKey_;
+
+    // 默认的解码器配置
+    decoder_sdk::Config defaultDecoderConfig_;
 };

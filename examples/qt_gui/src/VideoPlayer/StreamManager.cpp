@@ -28,17 +28,7 @@ QString StreamManager::openStream(VideoPlayerImpl *player, QString url, QString 
     worker->registerPlayer(player);
 
     // 开启解码
-    decoder_sdk::Config config;
-    config.hwAccelType = decoder_sdk::HWAccelType::kCuda;
-    config.swVideoOutFormat = decoder_sdk::ImageFormat::kYUV444P;
-    config.decodeMediaType = decoder_sdk::Config::DecodeMediaType::kAll;
-    config.enableFrameRateControl = true;
-    config.createHwContextCallback =
-        std::bind(&StreamManager::createHwContextCallback, this, std::placeholders::_1);
-    config.freeHwContextCallback = std::bind(&StreamManager::freeHwContextCallback, this,
-                                             std::placeholders::_1, std::placeholders::_2);
-    config.audioInterleaved = true;
-    config.maxReconnectAttempts = -1;
+    const auto config = defaultDecoderConfig();
     worker->open(url, config);
 
     return key;
@@ -227,12 +217,7 @@ QString StreamManager::createStream(const QString &url, Stream::OpenMode openMod
         return {};
 
     // 开启解码
-    decoder_sdk::Config config;
-    config.hwAccelType = decoder_sdk::HWAccelType::kD3d11va;
-    config.decodeMediaType = decoder_sdk::Config::DecodeMediaType::kVideo;
-    config.enableFrameRateControl = true;
-    config.createHwContextCallback =
-        std::bind(&StreamManager::createHwContextCallback, this, std::placeholders::_1);
+    const auto config = defaultDecoderConfig();
     worker->open(url, config);
 
     // 开启后暂停
@@ -244,6 +229,11 @@ QString StreamManager::createStream(const QString &url, Stream::OpenMode openMod
 bool StreamManager::isStreamExist(const QString &key) const
 {
     return mapDecoderByKey_.contains(key) && mapDecoderByKey_[key];
+}
+
+const decoder_sdk::Config &StreamManager::defaultDecoderConfig() const
+{
+    return defaultDecoderConfig_;
 }
 
 void StreamManager::onWorkerAboutToDelete(const QString &key)
@@ -297,6 +287,27 @@ StreamDecoderWorker *StreamManager::getOrCreateDecoder(const QString &url,
     return worker;
 }
 
+void StreamManager::initDefaultDecoderConfig()
+{
+    defaultDecoderConfig_.hwDeviceIndex = 0;
+    defaultDecoderConfig_.enableFrameRateControl = true;
+    defaultDecoderConfig_.hwAccelType = decoder_sdk::HWAccelType::kAuto;
+    defaultDecoderConfig_.swVideoOutFormat = decoder_sdk::ImageFormat::kYUV420P;
+    defaultDecoderConfig_.requireFrameInSystemMemory = false;
+    defaultDecoderConfig_.decodeMediaType = decoder_sdk::Config::DecodeMediaType::kAll;
+    defaultDecoderConfig_.enableHardwareFallback = true;
+    defaultDecoderConfig_.enableAutoReconnect = true;
+    defaultDecoderConfig_.maxReconnectAttempts = -1;
+    defaultDecoderConfig_.reconnectIntervalMs = 3000;
+    defaultDecoderConfig_.preBufferConfig.enablePreBuffer = false;
+    defaultDecoderConfig_.audioInterleaved = true;
+
+    defaultDecoderConfig_.createHwContextCallback =
+        std::bind(&StreamManager::createHwContextCallback, this, std::placeholders::_1);
+    defaultDecoderConfig_.freeHwContextCallback = std::bind(
+        &StreamManager::freeHwContextCallback, this, std::placeholders::_1, std::placeholders::_2);
+}
+
 void *StreamManager::createHwContextCallback(decoder_sdk::HWAccelType type)
 {
     switch (type) {
@@ -346,6 +357,7 @@ void StreamManager::freeHwContextCallback(decoder_sdk::HWAccelType type, void *u
 
 StreamManager::StreamManager(QObject *parent /*= nullptr*/) : QObject(parent)
 {
+    initDefaultDecoderConfig();
 }
 
 StreamManager::~StreamManager()
