@@ -1,9 +1,47 @@
 {
-    "log": {
-      "enableFileLog": true,
-      "level": "debug",
-      "logDir": "logs",
-      "maxFileSizeMB": 10,
-      "maxFiles": 3
+  "log": {
+    "enableFileLog": true,
+    "enableConsoleLog": true,
+    "enableLevelSplit": true,
+    "logDir": "./logs",
+    "level": "debug",
+    "pattern": "[%Y-%m-%d %H:%M:%S.%e] [%t] [%^%l%$] [%s:%#] %v",
+    "levels": {
+      "trace": {
+        "maxFileSizeMB": 50,
+        "overallFileSizeMB": 1000,
+        "retentionDays": 1
+      },
+      "debug": {
+        "maxFileSizeMB": 100,
+        "overallFileSizeMB": 1000,
+        "retentionDays": 3
+      },
+      "info": {
+        "maxFileSizeMB": 100,
+        "overallFileSizeMB": 500,
+        "retentionDays": 7
+      },
+      "warning": {
+        "maxFileSizeMB": 100,
+        "overallFileSizeMB": 500,
+        "retentionDays": 30
+      },
+      "error": {
+        "maxFileSizeMB": 100,
+        "overallFileSizeMB": 500,
+        "retentionDays": 90
+      },
+      "critical": {
+        "maxFileSizeMB": 100,
+        "overallFileSizeMB": 500,
+        "retentionDays": 180
+      },
+      "all": {
+        "maxFileSizeMB": 100,
+        "overallFileSizeMB": 1000,
+        "retentionDays": 5
+      }
     }
   }
+}
