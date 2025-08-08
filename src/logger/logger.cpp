@@ -1,6 +1,7 @@
 ﻿#include "logger.h"
 
 #include <chrono>
+#include <cstdarg>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -10,6 +11,10 @@
 #include <spdlog/async.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
 #include <nlohmann/json.hpp>
+
+extern "C" {
+#include <libavutil/log.h>
+}
 
 DECODER_SDK_NAMESPACE_BEGIN
 INTERNAL_NAMESPACE_BEGIN
@@ -25,16 +30,8 @@ void initDefaultLevelConfig(LogConfig *config)
     config->levels["critical"] = LevelConfig{100, 500, 180}; // 100MB单文件，500MB文件夹，180天保留
     config->levels["all"] = LevelConfig{100, 1000, 5}; // all日志：100MB单文件，1GB文件夹，5天保留
 }
-} // namespace
 
-// 静态成员变量定义
-std::unique_ptr<LogConfig> LoggerManager::config_ = nullptr;
-std::shared_ptr<spdlog::logger> LoggerManager::logger_ = nullptr;
-std::mutex LoggerManager::initMutex_;
-std::atomic<bool> LoggerManager::initialized_{false};
-std::string LoggerManager::defaultConfigPath_ = "etc/decoderSDK.json";
-
-spdlog::level::level_enum LoggerManager::parseLevel(const std::string &level)
+spdlog::level::level_enum parseLevel(const std::string &level)
 {
     if (level == "trace")
         return spdlog::level::trace;
@@ -49,6 +46,105 @@ spdlog::level::level_enum LoggerManager::parseLevel(const std::string &level)
     if (level == "fatal" || level == "critical")
         return spdlog::level::critical;
     return spdlog::level::info;
+}
+
+spdlog::level::level_enum convertFFmpegLevel(int ffmpegLevel)
+{
+    switch (ffmpegLevel) {
+        case AV_LOG_PANIC:
+        case AV_LOG_FATAL:
+            return spdlog::level::critical;
+        case AV_LOG_ERROR:
+            return spdlog::level::err;
+        case AV_LOG_WARNING:
+            return spdlog::level::warn;
+        case AV_LOG_INFO:
+            return spdlog::level::info;
+        case AV_LOG_VERBOSE:
+        case AV_LOG_DEBUG:
+            return spdlog::level::debug;
+        case AV_LOG_TRACE:
+            return spdlog::level::trace;
+        default:
+            return spdlog::level::info;
+    }
+}
+
+int convertSpdlogLevel(spdlog::level::level_enum spdlogLevel)
+{
+    switch (spdlogLevel) {
+        case spdlog::level::critical:
+            return AV_LOG_FATAL;
+        case spdlog::level::err:
+            return AV_LOG_ERROR;
+        case spdlog::level::warn:
+            return AV_LOG_WARNING;
+        case spdlog::level::info:
+            return AV_LOG_INFO;
+        case spdlog::level::debug:
+            return AV_LOG_DEBUG;
+        case spdlog::level::trace:
+            return AV_LOG_TRACE;
+        default:
+            return AV_LOG_INFO;
+    }
+}
+
+} // namespace
+
+// 静态成员变量定义
+std::unique_ptr<LogConfig> LoggerManager::config_ = nullptr;
+std::shared_ptr<spdlog::logger> LoggerManager::logger_ = nullptr;
+std::mutex LoggerManager::initMutex_;
+std::atomic<bool> LoggerManager::initialized_{false};
+std::string LoggerManager::defaultConfigPath_ = "etc/decoderSDK.json";
+
+void LoggerManager::ffmpegLogCallback(void *avcl, int level, const char *fmt, va_list vl)
+{
+    // 过滤掉过于频繁的调试信息
+    if (level > AV_LOG_INFO) {
+        return;
+    }
+
+    // 格式化FFmpeg日志消息
+    char buffer[1024];
+    vsnprintf(buffer, sizeof(buffer), fmt, vl);
+
+    // 移除末尾的换行符
+    std::string message(buffer);
+    if (!message.empty() && message.back() == '\n') {
+        message.pop_back();
+    }
+
+    // 跳过空消息
+    if (message.empty()) {
+        return;
+    }
+
+    // 添加[FFMPEG]前缀
+    std::string prefixedMessage = "[FFMPEG] " + message;
+
+    // 转换日志级别并记录
+    spdlog::level::level_enum spdlogLevel = convertFFmpegLevel(level);
+    logFFmpeg(spdlogLevel, prefixedMessage);
+}
+
+void LoggerManager::logFFmpeg(spdlog::level::level_enum level, const std::string &message)
+{
+    auto logger = getLogger();
+    if (logger && logger->should_log(level)) {
+        // 使用特殊的源位置信息标识这是来自FFmpeg的日志
+        logger->log(spdlog::source_loc{"ffmpeg", 0, "ffmpeg"}, level, message);
+    }
+}
+
+void LoggerManager::setupFFmpegLogging()
+{
+    // 设置FFmpeg日志级别，只记录INFO及以上级别的日志
+    av_log_set_level(convertSpdlogLevel(parseLevel(config_->level)));
+
+    // 设置FFmpeg日志回调函数
+    av_log_set_callback(ffmpegLogCallback);
 }
 
 bool LoggerManager::loadConfig(const std::string &configFile, LogConfig &config)
@@ -222,6 +318,10 @@ bool LoggerManager::initialize(const std::string &configFile)
 
     // 创建日志器
     createLogger();
+
+    // 设置FFmpeg日志回调
+    setupFFmpegLogging();
+
     initialized_.store(true);
     return true;
 }
@@ -238,13 +338,12 @@ bool LoggerManager::reloadConfig(const std::string &configFile)
 {
     std::lock_guard<std::mutex> lock(initMutex_);
 
+    initialized_.store(false);
+
     LogConfig newConfig;
     const std::string configPath = configFile.empty() ? defaultConfigPath_ : configFile;
     initDefaultLevelConfig(&newConfig);
-
-    if (!loadConfig(configPath, newConfig)) {
-        return false;
-    }
+    loadConfig(configPath, newConfig);
 
     // 关闭现有日志器
     logger_ = nullptr;
@@ -253,6 +352,11 @@ bool LoggerManager::reloadConfig(const std::string &configFile)
     // 应用新配置
     *config_ = std::move(newConfig);
     createLogger();
+
+    // 重新设置FFmpeg日志回调
+    setupFFmpegLogging();
+
+    initialized_.store(true);
 
     return true;
 }
@@ -264,6 +368,9 @@ void LoggerManager::shutdown()
     if (!initialized_.load()) {
         return;
     }
+
+    // 恢复FFmpeg默认日志处理
+    av_log_set_callback(av_log_default_callback);
 
     logger_->flush();
     spdlog::drop_all();
@@ -288,6 +395,7 @@ std::string LoggerManager::getLogStats()
     ss << "- 当前级别: " << (config_ ? config_->level : "未知") << "\n";
     ss << "- 文件日志: " << (config_ && config_->enableFileLog ? "启用" : "禁用") << "\n";
     ss << "- 控制台日志: " << (config_ && config_->enableConsoleLog ? "启用" : "禁用") << "\n";
+    ss << "- FFmpeg日志: 已集成\n";
 
     return ss.str();
 }

@@ -83,6 +83,20 @@ public:
     static std::string getLogStats();
 
     /**
+     * @brief 设置FFmpeg日志回调
+     */
+    static void setupFFmpegLogging();
+
+    /**
+     * @brief FFmpeg日志回调函数
+     * @param avcl FFmpeg上下文
+     * @param level FFmpeg日志级别
+     * @param fmt 格式字符串
+     * @param vl 参数列表
+     */
+    static void ffmpegLogCallback(void* avcl, int level, const char* fmt, va_list vl);
+
+    /**
      * @brief 通用日志记录函数
      * @param level 日志级别
      * @param file 文件名
@@ -102,11 +116,17 @@ public:
         }
     }
 
+    /**
+     * @brief FFmpeg专用日志记录函数
+     * @param level 日志级别
+     * @param message 日志消息
+     */
+    static void logFFmpeg(spdlog::level::level_enum level, const std::string& message);
+
 private:
     static bool loadConfig(const std::string &configFile, LogConfig &config);
     static void createLogger();
     static std::string getLogDir();
-    static spdlog::level::level_enum parseLevel(const std::string &level);
 
 private:
     static std::unique_ptr<LogConfig> config_;
