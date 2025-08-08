@@ -408,6 +408,15 @@ struct Config {
         kAll = kVideo | kAudio, // 所有
     };
 
+    // rtsp协议使用的传输协议
+    enum class RtspTransport : uint8_t {
+        kTcp,          // tcp
+        kUdp,          // udp
+        kUdpMulticast, // udp多播
+        kHttp,         // http
+        kHttps,        // https
+    };
+
     // 是否开启帧率控制
     bool enableFrameRateControl = true;
     // 播放速度
@@ -459,6 +468,9 @@ struct Config {
 
     // 音频采样格式是否交错
     bool audioInterleaved = true;
+
+    // rtsp协议使用的传输协议
+    RtspTransport rtspTransport = RtspTransport::kTcp;
 };
 
 // 预缓冲状态

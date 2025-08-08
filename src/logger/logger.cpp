@@ -101,10 +101,8 @@ std::string LoggerManager::defaultConfigPath_ = "etc/decoderSDK.json";
 
 void LoggerManager::ffmpegLogCallback(void *avcl, int level, const char *fmt, va_list vl)
 {
-    // 过滤掉过于频繁的调试信息
-    if (level > AV_LOG_INFO) {
+    if (level > av_log_get_level())
         return;
-    }
 
     // 格式化FFmpeg日志消息
     char buffer[1024];

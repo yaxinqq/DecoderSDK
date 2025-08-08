@@ -79,7 +79,7 @@ void SimplePlayer::onPtsChanged(double pts)
 void SimplePlayer::onSliderValueChanged(int value)
 {
     if (isSliderPressed_) {
-        ui->startTimeLabel->setText(QString::number(value));
+        ui->startTimeLabel->setText(QString::number(value)); 
     }
 }
 

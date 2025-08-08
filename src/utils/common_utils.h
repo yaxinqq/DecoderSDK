@@ -62,6 +62,9 @@ MediaType avMediaType2MediaType(AVMediaType type);
 // MediaType 转为 AVMediaType
 AVMediaType mediaType2AVMediaType(MediaType type);
 
+// RtspTransport 转为字符串
+std::string rtspTransport2Str(Config::RtspTransport transport);
+
 // 原子变量更新函数
 template <typename T>
 bool atomicUpdateIfNotEqual(std::atomic<T> &atomicVar, T newValue, int maxRetry = 100)

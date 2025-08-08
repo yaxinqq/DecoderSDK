@@ -650,7 +650,8 @@ bool Demuxer::openInternal(const std::string &url, const Config &config,
     av_dict_set(&options, "analyzeduration", "1000000", 0);
 
     if (isRealTime) {
-        av_dict_set(&options, "rtsp_transport", "tcp", 0);
+        av_dict_set(&options, "rtsp_transport",
+                    utils::rtspTransport2Str(config.rtspTransport).c_str(), 0);
         av_dict_set(&options, "fflags", "nobuffer", 0);
         av_dict_set(&options, "stimeout", "2000000", 0);
     }

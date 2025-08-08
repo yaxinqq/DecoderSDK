@@ -324,6 +324,25 @@ AVMediaType mediaType2AVMediaType(MediaType type)
     }
     return AVMEDIA_TYPE_UNKNOWN;
 }
+
+std::string rtspTransport2Str(Config::RtspTransport transport)
+{
+    switch (transport) {
+        case Config::RtspTransport::kTcp:
+            return "tcp";
+        case Config::RtspTransport::kUdp:
+            return "udp";
+        case Config::RtspTransport::kUdpMulticast:
+            return "udp_multicast";
+        case Config::RtspTransport::kHttp:
+            return "http";
+        case Config::RtspTransport::kHttps:
+            return "https";
+        default:
+            break;
+    }
+    return "tcp";
+}
 } // namespace utils
 
 INTERNAL_NAMESPACE_END
