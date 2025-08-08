@@ -378,6 +378,10 @@ void VideoDecoder::decodeLoop()
         // 发送包到解码器
         int ret = avcodec_send_packet(codecCtx_, packet.get());
         if (ret < 0 && ret != AVERROR(EAGAIN) && ret != AVERROR_EOF) {
+            // 记录出错的信息
+            LOG_WARN("{} send packet error, error code: {}, error string: {}", demuxer_->url(), ret,
+                     utils::avErr2Str(ret));
+
             // 判断是否需要退化到软解
             if (readFirstFrame || !shouldFallbackToSoftware(ret))
                 continue;

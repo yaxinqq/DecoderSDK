@@ -387,11 +387,17 @@ void RealTimeStreamRecorder::cleanup()
 {
     // 写入文件尾
     if (outputFormatCtx_) {
-        av_write_trailer(outputFormatCtx_);
+        int ret = av_write_trailer(outputFormatCtx_);
+        if (ret < 0) {
+            LOG_ERROR("Failed to write trailer: {}", utils::avErr2Str(ret));
+        }
 
         // 关闭输出文件
         if (!(outputFormatCtx_->oformat->flags & AVFMT_NOFILE)) {
-            avio_closep(&outputFormatCtx_->pb);
+            ret = avio_closep(&outputFormatCtx_->pb);
+            if (ret < 0) {
+                LOG_ERROR("Failed to close output file: {}", utils::avErr2Str(ret));
+            }
         }
 
         // 释放输出格式上下文

@@ -211,7 +211,7 @@ bool DecoderBase::handleDecodeError(const std::string &decoderName, MediaType me
         return false;
 
     statistics_.errorsCount.fetch_add(1);
-    LOG_ERROR("Decoder occurred an error, code: {}", errorCode);
+    LOG_WARN("{} Decoder occurred an error, code: {}", demuxer_->url(), errorCode);
     auto event = std::make_shared<DecoderEventArgs>(decoderName, streamIndex_, mediaType,
                                                     codecCtx_->hw_device_ctx != nullptr,
                                                     decoderName, description);
@@ -374,16 +374,16 @@ void DecoderBase::closeInternal()
             av_buffer_unref(&codecCtx_->hw_device_ctx);
             codecCtx_->hw_device_ctx = nullptr;
         }
-        
+
         // 显式释放硬件帧上下文
         if (codecCtx_->hw_frames_ctx) {
             av_buffer_unref(&codecCtx_->hw_frames_ctx);
             codecCtx_->hw_frames_ctx = nullptr;
         }
-        
+
         // 刷新解码器缓冲区，确保所有硬件帧都被释放
         avcodec_flush_buffers(codecCtx_);
-        
+
         avcodec_free_context(&codecCtx_);
     }
 

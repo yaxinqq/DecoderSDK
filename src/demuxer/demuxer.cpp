@@ -447,6 +447,10 @@ int Demuxer::readAndProcessPacket(
         return -1;
     }
 
+    // 记录出现的错误
+    LOG_WARN("{} has read error, error code: {}, error string: {}", url_, ret,
+             utils::avErr2Str(ret));
+
     // 处理其他读取错误
     return handleReadError(occuredErrorTime);
 }
@@ -542,7 +546,11 @@ bool Demuxer::handleLoopPlayback()
 
     // 重置到文件开始位置
     if (formatContext_->pb && formatContext_->pb->seekable) {
-        avio_seek(formatContext_->pb, 0, SEEK_SET);
+        const int ret = avio_seek(formatContext_->pb, 0, SEEK_SET);
+        if (ret < 0) {
+            LOG_ERROR("{} Seek to start failed: {}", url_, utils::avErr2Str(ret));
+            return false;
+        }
     }
 
     // lazy, 消除竞态条件，等待同步
@@ -599,7 +607,7 @@ bool Demuxer::handleSeekRequest()
     // 执行seek
     int ret = av_seek_frame(formatContext_, -1, timestamp, AVSEEK_FLAG_BACKWARD);
     if (ret < 0) {
-        LOG_ERROR("Seek failed: {}", utils::avErr2Str(ret));
+        LOG_ERROR("{} Seek failed: {}", url_, utils::avErr2Str(ret));
         return false;
     }
     avformat_flush(formatContext_);
@@ -660,7 +668,7 @@ bool Demuxer::openInternal(const std::string &url, const Config &config,
     // 查找流信息
     ret = avformat_find_stream_info(formatContext_, nullptr);
     if (ret < 0) {
-        LOG_ERROR("Failed to find stream info: {}", utils::avErr2Str(ret));
+        LOG_ERROR("{} Failed to find stream info: {}", url_, utils::avErr2Str(ret));
         sendFailedEvent();
         avformat_close_input(&formatContext_);
         return false;
@@ -668,7 +676,11 @@ bool Demuxer::openInternal(const std::string &url, const Config &config,
 
     // 重置到文件开始位置
     if (formatContext_->pb && formatContext_->pb->seekable) {
-        avio_seek(formatContext_->pb, 0, SEEK_SET);
+        const int ret = avio_seek(formatContext_->pb, 0, SEEK_SET);
+        if (ret < 0) {
+            LOG_ERROR("{} Seek to start failed: {}", url_, utils::avErr2Str(ret));
+            return false;
+        }
     }
 
     // 查找最佳流
