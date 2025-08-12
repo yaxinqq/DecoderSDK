@@ -70,6 +70,11 @@ public:
      * @return double 解码时间戳
      */
     double secPts() const;
+    /**
+     * @brief 获得用户自定义的SEI数据组
+     * @return SEI数据组
+     */
+    std::vector<UserSEIData> userSEIDataList() const;
 
     /**
      * @brief 获得图像宽度

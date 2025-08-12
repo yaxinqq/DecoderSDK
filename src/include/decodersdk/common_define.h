@@ -1,5 +1,6 @@
 ﻿#ifndef DECODER_SDK_COMMON_DEFINE_H
 #define DECODER_SDK_COMMON_DEFINE_H
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <functional>
@@ -347,6 +348,35 @@ struct HWAccelInfo {
     ImageFormat hwFormat;               // 硬件像素格式
     std::vector<ImageFormat> swFormats; // 支持的软件像素格式
 };
+
+// 自定义SEI数据
+struct UserSEIData {
+    std::array<uint8_t, 16> uuid{};
+    std::vector<uint8_t> payload;
+
+    /**
+     * @brief 获取UUID的十六进制字符串表示
+     * @return UUID字符串
+     */
+    std::string uuidHex() const
+    {
+        char buf[37] = {0};
+        snprintf(buf, sizeof(buf),
+                 "%02X%02X%02X%02X-%02X%02X-%02X%02X-%02X%02X-%02X%02X%02X%02X%02X%02X", uuid[0],
+                 uuid[1], uuid[2], uuid[3], uuid[4], uuid[5], uuid[6], uuid[7], uuid[8], uuid[9],
+                 uuid[10], uuid[11], uuid[12], uuid[13], uuid[14], uuid[15]);
+        return std::string(buf);
+    }
+
+    /**
+     * @brief 获取payload的字符串表示（如果是文本数据）
+     * @return payload字符串
+     */
+    std::string payloadAsString() const
+    {
+        return std::string(payload.begin(), payload.end());
+    }
+};
 #pragma endregion
 // ===================================================== //
 
@@ -469,6 +499,9 @@ struct Config {
 
     // rtsp协议使用的传输协议
     RtspTransport rtspTransport = RtspTransport::kTcp;
+
+    // 是否解析用户自定义的SEI数据
+    bool enableParseUserSEIData = true;
 };
 
 // 预缓冲状态

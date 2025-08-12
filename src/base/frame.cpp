@@ -25,7 +25,8 @@ Frame::Frame(const Frame &other)
       serial_(other.serial_),
       duration_(other.duration_),
       pts_(other.pts_),
-      mediaType_(other.mediaType_)
+      mediaType_(other.mediaType_),
+      userSEIDataList_(other.userSEIDataList_)
 {
     if (other.frame_) {
         ensureAllocated();
@@ -43,6 +44,7 @@ Frame &Frame::operator=(const Frame &other)
         duration_ = other.duration_;
         pts_ = other.pts_;
         mediaType_ = other.mediaType_;
+        userSEIDataList_ = other.userSEIDataList_;
 
         if (other.frame_) {
             ensureAllocated();
@@ -65,7 +67,8 @@ Frame::Frame(Frame &&other) noexcept
       serial_(other.serial_),
       duration_(other.duration_),
       pts_(other.pts_),
-      mediaType_(other.mediaType_)
+      mediaType_(other.mediaType_),
+      userSEIDataList_(std::move(other.userSEIDataList_))
 {
     // 转移所有权，避免深拷贝
     other.frame_ = nullptr;
@@ -83,6 +86,7 @@ Frame &Frame::operator=(Frame &&other) noexcept
         duration_ = other.duration_;
         pts_ = other.pts_;
         mediaType_ = other.mediaType_;
+        userSEIDataList_ = std::move(other.userSEIDataList_);
 
         other.frame_ = nullptr;
     }
@@ -142,6 +146,16 @@ AVMediaType Frame::mediaType() const
 void Frame::setMediaType(AVMediaType type)
 {
     mediaType_ = type;
+}
+
+std::vector<UserSEIData> Frame::userSEIDataList() const
+{
+    return userSEIDataList_;
+}
+
+void Frame::setUserSEIDataList(const std::vector<UserSEIData> &seiDataList)
+{
+    userSEIDataList_ = seiDataList;
 }
 
 int Frame::width() const

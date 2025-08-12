@@ -115,6 +115,8 @@ private:
     CreateHWContextCallback createHWContextCallback_ = nullptr;
     // 硬件上下文销毁回调
     FreeHWContextCallback freeHWContextCallback_ = nullptr;
+    // 是否解析用户自定义的SEI数据
+    bool enableParseUserSEIData_ = false;
 
     // 复用的转换上下文和帧
     SwsContext *swsCtx_ = nullptr;

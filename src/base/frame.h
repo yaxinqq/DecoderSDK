@@ -1,11 +1,14 @@
 #ifndef DECODER_SDK_INTERNAL_FRAME_H
 #define DECODER_SDK_INTERNAL_FRAME_H
+#include <vector>
+
 extern "C" {
 #include <libavutil/frame.h>
 #include <libavutil/imgutils.h>
 }
 
 #include "base_define.h"
+#include "include/decodersdk/common_define.h"
 
 DECODER_SDK_NAMESPACE_BEGIN
 INTERNAL_NAMESPACE_BEGIN
@@ -107,10 +110,22 @@ public:
      */
     AVMediaType mediaType() const;
     /**
-     * @brief 获得媒体类型
+     * @brief 设置媒体类型
      * @param type 媒体类型
      */
     void setMediaType(AVMediaType type);
+
+    /**
+     * @brief 获得用户自定义的SEI数据组
+     * @return SEI数据组
+     */
+    std::vector<UserSEIData> userSEIDataList() const;
+    /**
+     * @brief 设置用户自定义的SEI数据组
+     *
+     * @param seiDataList SEI数据组
+     */
+    void setUserSEIDataList(const std::vector<UserSEIData> &seiDataList);
     // ==================================================== //
 
     // ====================== 数据透传 ===================== //
@@ -448,6 +463,8 @@ private:
     double pts_ = 0.0;
     // 媒体类型
     AVMediaType mediaType_ = AVMEDIA_TYPE_UNKNOWN;
+    // 用户自定义的SEI数据组
+    std::vector<UserSEIData> userSEIDataList_;
 };
 
 INTERNAL_NAMESPACE_END

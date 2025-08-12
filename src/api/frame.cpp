@@ -58,6 +58,11 @@ double Frame::secPts() const
     return impl_ ? impl_->secPts() : 0.0;
 }
 
+std::vector<UserSEIData> Frame::userSEIDataList() const
+{
+    return impl_ ? impl_->userSEIDataList() : std::vector<UserSEIData>();
+}
+
 int Frame::width() const
 {
     return impl_ ? impl_->width() : 0;

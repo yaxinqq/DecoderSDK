@@ -198,12 +198,218 @@ bool fixH264ProfileIfNeeded(AVCodecContext *codecCtx)
                                 isAVCC ? "AVCC" : "AnnexB", true);
 }
 
+/**
+ * @brief 检查数据是否为Annex-B格式
+ * @param data 输入数据
+ * @param size 数据大小
+ * @return true 如果是Annex-B格式，false 否则
+ */
 bool isAnnexBFormat(const uint8_t *data, size_t size)
 {
     if (size >= 4) {
         return (data[0] == 0 && data[1] == 0 && ((data[2] == 0 && data[3] == 1) || data[2] == 1));
     }
     return false;
+}
+
+/**
+ * @brief 从Annex-B流中分割NALU
+ * @param data 输入数据
+ * @param size 数据大小
+ * @return NALU列表
+ */
+std::vector<std::vector<uint8_t>> splitAnnexBNalus(const uint8_t *data, size_t size)
+{
+    std::vector<std::vector<uint8_t>> nalus;
+    size_t i = 0;
+
+    auto findStartCode = [&](size_t pos) -> size_t {
+        for (size_t p = pos; p + 3 <= size; ++p) {
+            if (p + 4 <= size && data[p] == 0x00 && data[p + 1] == 0x00 && data[p + 2] == 0x00 &&
+                data[p + 3] == 0x01)
+                return p;
+            if (data[p] == 0x00 && data[p + 1] == 0x00 && data[p + 2] == 0x01)
+                return p;
+        }
+        return -1;
+    };
+
+    size_t start = findStartCode(0);
+    if (start < 0) {
+        nalus.emplace_back(data, data + size);
+        return nalus;
+    }
+    size_t pos = (size_t)start;
+
+    while (pos < size) {
+        size_t scLen = 3;
+        if (pos + 4 <= size && data[pos] == 0x00 && data[pos + 1] == 0x00 &&
+            data[pos + 2] == 0x00 && data[pos + 3] == 0x01)
+            scLen = 4;
+        else if (!(data[pos] == 0x00 && data[pos + 1] == 0x00 && data[pos + 2] == 0x01))
+            break;
+
+        size_t nalStart = pos + scLen;
+        size_t next = findStartCode(nalStart);
+        size_t nalEnd = (next < 0) ? size : (size_t)next;
+        if (nalStart < nalEnd && nalEnd <= size) {
+            nalus.emplace_back(data + nalStart, data + nalEnd);
+        }
+        if (next < 0)
+            break;
+        pos = (size_t)next;
+    }
+    return nalus;
+}
+
+/**
+ * @brief 从AVCC流中分割NALU
+ * @param data 输入数据
+ * @param size 数据大小
+ * @return NALU列表
+ */
+std::vector<std::vector<uint8_t>> splitAvccNalus(const uint8_t *data, size_t size)
+{
+    std::vector<std::vector<uint8_t>> nalus;
+    size_t pos = 0;
+
+    while (pos + 4 <= size) {
+        uint32_t nalSize =
+            (data[pos] << 24) | (data[pos + 1] << 16) | (data[pos + 2] << 8) | data[pos + 3];
+        pos += 4;
+        if (pos + nalSize > size)
+            break;
+        nalus.emplace_back(data + pos, data + pos + nalSize);
+        pos += nalSize;
+    }
+    return nalus;
+}
+
+/**
+ * @brief 去除emulation prevention bytes
+ * @param data 输入数据
+ * @param size 数据大小
+ * @return 处理后的数据
+ */
+std::vector<uint8_t> removeEPB(const uint8_t *data, size_t size)
+{
+    std::vector<uint8_t> out;
+    out.reserve(size);
+    for (size_t i = 0; i < size; ++i) {
+        if (i + 2 < size && data[i] == 0x00 && data[i + 1] == 0x00 && data[i + 2] == 0x03) {
+            out.push_back(0x00);
+            out.push_back(0x00);
+            i += 2;
+            continue;
+        }
+        out.push_back(data[i]);
+    }
+    return out;
+}
+
+/**
+ * @brief 解析单个NALU中的SEI数据
+ * @param nal NALU数据
+ * @param nalSize NALU大小
+ * @param codecIsHevc 是否为HEVC编码
+ * @return SEI数据列表
+ */
+std::vector<UserSEIData> parseSeiFromNal(const uint8_t *nal, size_t nalSize, bool codecIsHevc)
+{
+    if (nalSize == 0)
+        return {};
+
+    int nalUnitType = -1;
+    size_t headerSize = 1;
+
+    if (!codecIsHevc) {
+        nalUnitType = nal[0] & 0x1F;
+        if (nalUnitType != 6)
+            return {}; // H.264 SEI
+    } else {
+        if (nalSize < 2)
+            return {};
+        nalUnitType = (nal[0] >> 1) & 0x3F;
+        if (nalUnitType != 39 && nalUnitType != 40)
+            return {}; // HEVC prefix(39)/suffix(40) SEI
+        headerSize = 2;
+    }
+
+    // 去掉 EPB
+    auto rbsp = removeEPB(nal + headerSize, nalSize - headerSize);
+    if (rbsp.empty())
+        return {};
+
+    size_t off = 0;
+    std::vector<UserSEIData> results;
+
+    while (off + 2 < rbsp.size()) {
+        // 解析 payloadType
+        unsigned payloadType = 0;
+        while (off < rbsp.size()) {
+            uint8_t b = rbsp[off++];
+            payloadType += b;
+            if (b != 0xFF)
+                break;
+        }
+
+        // 解析 payloadSize
+        unsigned payloadSize = 0;
+        while (off < rbsp.size()) {
+            uint8_t b = rbsp[off++];
+            payloadSize += b;
+            if (b != 0xFF)
+                break;
+        }
+
+        if (off + payloadSize > rbsp.size())
+            break;
+
+        if (payloadType == 5 && payloadSize >= 16) { // user_data_unregistered
+            UserSEIData sei;
+            memcpy(sei.uuid.data(), &rbsp[off], 16);
+            sei.payload.assign(rbsp.begin() + off + 16, rbsp.begin() + off + payloadSize);
+            results.push_back(std::move(sei));
+        }
+
+        off += payloadSize;
+    }
+
+    return results;
+}
+
+/**
+ * @brief 解析数据包中的SEI信息
+ * @param packet 数据包
+ * @return SEI数据列表
+ */
+std::vector<UserSEIData> parseSEIFromPacket(const Packet &packet, bool codecIsHevc)
+{
+    if (!packet.get() || !packet.get()->data || packet.get()->size <= 0) {
+        return {};
+    }
+
+    const uint8_t *data = packet.get()->data;
+    size_t size = packet.get()->size;
+
+    // 判断是否为Annex-B格式
+    bool isAnnexB = isAnnexBFormat(data, size);
+
+    std::vector<UserSEIData> results;
+    std::vector<std::vector<uint8_t>> nalus;
+
+    if (isAnnexB) {
+        nalus = splitAnnexBNalus(data, size);
+    } else {
+        nalus = splitAvccNalus(data, size);
+    }
+
+    for (const auto &nalu : nalus) {
+        auto seis = parseSeiFromNal(nalu.data(), nalu.size(), codecIsHevc);
+        results.insert(results.end(), seis.begin(), seis.end());
+    }
+
+    return results;
 }
 } // namespace
 
@@ -242,9 +448,8 @@ void VideoDecoder::init(const Config &config)
     requireFrameInMemory_ = config.requireFrameInSystemMemory;
     createHWContextCallback_ = config.createHwContextCallback;
     freeHWContextCallback_ = config.freeHwContextCallback;
-
-    // 新增：配置硬件解码退化选项
     enableHardwareFallback_ = config.enableHardwareFallback;
+    enableParseUserSEIData_ = config.enableParseUserSEIData;
 }
 
 AVMediaType VideoDecoder::type() const
@@ -306,6 +511,8 @@ void VideoDecoder::decodeLoop()
         packetQueue->flush();
     }
 
+    // 解码器id
+    auto codecId = codecCtx_->codec_id;
     while (!requestInterruption_.load()) {
         // 如果在等待预缓冲，则暂停解码
         if (waitingForPreBuffer_.load()) {
@@ -365,7 +572,20 @@ void VideoDecoder::decodeLoop()
         }
         hasKeyFrame = true;
 
-        if (codecCtx_->codec_id == AV_CODEC_ID_H264 && hwAccel_ &&
+        // 解析数据包中的SEI信息，仅支持H264、H265
+        std::vector<UserSEIData> seiDataList;
+        if (enableParseUserSEIData_ &&
+            (codecId == AV_CODEC_ID_H264 || codecId == AV_CODEC_ID_H265)) {
+            seiDataList = parseSEIFromPacket(packet, codecId == AV_CODEC_ID_H265);
+            LOG_TRACE("Found {} SEI data entries in packet", seiDataList.size());
+            for (const auto &seiData : seiDataList) {
+                LOG_TRACE("SEI UUID: {}, payload size: {}, payload: {}", seiData.uuidHex(),
+                          seiData.payload.size(), seiData.payloadAsString());
+            }
+        }
+
+        // 处理SPS profile可能存在的错误
+        if (codecId == AV_CODEC_ID_H264 && hwAccel_ &&
             (hwAccel_->getType() == HWAccelType::kD3d11va ||
              hwAccel_->getType() == HWAccelType::kDxva2) &&
             needFixSPSProfile_) {
@@ -407,8 +627,9 @@ void VideoDecoder::decodeLoop()
             // 如果超过容忍时间，尝试软解
             if (reinitializeWithSoftwareDecoder()) {
                 LOG_INFO("Video Decoder: Fallback to software decoding.");
-                hasKeyFrame = false;    // 重置关键帧标志
-                errorStartTime.reset(); // 重置错误计时
+                hasKeyFrame = false;           // 重置关键帧标志
+                errorStartTime.reset();        // 重置错误计时
+                codecId = codecCtx_->codec_id; // 重置解码器ID
             } else {
                 LOG_ERROR("Video Decoder: Failed to reinitialize with software decoder.");
                 break; // 退出解码循环
@@ -496,11 +717,13 @@ void VideoDecoder::decodeLoop()
             outFrame->setDurationByFps(duration);
             outFrame->setSecPts(pts);
             outFrame->setMediaType(AVMEDIA_TYPE_VIDEO);
+            outFrame->setUserSEIDataList(
+                seiDataList); // 这里不使用move是适配一个packet解出多个frame的情况
 
             // 如果启用了帧率控制，则根据帧率控制推送速度
             if (isFrameRateControlEnabled()) {
                 const auto durationMs = duration * 1000;
-                
+
                 const double baseDelay =
                     calculateFrameDisplayTime(pts, durationMs, currentTime, lastFrameTime_);
                 const double syncDelay =
@@ -515,8 +738,7 @@ void VideoDecoder::decodeLoop()
                 // 使用同步后的延迟
                 if (utils::greater(syncDelay, 0.0)) {
                     const auto targetTime =
-                        currentTime +
-                        std::chrono::milliseconds(static_cast<int64_t>(syncDelay));
+                        currentTime + std::chrono::milliseconds(static_cast<int64_t>(syncDelay));
                     std::this_thread::sleep_until(targetTime);
                 }
             }
