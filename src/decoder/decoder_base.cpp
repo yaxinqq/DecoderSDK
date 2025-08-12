@@ -238,7 +238,7 @@ bool DecoderBase::handleDecodeRecovery(const std::string &decoderName, MediaType
 }
 
 double DecoderBase::calculateFrameDisplayTime(
-    double pts, double duration,
+    double pts, double duration, const std::chrono::steady_clock::time_point &currentTime,
     std::optional<std::chrono::steady_clock::time_point> &lastFrameTime) const
 {
     if (std::isnan(pts)) {
@@ -252,7 +252,6 @@ double DecoderBase::calculateFrameDisplayTime(
     }
 
     // 首次调用，初始化
-    auto currentTime = std::chrono::steady_clock::now();
     if (!lastFrameTime.has_value()) {
         lastFrameTime = currentTime;
         return 0.0;
@@ -274,7 +273,7 @@ double DecoderBase::calculateFrameDisplayTime(
     // 更新上一帧时间为理论的下一帧时间
     lastFrameTime = nextFrameTime;
 
-    return std::max(0.0, baseDelay);
+    return baseDelay;
 }
 
 bool DecoderBase::checkAndUpdateSerial(int &currentSerial, PacketQueue *packetQueue)

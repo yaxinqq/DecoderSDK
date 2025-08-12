@@ -230,11 +230,13 @@ protected:
      * @brief 计算帧显示时间（单位 ms）
      * @param pts 帧的pts
      * @param duration 帧的持续时间
+     * @param currentTime 当前时间点
      * @param lastFrameTime 上一帧的时间点
      * @return double 帧显示时间（单位 ms）
      */
     double calculateFrameDisplayTime(
         double pts, double duration,
+        const std::chrono::steady_clock::time_point &currentTime,
         std::optional<std::chrono::steady_clock::time_point> &lastFrameTime) const;
 
     /**

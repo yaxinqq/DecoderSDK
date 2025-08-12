@@ -301,6 +301,11 @@ void VideoDecoder::decodeLoop()
     resetStatistics();
     const auto isRealTime = demuxer_->isRealTime();
 
+    // 如果是实时流，此时应该清空包队列
+    if (isRealTime) {
+        packetQueue->flush();
+    }
+
     while (!requestInterruption_.load()) {
         // 如果在等待预缓冲，则暂停解码
         if (waitingForPreBuffer_.load()) {
@@ -427,6 +432,7 @@ void VideoDecoder::decodeLoop()
                     break;
                 }
             }
+            const auto currentTime = std::chrono::steady_clock::now();
 
             // 成功接收到一帧，进行处理
             // 计算帧持续时间(单位 s)
@@ -494,48 +500,24 @@ void VideoDecoder::decodeLoop()
             // 如果启用了帧率控制，则根据帧率控制推送速度
             if (isFrameRateControlEnabled()) {
                 const auto durationMs = duration * 1000;
-                if (isRealTime) {
-                    // 实时流处理：优先保证实时性，最小化延迟
-                    const double syncDelay =
-                        syncController_->computeVideoDelay(pts, duration, 0.0, speed());
+                
+                const double baseDelay =
+                    calculateFrameDisplayTime(pts, durationMs, currentTime, lastFrameTime_);
+                const double syncDelay =
+                    syncController_->computeVideoDelay(pts, duration, baseDelay, speed());
 
-                    // 对于实时流，只在严重超前时才延迟，且限制最大延迟
-                    if (syncDelay > 0.0) {
-                        const double actualDelay = std::min(syncDelay, durationMs);
+                // 检查是否需要丢弃此帧
+                if (syncDelay < 0) {
+                    frame.unref();
+                    continue;
+                }
 
-                        if (actualDelay > 1.0) { // 只有超过1ms才延迟
-                            auto targetTime =
-                                std::chrono::high_resolution_clock::now() +
-                                std::chrono::microseconds(static_cast<int64_t>(actualDelay * 1000));
-                            std::this_thread::sleep_until(targetTime);
-                        }
-                    } else if (syncDelay < -durationMs * 2) { // 如果落后超过2帧
-                        // 丢弃此帧，追赶实时性
-                        LOG_WARN("Video Decoder: Drop frame due to late arrival (syncDelay: {})",
-                                 syncDelay);
-                        frame.unref();
-                        continue;
-                    }
-                } else {
-                    // 非实时流（录制文件）：使用原有的帧率控制逻辑
-                    const double baseDelay =
-                        calculateFrameDisplayTime(pts, durationMs, lastFrameTime_);
-                    const double syncDelay =
-                        syncController_->computeVideoDelay(pts, duration, baseDelay, speed());
-
-                    // 检查是否需要丢弃此帧
-                    if (syncDelay < 0) {
-                        frame.unref();
-                        continue;
-                    }
-
-                    // 使用同步后的延迟
-                    if (utils::greater(syncDelay, 0.0)) {
-                        auto targetTime =
-                            std::chrono::high_resolution_clock::now() +
-                            std::chrono::microseconds(static_cast<int64_t>(syncDelay * 1000));
-                        std::this_thread::sleep_until(targetTime);
-                    }
+                // 使用同步后的延迟
+                if (utils::greater(syncDelay, 0.0)) {
+                    const auto targetTime =
+                        currentTime +
+                        std::chrono::milliseconds(static_cast<int64_t>(syncDelay));
+                    std::this_thread::sleep_until(targetTime);
                 }
             }
 

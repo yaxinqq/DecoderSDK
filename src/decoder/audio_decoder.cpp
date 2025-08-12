@@ -74,6 +74,11 @@ void AudioDecoder::decodeLoop()
     double lastSpeed = speed_;
 
     resetStatistics();
+
+    // 如果是实时流，此时应该清空包队列
+    if (demuxer_->isRealTime()) {
+        packetQueue->flush();
+    }
     while (!requestInterruption_.load()) {
         // 如果在等待预缓冲，则暂停解码
         if (waitingForPreBuffer_.load()) {
@@ -145,6 +150,7 @@ void AudioDecoder::decodeLoop()
                     break;
                 }
             }
+            const auto currentTime = std::chrono::high_resolution_clock::now();
 
             // 成功接收到一帧，进行处理
             // 检查是否需要重新初始化重采样
@@ -308,7 +314,7 @@ void AudioDecoder::decodeLoop()
             if (isFrameRateControlEnabled()) {
                 // 计算基本延迟
                 double baseDelay =
-                    calculateFrameDisplayTime(pts, duration * 1000.0, lastFrameTime_);
+                    calculateFrameDisplayTime(pts, duration * 1000.0, currentTime, lastFrameTime_);
 
                 // // 计算音频缓冲区延迟
                 // double bufferDelay = frameQueue_->size() * duration * 1000.0; //
@@ -324,7 +330,7 @@ void AudioDecoder::decodeLoop()
                 // 使用同步后的延迟
                 if (utils::greater(baseDelay, 0.0)) {
                     std::this_thread::sleep_until(
-                        std::chrono::steady_clock::now() +
+                        currentTime +
                         std::chrono::milliseconds(static_cast<int64_t>(baseDelay)));
                 }
             }

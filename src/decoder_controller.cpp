@@ -21,6 +21,9 @@ DecoderController::DecoderController()
     avdevice_register_all();
     avformat_network_init();
 
+    // 查找当前可用的硬解码器类型
+    HardwareAccel::getSupportedHWAccelTypes();
+
     // 开启异步线程处理函数
     eventDispatcher_->startAsyncProcessing();
     LOG_DEBUG("Event dispatcher async processing started");

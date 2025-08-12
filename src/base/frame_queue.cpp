@@ -298,7 +298,7 @@ bool FrameQueue::pushInternal(const Frame &frame)
         size_--;
     }
 
-    queue_[tail_] = std::move(frame);
+    queue_[tail_] = frame;
     tail_ = (tail_ + 1) % maxSize_;
     size_++;
 
