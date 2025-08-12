@@ -167,8 +167,6 @@ QAudio::State AudioRender::state() const
 
 void AudioRender::handleStateChanged(QAudio::State newState)
 {
-    qDebug() << "[AudioRender] State changed to:" << newState;
-
     if (newState == QAudio::StoppedState && audioOutput_ &&
         audioOutput_->error() != QAudio::NoError) {
         qWarning() << "[AudioRender] Audio error:" << audioOutput_->error();

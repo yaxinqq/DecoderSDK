@@ -149,6 +149,9 @@ private:
     std::atomic_bool initialized_;
     // 是否支持glFence
     bool supportsGlFence_ = false;
+
+    // glFence同步时长 单位 ns
+    uint32_t renderFenceSyncIntervalNs_ = 1000000;
 };
 
 #endif // VIDEORENDER_H

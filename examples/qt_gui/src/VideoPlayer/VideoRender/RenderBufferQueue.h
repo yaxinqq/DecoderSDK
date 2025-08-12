@@ -58,12 +58,12 @@ public:
      * @brief 初始化缓冲队列
      * @param size FBO的大小
      * @param format FBO的格式
-     * @param targetFps 目标帧率（默认60fps）
+     * @param avgFrameInterval 帧平均时长
      * @return 是否成功
      */
     bool initialize(const QSize &size,
                     const QOpenGLFramebufferObjectFormat &format = QOpenGLFramebufferObjectFormat(),
-                    double targetFps = 60.0);
+                    double avgFrameInterval = 40.0);
 
     /**
      * @brief 渲染线程获取一个空闲buffer用于渲染
@@ -97,11 +97,6 @@ public:
     void cleanup();
 
     /**
-     * @brief 设置显示刷新率（用于优化同步）
-     */
-    void setDisplayRefreshRate(double refreshRate);
-
-    /**
      * @brief 统计信息
      */
     struct Statistics {
@@ -123,8 +118,6 @@ public:
         int outdatedFrames = 0;
         // 平均帧率
         double averageFps = 0.0;
-        // 平均显示延迟
-        double displayLatency = 0.0;
     };
 
     /**
@@ -150,11 +143,6 @@ private:
     void processOutdatedFrames();
 
     /**
-     * @brief 估算显示刷新率
-     */
-    void estimateDisplayRefreshRate();
-
-    /**
      * @brief 创建一个FBO
      */
     QSharedPointer<QOpenGLFramebufferObject> createFbo(
@@ -165,6 +153,17 @@ private:
      * @param currentFrameIndex 当前帧索引，用于确保丢弃的帧是更老的
      */
     void dropOlderReadyFrames(int currentFrameIndex);
+
+    /**
+     * @brief 验证Buffer状态是否有效
+     *
+     */
+    void validateBufferStates() const;
+
+    /**
+     * @brief 按需清理Buffer的函数
+     */
+    void smartCleanupIfNeeded();
 
 private:
     // 用于等待可用buffer
@@ -191,17 +190,7 @@ private:
     QElapsedTimer globalTimer_;           // 全局计时器
     qint64 lastFenceCheckTime_ = 0;       // 上次fence检查时间
     double averageFrameInterval_ = 16.67; // 平均帧间隔(ms)，初始60fps
-    double displayRefreshRate_ = 60.0;    // 显示刷新率
-    int frameIntervalSamples_ = 0;        // 帧间隔采样计数
-    qint64 lastFrameTime_ = 0;            // 上一帧时间
     qint64 lastDisplayTime_ = 0;          // 上次显示时间
-
-    // 清理控制
-    qint64 lastForceCleanupTime_ = 0;
-
-    // 性能统计
-    mutable double averageDisplayLatency_ = 0.0;
-    mutable int latencySamples_ = 0;
 };
 
 #endif // RENDERBUFFERQUEUE_H

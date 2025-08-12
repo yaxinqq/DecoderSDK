@@ -5,7 +5,7 @@
 #include <QThread>
 
 namespace {
-const char *vsrc = R"(
+    const char *vsrc = R"(
     #ifdef GL_ES
         precision mediump float;
     #endif
@@ -19,7 +19,7 @@ const char *vsrc = R"(
         }
     )";
 
-const char *fsrc = R"(
+    const char *fsrc = R"(
     #ifdef GL_ES
         precision mediump float;
     #endif
@@ -64,7 +64,7 @@ void VideoRender::initialize(const std::shared_ptr<decoder_sdk::Frame> &frame,
     initializeOpenGLFunctions();
 
     // 初始化循环缓冲队列
-    if (!bufferQueue_->initialize(QSize(frame->width(), frame->height()))) {
+    if (!bufferQueue_->initialize(QSize(frame->width(), frame->height()), {}, frame->durationByFps() * 1000)) {
         qWarning() << QStringLiteral("[VideoRender] Failed to initialize buffer queue");
         return;
     }
@@ -104,7 +104,7 @@ void VideoRender::render(const std::shared_ptr<decoder_sdk::Frame> &frame)
     }
 
     // 获取一个空闲的buffer用于渲染
-    RenderBuffer *buffer = bufferQueue_->acquireForRender();
+    RenderBuffer *buffer = bufferQueue_->acquireForRender(static_cast<int>(frame->durationByFps() * 1000));
     if (!buffer) {
         // 没有可用buffer，丢弃此帧
         return;
@@ -125,7 +125,7 @@ void VideoRender::render(const std::shared_ptr<decoder_sdk::Frame> &frame)
             if (!fence) {
                 qWarning() << QStringLiteral("[VideoRender] Failed to create fence");
             } else {
-                glClientWaitSync(fence, GL_SYNC_FLUSH_COMMANDS_BIT, 10000);
+                glClientWaitSync(fence, GL_SYNC_FLUSH_COMMANDS_BIT, renderFenceSyncIntervalNs_);
             }
         } else {
             // 不支持fence时，使用glFlush确保命令提交
