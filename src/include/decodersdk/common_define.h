@@ -413,8 +413,6 @@ struct Config {
         kTcp,          // tcp
         kUdp,          // udp
         kUdpMulticast, // udp多播
-        kHttp,         // http
-        kHttps,        // https
     };
 
     // 是否开启帧率控制

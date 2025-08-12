@@ -334,10 +334,6 @@ std::string rtspTransport2Str(Config::RtspTransport transport)
             return "udp";
         case Config::RtspTransport::kUdpMulticast:
             return "udp_multicast";
-        case Config::RtspTransport::kHttp:
-            return "http";
-        case Config::RtspTransport::kHttps:
-            return "https";
         default:
             break;
     }
