@@ -511,7 +511,6 @@ void Demuxer::clearPreBufferCallback()
 void Demuxer::setPreBufferConfig(uint32_t videoFrames, uint32_t audioPackets, bool requireBoth,
                                  std::function<void()> onPreBufferReady)
 {
-    std::lock_guard<std::mutex> lock(mutex_);
     preBufferVideoFrames_ = videoFrames;
     preBufferAudioPackets_ = audioPackets;
     requireBothStreams_ = requireBoth;
