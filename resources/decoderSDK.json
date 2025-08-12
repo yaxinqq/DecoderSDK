@@ -3,6 +3,7 @@
     "enableFileLog": true,
     "enableConsoleLog": true,
     "enableLevelSplit": true,
+    "enableFFmpegLog": false,
     "logDir": "./logs",
     "level": "debug",
     "pattern": "[%Y-%m-%d %H:%M:%S.%e] [%t] [%^%l%$] [%s:%#] %v",

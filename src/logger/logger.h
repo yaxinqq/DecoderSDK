@@ -40,6 +40,8 @@ struct LogConfig {
     bool enableConsoleLog = true;
     // 是否开启分级输出，默认不开启
     bool enableLevelSplit = false;
+    // 是否开启FFmpeg输出到日志
+    bool enableFFmpegLog = false;
     // 日志存放的根目录
     std::string logDir = "./logs";
     // 输出日志级别
@@ -94,7 +96,7 @@ public:
      * @param fmt 格式字符串
      * @param vl 参数列表
      */
-    static void ffmpegLogCallback(void* avcl, int level, const char* fmt, va_list vl);
+    static void ffmpegLogCallback(void *avcl, int level, const char *fmt, va_list vl);
 
     /**
      * @brief 通用日志记录函数
@@ -121,7 +123,7 @@ public:
      * @param level 日志级别
      * @param message 日志消息
      */
-    static void logFFmpeg(spdlog::level::level_enum level, const std::string& message);
+    static void logFFmpeg(spdlog::level::level_enum level, const std::string &message);
 
 private:
     static bool loadConfig(const std::string &configFile, LogConfig &config);

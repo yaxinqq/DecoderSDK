@@ -138,6 +138,12 @@ void LoggerManager::logFFmpeg(spdlog::level::level_enum level, const std::string
 
 void LoggerManager::setupFFmpegLogging()
 {
+    if (!config_ || !config_->enableFFmpegLog) {
+        av_log_set_callback(av_log_default_callback);
+        av_log_set_level(AV_LOG_INFO);
+        return;
+    }
+
     // 设置FFmpeg日志级别，只记录INFO及以上级别的日志
     av_log_set_level(convertSpdlogLevel(parseLevel(config_->level)));
 
@@ -168,6 +174,7 @@ bool LoggerManager::loadConfig(const std::string &configFile, LogConfig &config)
         config.enableFileLog = logConfig.value("enableFileLog", config.enableConsoleLog);
         config.enableConsoleLog = logConfig.value("enableConsoleLog", config.enableConsoleLog);
         config.enableLevelSplit = logConfig.value("enableLevelSplit", config.enableLevelSplit);
+        config.enableFFmpegLog = logConfig.value("enableFFmpegLog", config.enableFFmpegLog);
         config.logDir = logConfig.value("logDir", config.logDir);
         config.level = logConfig.value("level", config.level);
         config.pattern = logConfig.value("pattern", config.pattern);
@@ -393,7 +400,7 @@ std::string LoggerManager::getLogStats()
     ss << "- 当前级别: " << (config_ ? config_->level : "未知") << "\n";
     ss << "- 文件日志: " << (config_ && config_->enableFileLog ? "启用" : "禁用") << "\n";
     ss << "- 控制台日志: " << (config_ && config_->enableConsoleLog ? "启用" : "禁用") << "\n";
-    ss << "- FFmpeg日志: 已集成\n";
+    ss << "- FFmpeg日志: " << (config_ && config_->enableFFmpegLog ? "启用" : "禁用") << "\n";
 
     return ss.str();
 }
