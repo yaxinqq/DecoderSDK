@@ -24,6 +24,7 @@ struct RenderBuffer {
     std::atomic<bool> pendingRelease{false}; // 是否等待释放
     qint64 renderTime = 0;                   // 渲染完成时间戳
     qint64 displayStartTime = 0;             // 开始显示的时间戳
+    double durationMs = 0;                   // 帧的持续时间
     std::atomic<bool> outdated{false};       // 是否已过时（用于智能丢帧）
 
     RenderBuffer() = default;
@@ -43,6 +44,7 @@ struct RenderBuffer {
         frameIndex = -1;
         renderTime = 0;
         displayStartTime = 0;
+        durationMs = 0;
     }
 };
 
@@ -58,12 +60,10 @@ public:
      * @brief 初始化缓冲队列
      * @param size FBO的大小
      * @param format FBO的格式
-     * @param avgFrameInterval 帧平均时长
      * @return 是否成功
      */
-    bool initialize(const QSize &size,
-                    const QOpenGLFramebufferObjectFormat &format = QOpenGLFramebufferObjectFormat(),
-                    double avgFrameInterval = 40.0);
+    bool initialize(const QSize &size, const QOpenGLFramebufferObjectFormat &format =
+                                           QOpenGLFramebufferObjectFormat());
 
     /**
      * @brief 渲染线程获取一个空闲buffer用于渲染
@@ -100,20 +100,12 @@ public:
      * @brief 统计信息
      */
     struct Statistics {
-        // 总帧数
-        int totalBuffers = 0;
-        // 有效帧数
-        int availableBuffers = 0;
         // 渲染帧数
         int renderingBuffers = 0;
-        // 准备好的帧数
-        int readyBuffers = 0;
         // 展示帧数
         int displayingBuffers = 0;
         // 丢弃帧数
         int droppedFrames = 0;
-        // 延迟释放帧数
-        int pendingReleaseBuffers = 0;
         // 超时帧数
         int outdatedFrames = 0;
         // 平均帧率
@@ -152,7 +144,7 @@ private:
      * @brief 丢弃比指定帧索引更老的ready帧
      * @param currentFrameIndex 当前帧索引，用于确保丢弃的帧是更老的
      */
-    void dropOlderReadyFrames(int currentFrameIndex);
+    void dropOlderReadyFrames(qint64 currentFrameIndex);
 
     /**
      * @brief 验证Buffer状态是否有效
@@ -164,6 +156,13 @@ private:
      * @brief 按需清理Buffer的函数
      */
     void smartCleanupIfNeeded();
+
+    /**
+     * @brief 检查并获取一个可用的Render Buffer
+     *
+     * @return 可用的buffer，如果没有可用的，返回nullptr
+     */
+    RenderBuffer *checkAndGetAvaliableBuffer();
 
 private:
     // 用于等待可用buffer
@@ -179,18 +178,22 @@ private:
     bool initialized_ = false;
 
     // 统计信息
-    mutable std::atomic<int> droppedFrameCount_{0};
-    mutable std::atomic<int> outdatedFrameCount_{0};
+    // 生成（渲染）帧数
+    mutable std::atomic<qint64> renderedFrameCount_{0};
+    // 丢掉帧数
+    mutable std::atomic<qint64> droppedFrameCount_{0};
+    // 过期帧数
+    mutable std::atomic<qint64> outdatedFrameCount_{0};
+    // 展示帧数
+    mutable std::atomic<qint64> displayedFrameCount_{0};
+    // 帧序号
     qint64 frameCounter_ = 0;
 
     // 最后显示的buffer，避免过早释放
     RenderBuffer *lastDisplayBuffer_ = nullptr;
 
-    // 智能优化相关
-    QElapsedTimer globalTimer_;           // 全局计时器
-    qint64 lastFenceCheckTime_ = 0;       // 上次fence检查时间
-    double averageFrameInterval_ = 16.67; // 平均帧间隔(ms)，初始60fps
-    qint64 lastDisplayTime_ = 0;          // 上次显示时间
+    // 全局计时器
+    QElapsedTimer globalTimer_;
 };
 
 #endif // RENDERBUFFERQUEUE_H

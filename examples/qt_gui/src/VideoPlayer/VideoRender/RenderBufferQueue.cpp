@@ -4,17 +4,14 @@
 #include <QGuiApplication>
 #include <QOpenGLContext>
 #include <QScreen>
+#include <QThread>
 
 #include <algorithm>
 
 #define RENDER_BUFFER_QUEUE_DEBUG 0
 
 namespace {
-// 流畅度优化参数
-constexpr int kMinFenceCheckInterval = 1;  // 最小fence检查间隔(ms)
-constexpr int kMaxFenceCheckInterval = 8;  // 最大fence检查间隔(ms)
-constexpr int kForceCleanupInterval = 100; // 强制清理间隔(ms)
-constexpr int kFenceMicroWaitNs = 1000;    // fence微等待时间(纳秒)
+constexpr int kFenceMicroWaitNs = 1000; // fence微等待时间(纳秒)
 } // namespace
 
 RenderBufferQueue::RenderBufferQueue(int bufferCount)
@@ -25,7 +22,6 @@ RenderBufferQueue::RenderBufferQueue(int bufferCount)
     }
 
     globalTimer_.start();
-    lastFenceCheckTime_ = 0;
 }
 
 RenderBufferQueue::~RenderBufferQueue()
@@ -33,8 +29,7 @@ RenderBufferQueue::~RenderBufferQueue()
     cleanup();
 }
 
-bool RenderBufferQueue::initialize(const QSize &size, const QOpenGLFramebufferObjectFormat &format,
-                                   double avgFrameInterval)
+bool RenderBufferQueue::initialize(const QSize &size, const QOpenGLFramebufferObjectFormat &format)
 {
     QMutexLocker locker(&mutex_);
 
@@ -47,14 +42,12 @@ bool RenderBufferQueue::initialize(const QSize &size, const QOpenGLFramebufferOb
     fboSize_ = size;
     fboFormat_ = format;
 
-    // 设置目标帧率
-    averageFrameInterval_ = avgFrameInterval;
-
     // 为每个buffer创建FBO
     for (auto &buffer : buffers_) {
         buffer->fbo = createFbo(size, format);
         if (!buffer->fbo || !buffer->fbo->isValid()) {
-            qWarning() << QStringLiteral("[RenderBufferQueue] Failed to create FBO");
+            qWarning() << QStringLiteral("[RenderBufferQueue] Failed to create FBO")
+                       << QThread::currentThreadId();
             cleanup();
             return false;
         }
@@ -75,40 +68,13 @@ RenderBuffer *RenderBufferQueue::acquireForRender(int waitTimeoutMs)
 
     const qint64 currentTime = globalTimer_.elapsed();
 
-    // 智能fence检查 - 根据帧率和时间动态调整
-    const qint64 timeSinceLastCheck = currentTime - lastFenceCheckTime_;
-    const int dynamicInterval =
-        qBound(kMinFenceCheckInterval, static_cast<int>(averageFrameInterval_ / 6),
-               kMaxFenceCheckInterval);
-
-    if (timeSinceLastCheck >= dynamicInterval) {
-        processPendingReleases();
-        updateFenceStatus(true);
-        processOutdatedFrames();
-        lastFenceCheckTime_ = currentTime;
-    }
-
     // 查找空闲的buffer
-    RenderBuffer *availableBuffer = nullptr;
-    for (auto &buffer : buffers_) {
-        if (!buffer->inUse.load() && !buffer->displaying.load() && !buffer->ready.load() &&
-            !buffer->pendingRelease.load()) {
-            availableBuffer = buffer.get();
-            break;
-        }
-    }
+    RenderBuffer *availableBuffer = checkAndGetAvaliableBuffer();
 
     // 如果没有可用buffer且允许等待
     if (!availableBuffer && waitTimeoutMs > 0) {
         if (bufferAvailable_.wait(&mutex_, waitTimeoutMs)) {
-            // 重新查找
-            for (auto &buffer : buffers_) {
-                if (!buffer->inUse.load() && !buffer->displaying.load() && !buffer->ready.load() &&
-                    !buffer->pendingRelease.load()) {
-                    availableBuffer = buffer.get();
-                    break;
-                }
-            }
+            availableBuffer = checkAndGetAvaliableBuffer();
         }
     }
 
@@ -127,12 +93,13 @@ RenderBuffer *RenderBufferQueue::acquireForRender(int waitTimeoutMs)
     qWarning() << QStringLiteral(
                       "[RenderBufferQueue] 渲染跳帧 - 无可用Buffer | "
                       "帧序号: %1 | 等待时间: %2ms | 当前时间: %3ms | "
-                      "总丢帧数: %4 | 平均帧间隔: %5ms")
+                      "总丢帧数: %4")
                       .arg(frameCounter_ + 1)
                       .arg(waitTimeoutMs)
                       .arg(currentTime)
                       .arg(droppedFrameCount_.load())
-                      .arg(averageFrameInterval_, 0, 'f', 2);
+               << QThread::currentThreadId();
+    ;
 #endif
 
 #if RENDER_BUFFER_QUEUE_DEBUG
@@ -151,7 +118,8 @@ RenderBuffer *RenderBufferQueue::acquireForRender(int waitTimeoutMs)
                 .arg(buffer->outdated.load())
                 .arg(buffer->frameIndex);
     }
-    qDebug() << QStringLiteral("[RenderBufferQueue] Buffer状态: %1").arg(bufferStatus);
+    qDebug() << QStringLiteral("[RenderBufferQueue] Buffer状态: %1").arg(bufferStatus)
+             << QThread::currentThreadId();
 #endif
 
     return nullptr;
@@ -190,13 +158,11 @@ RenderBuffer *RenderBufferQueue::acquireForDisplay()
 {
     QMutexLocker locker(&mutex_);
 
-    updateFenceStatus(true);
+    // 更新帧的状态，非堵塞
+    updateFenceStatus();
 
     // 状态验证
     validateBufferStates();
-
-    // 处理待释放的buffer
-    processPendingReleases();
 
     const qint64 currentTime = globalTimer_.elapsed();
     const qint64 currentDisplayFrameIndex =
@@ -243,14 +209,14 @@ RenderBuffer *RenderBufferQueue::acquireForDisplay()
         const qint64 bufferAge = currentTime - lastDisplayBuffer_->displayStartTime;
         const bool isConsecutiveFrame = (candidateBuffer->frameIndex == targetFrameIndex);
 
-        // 新的切换条件（更宽松）：
+        // 切换条件：
         // 1. 连续帧
-        // 3. 当前buffer太老（超过平均显示时间）
-        // 4. 跳帧间隔太大（超过5帧）需要立即切换
-        const bool bufferTooOld = (bufferAge > averageFrameInterval_);
+        // 2. 超过其应该展示的时间
+        // 3. 跳帧间隔太大（超过5帧）需要立即切换
+        const auto isTooOld = bufferAge > lastDisplayBuffer_->durationMs;
         const bool gapTooLarge = (minFrameGap > 5);
 
-        shouldSwitch = isConsecutiveFrame || bufferTooOld || gapTooLarge;
+        shouldSwitch = isConsecutiveFrame || isTooOld || gapTooLarge;
 
         if (!shouldSwitch) {
 #if RENDER_BUFFER_QUEUE_DEBUG
@@ -262,7 +228,8 @@ RenderBuffer *RenderBufferQueue::acquireForDisplay()
                             .arg(currentDisplayFrameIndex)
                             .arg(candidateBuffer->frameIndex)
                             .arg(bufferAge)
-                            .arg(isConsecutiveFrame ? "是" : "否");
+                            .arg(isConsecutiveFrame ? "是" : "否")
+                     << QThread::currentThreadId();
 #endif
             return nullptr;
         }
@@ -277,7 +244,8 @@ RenderBuffer *RenderBufferQueue::acquireForDisplay()
                        .arg(candidateBuffer->frameIndex)
                        .arg(bufferAge)
                        .arg(isConsecutiveFrame ? "是" : "否")
-                       .arg(isConsecutiveFrame ? 0 : minFrameGap);
+                       .arg(isConsecutiveFrame ? 0 : minFrameGap)
+                << QThread::currentThreadId();
 #endif
 
         // 立即释放旧buffer
@@ -288,12 +256,15 @@ RenderBuffer *RenderBufferQueue::acquireForDisplay()
     // 切换到新buffer
     candidateBuffer->displaying.store(true);
     candidateBuffer->displayStartTime = currentTime;
-    lastDisplayTime_ = currentTime;
     lastDisplayBuffer_ = candidateBuffer;
     candidateBuffer->outdated.store(false);
 
-    // 延迟清理：只在必要时清理
+    // 处理待释放的buffer
+    processPendingReleases();
+    // 延迟清理，只在必要时清理
     smartCleanupIfNeeded();
+
+    displayedFrameCount_.fetch_add(1);
 
     return candidateBuffer;
 }
@@ -310,7 +281,8 @@ void RenderBufferQueue::releaseDisplayBuffer(RenderBuffer *buffer)
     if (buffer->displaying.load()) {
 #if RENDER_BUFFER_QUEUE_DEBUG
         qInfo() << QStringLiteral("[RenderBufferQueue] 标记Buffer待释放 | 帧序号: %1")
-                       .arg(buffer->frameIndex);
+                       .arg(buffer->frameIndex)
+                << QThread::currentThreadId();
 #endif
 
         buffer->displaying.store(false);
@@ -340,29 +312,14 @@ void RenderBufferQueue::cleanup()
 
 RenderBufferQueue::Statistics RenderBufferQueue::getStatistics() const
 {
-    QMutexLocker locker(&mutex_);
+    Statistics statics;
+    statics.renderingBuffers = renderedFrameCount_.load();
+    statics.displayingBuffers = displayedFrameCount_.load();
+    statics.droppedFrames = droppedFrameCount_.load();
+    statics.outdatedFrames = outdatedFrameCount_.load();
+    statics.averageFps = statics.displayingBuffers / (globalTimer_.elapsed() / 1000.0);
 
-    Statistics stats;
-    stats.totalBuffers = static_cast<int>(buffers_.size());
-    stats.droppedFrames = droppedFrameCount_.load();
-    stats.outdatedFrames = outdatedFrameCount_.load();
-    stats.averageFps = averageFrameInterval_ > 0 ? 1000.0 / averageFrameInterval_ : 0.0;
-
-    for (const auto &buffer : buffers_) {
-        if (buffer->inUse.load()) {
-            stats.renderingBuffers++;
-        } else if (buffer->displaying.load()) {
-            stats.displayingBuffers++;
-        } else if (buffer->ready.load()) {
-            stats.readyBuffers++;
-        } else if (buffer->pendingRelease.load()) {
-            stats.pendingReleaseBuffers++;
-        } else {
-            stats.availableBuffers++;
-        }
-    }
-
-    return stats;
+    return statics;
 }
 
 void RenderBufferQueue::updateFenceStatus(bool forceCheck)
@@ -386,6 +343,8 @@ void RenderBufferQueue::updateFenceStatus(bool forceCheck)
                 glDeleteSync(buffer->fence);
                 buffer->fence = nullptr;
 
+                renderedFrameCount_.fetch_add(1);
+
                 bufferAvailable_.wakeOne();
             } else if (status == GL_WAIT_FAILED) {
                 buffer->ready.store(true);
@@ -394,10 +353,6 @@ void RenderBufferQueue::updateFenceStatus(bool forceCheck)
                 bufferAvailable_.wakeOne();
             }
         }
-    }
-
-    if (!hasActiveFences) {
-        lastFenceCheckTime_ = globalTimer_.elapsed() + 2;
     }
 }
 
@@ -430,8 +385,8 @@ void RenderBufferQueue::processPendingReleases()
 
     if (releasedCount > 0) {
 #if RENDER_BUFFER_QUEUE_DEBUG
-        qInfo()
-            << QStringLiteral("[RenderBufferQueue] 释放了 %1 个待释放Buffer").arg(releasedCount);
+        qInfo() << QStringLiteral("[RenderBufferQueue] 释放了 %1 个待释放Buffer").arg(releasedCount)
+                << QThread::currentThreadId();
 #endif
     }
 }
@@ -447,7 +402,7 @@ void RenderBufferQueue::processOutdatedFrames()
             !buffer->pendingRelease.load()) {
             // 只标记真正太老的buffer
             qint64 bufferAge = currentTime - buffer->renderTime;
-            if (bufferAge > kForceCleanupInterval * 1.5) {
+            if (bufferAge > buffer->durationMs * 3) {
                 // 但是如果这是唯一的ready buffer，不要标记为过时
                 int readyBufferCount = 0;
                 for (const auto &b : buffers_) {
@@ -473,7 +428,8 @@ void RenderBufferQueue::processOutdatedFrames()
                                    .arg(bufferAge)
                                    .arg(currentTime)
                                    .arg(readyBufferCount)
-                                   .arg(outdatedFrameCount_.load());
+                                   .arg(outdatedFrameCount_.load())
+                            << QThread::currentThreadId();
 #endif
                 }
             }
@@ -490,7 +446,7 @@ QSharedPointer<QOpenGLFramebufferObject> RenderBufferQueue::createFbo(
     return QSharedPointer<QOpenGLFramebufferObject>::create(size, format);
 }
 
-void RenderBufferQueue::dropOlderReadyFrames(int thresholdFrameIndex)
+void RenderBufferQueue::dropOlderReadyFrames(qint64 thresholdFrameIndex)
 {
     // 注意：此函数在mutex保护下调用
     int droppedCount = 0;
@@ -509,6 +465,7 @@ void RenderBufferQueue::dropOlderReadyFrames(int thresholdFrameIndex)
                                  .arg(buffer->frameIndex)
                                  .arg(globalTimer_.elapsed() - buffer->renderTime);
 #endif
+
             droppedCount++;
 
             // 清理fence
@@ -519,7 +476,10 @@ void RenderBufferQueue::dropOlderReadyFrames(int thresholdFrameIndex)
 
             // 重置buffer状态
             buffer->ready.store(false);
+            buffer->inUse.store(false);
+            buffer->pendingRelease.store(false);
             buffer->outdated.store(false);
+            buffer->displaying.store(false);
 
             // 统计丢弃的帧
             droppedFrameCount_.fetch_add(1);
@@ -539,7 +499,8 @@ void RenderBufferQueue::dropOlderReadyFrames(int thresholdFrameIndex)
                           .arg(thresholdFrameIndex)
                           .arg(droppedCount)
                           .arg(droppedFrames.join(", "))
-                          .arg(droppedFrameCount_.load());
+                          .arg(droppedFrameCount_.load())
+                   << QThread::currentThreadId();
 #endif
     }
 }
@@ -557,7 +518,8 @@ void RenderBufferQueue::validateBufferStates() const
 #if RENDER_BUFFER_QUEUE_DEBUG
         qWarning() << QStringLiteral(
                           "[RenderBufferQueue] Buffer状态异常 - 发现 %1 个displaying状态的buffer")
-                          .arg(displayingCount);
+                          .arg(displayingCount)
+                   << QThread::currentThreadId();
 #endif
     }
 }
@@ -567,7 +529,7 @@ void RenderBufferQueue::smartCleanupIfNeeded()
     // 统计buffer状态
     int readyCount = 0;
     int oldFrameCount = 0;
-    int currentDisplayFrame = lastDisplayBuffer_ ? lastDisplayBuffer_->frameIndex : -1;
+    qint64 currentDisplayFrame = lastDisplayBuffer_ ? lastDisplayBuffer_->frameIndex : -1;
     const int totalBuffers = static_cast<int>(buffers_.size());
 
     for (const auto &buffer : buffers_) {
@@ -596,10 +558,31 @@ void RenderBufferQueue::smartCleanupIfNeeded()
                        .arg(totalBuffers)
                        .arg(oldFrameCount)
                        .arg(currentDisplayFrame)
-                       .arg(QStringLiteral("老帧过多"));
+                       .arg(QStringLiteral("老帧过多"))
+                << QThread::currentThreadId();
 #endif
 
         // 只清理真正老的帧
         dropOlderReadyFrames(currentDisplayFrame);
     }
+}
+
+RenderBuffer *RenderBufferQueue::checkAndGetAvaliableBuffer()
+{
+    // fence检查
+    processPendingReleases();
+    updateFenceStatus();
+    processOutdatedFrames();
+
+    // 查找空闲的buffer
+    RenderBuffer *availableBuffer = nullptr;
+    for (auto &buffer : buffers_) {
+        if (!buffer->inUse.load() && !buffer->displaying.load() && !buffer->ready.load() &&
+            !buffer->pendingRelease.load()) {
+            availableBuffer = buffer.get();
+            break;
+        }
+    }
+
+    return availableBuffer;
 }

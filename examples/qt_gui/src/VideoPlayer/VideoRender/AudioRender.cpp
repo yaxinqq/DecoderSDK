@@ -1,4 +1,4 @@
-#include "AudioRender.h"
+﻿#include "AudioRender.h"
 
 #include <QAudioDeviceInfo>
 #include <QDebug>

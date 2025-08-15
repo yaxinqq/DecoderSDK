@@ -141,7 +141,7 @@ private:
         if (deviceIndex < 0 || deviceIndex >= deviceCount) {
             // 非法的设备索引
             qInfo()
-                << QStringLiteral("Invalid CUDA device index: %d, use 0 instead!").arg(deviceIndex);
+                << QStringLiteral("Invalid CUDA device index: %1, use 0 instead!").arg(deviceIndex);
             deviceIndex = 0;
         }
 

@@ -188,8 +188,10 @@ bool Nv12Render_Dxva2::convertNv12ToRgbStretchRect(LPDIRECT3DSURFACE9 nv12Surfac
     // 使用StretchRect进行格式转换和拷贝
     // 注意：这个方法依赖于D3D9驱动程序的内部转换能力
     // 某些驱动程序可能不支持从NV12直接转换到RGB
+    wglD3DDevice_.wglDXUnlockObjectsNV(1, &wglTextureHandle_);
     const HRESULT hr = d3d9Device_->StretchRect(nv12Surface, &sourceRect, rgbRenderTarget_.Get(),
                                                 &destRect, D3DTEXF_LINEAR);
+    wglD3DDevice_.wglDXLockObjectsNV(1, &wglTextureHandle_);
 
     if (FAILED(hr)) {
         qWarning() << QStringLiteral("[Nv12Render_Dxva2] StretchRect conversion failed, HRESULT:")
@@ -288,16 +290,8 @@ bool Nv12Render_Dxva2::drawFrame(GLuint id)
     program_.setAttributeBuffer("vertexIn", GL_FLOAT, 0, 2, 0);
     program_.setAttributeBuffer("textureIn", GL_FLOAT, 2 * 4 * sizeof(GLfloat), 2, 0);
 
-    bool lockSuccess = false;
-    if (wglD3DDevice_.isValid() && wglTextureHandle_) {
-        lockSuccess = wglD3DDevice_.wglDXLockObjectsNV(1, &wglTextureHandle_);
-        if (lockSuccess) {
-            glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-            wglD3DDevice_.wglDXUnlockObjectsNV(1, &wglTextureHandle_);
-        } else {
-            qWarning() << QStringLiteral("[Nv12Render_Dxva2] Failed to lock WGL objects!");
-        }
-    }
+    // 绘制
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 
     // 清理
     program_.disableAttributeArray("vertexIn");
@@ -306,7 +300,7 @@ bool Nv12Render_Dxva2::drawFrame(GLuint id)
     glBindTexture(GL_TEXTURE_2D, 0);
     program_.release();
 
-    return lockSuccess;
+    return true;
 }
 
 #endif

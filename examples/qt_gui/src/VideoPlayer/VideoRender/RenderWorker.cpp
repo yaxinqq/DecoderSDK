@@ -47,32 +47,20 @@ RenderWorker::~RenderWorker()
     context_->doneCurrent();
 }
 
-QSharedPointer<VideoRender> RenderWorker::createRenderer(decoder_sdk::ImageFormat format)
+void RenderWorker::setVolume(qreal volume)
 {
-    switch (format) {
-#ifdef CUDA_AVAILABLE
-        case decoder_sdk::ImageFormat::kCuda:
-            return QSharedPointer<VideoRender>(new Nv12Render_Cuda);
-#endif
-#ifdef D3D11VA_AVAILABLE
-        case decoder_sdk::ImageFormat::kD3d11va:
-            return QSharedPointer<VideoRender>(new Nv12Render_D3d11va);
-#endif
-#ifdef DXVA2_AVAILABLE
-        case decoder_sdk::ImageFormat::kDxva2:
-            return QSharedPointer<VideoRender>(new Nv12Render_Dxva2);
-#endif
-#ifdef VAAPI_AVAILABLE
-        case decoder_sdk::ImageFormat::kVaapi:
-            return QSharedPointer<VideoRender>(new Nv12Render_Vaapi(context_));
-#endif
-        default:
-            // 对于软解格式，使用软解渲染器作为默认选择
-            return QSharedPointer<VideoRender>(new SoftwareRender);
-    }
+    if (!audioRender_)
+        return;
+
+    audioRender_->setVolume(volume);
 }
 
-void RenderWorker::render(const std::shared_ptr<decoder_sdk::Frame>& frame)
+qreal RenderWorker::volume() const
+{
+    return audioRender_ ? audioRender_->volume() : 0.0;
+}
+
+void RenderWorker::render(const std::shared_ptr<decoder_sdk::Frame> &frame)
 {
     if (!frame || !frame->isValid())
         return;
@@ -80,22 +68,55 @@ void RenderWorker::render(const std::shared_ptr<decoder_sdk::Frame>& frame)
     // 根据帧类型进行不同的处理
     switch (frame->mediaType()) {
         case decoder_sdk::MediaType::kMediaTypeAudio:
-            renderAudio(frame);  
-            //qInfo() << "Audio Pts: " << frame->secPts();
-            break; 
+            renderAudio(frame);
+            // qInfo() << "Audio Pts: " << frame->secPts();
+            break;
         case decoder_sdk::MediaType::kMediaTypeVideo:
             renderVideo(frame);
-            //qInfo() << "Video Pts: " << frame->secPts();  
-            break; 
+            // qInfo() << "Video Pts: " << frame->secPts();
+            break;
         default:
             qWarning() << "[RenderWorker] Unsupported frame type received.";
             return;
     }
 }
 
-void RenderWorker::renderAudio(const std::shared_ptr<decoder_sdk::Frame>& audioFrame)
+void RenderWorker::prepareStop()
 {
-    if (!audioFrame || !audioFrame->isValid() || audioFrame->mediaType() != decoder_sdk::MediaType::kMediaTypeAudio) {
+    if (render_) {
+        render_.reset(nullptr);
+        context_->doneCurrent();
+    }
+    if (audioRender_) {
+        audioRender_.reset(nullptr);
+    }
+
+    currentPixelFormat_ = decoder_sdk::ImageFormat::kUnknown;
+    readyRender_.store(false);
+}
+
+void RenderWorker::preparePause()
+{
+    if (render_) {
+        render_.reset(nullptr);
+    }
+    if (audioRender_) {
+        audioRender_.reset(nullptr);
+    }
+
+    currentPixelFormat_ = decoder_sdk::ImageFormat::kUnknown;
+    readyRender_.store(false);
+}
+
+void RenderWorker::preparePlaying()
+{
+    readyRender_.store(true);
+}
+
+void RenderWorker::renderAudio(const std::shared_ptr<decoder_sdk::Frame> &audioFrame)
+{
+    if (!audioFrame || !audioFrame->isValid() ||
+        audioFrame->mediaType() != decoder_sdk::MediaType::kMediaTypeAudio) {
         return;
     }
 
@@ -108,8 +129,7 @@ void RenderWorker::renderAudio(const std::shared_ptr<decoder_sdk::Frame>& audioF
 
     if (!audioRender_) {
         needRecreateAudioRenderer = true;
-    } else if (audioSampleRate_ != sampleRate || 
-               audioChannels_ != channels || 
+    } else if (audioSampleRate_ != sampleRate || audioChannels_ != channels ||
                audioSampleFormat_ != sampleFormat) {
         needRecreateAudioRenderer = true;
     }
@@ -119,7 +139,7 @@ void RenderWorker::renderAudio(const std::shared_ptr<decoder_sdk::Frame>& audioF
             // 停止旧的音频渲染
             audioRender_->stop();
         }
-            
+
         // 初始化
         audioRender_.reset(new AudioRender);
         audioRender_->initialize(audioFrame);
@@ -140,7 +160,7 @@ void RenderWorker::renderAudio(const std::shared_ptr<decoder_sdk::Frame>& audioF
     }
 }
 
-void RenderWorker::renderVideo(const std::shared_ptr<decoder_sdk::Frame>& videoFrame)
+void RenderWorker::renderVideo(const std::shared_ptr<decoder_sdk::Frame> &videoFrame)
 {
     if (!videoFrame || !videoFrame->isValid() ||
         videoFrame->mediaType() != decoder_sdk::MediaType::kMediaTypeVideo) {
@@ -178,9 +198,6 @@ void RenderWorker::renderVideo(const std::shared_ptr<decoder_sdk::Frame>& videoF
             renderWidth_ = width;
             renderHeight_ = height;
             currentPixelFormat_ = pixelFormat;
-
-            qDebug() << "[RenderWorker] Created video renderer for pixel format:" << static_cast<int>(pixelFormat)
-                     << "size:" << width << "x" << height;
         } else {
             qWarning() << "[RenderWorker] Failed to create video renderer for pixel format:"
                        << static_cast<int>(pixelFormat);
@@ -194,50 +211,27 @@ void RenderWorker::renderVideo(const std::shared_ptr<decoder_sdk::Frame>& videoF
     }
 }
 
-void RenderWorker::setVolume(qreal volume)
+QSharedPointer<VideoRender> RenderWorker::createRenderer(decoder_sdk::ImageFormat format)
 {
-    if (!audioRender_)
-        return;
-
-    audioRender_->setVolume(volume);
-}
-
-qreal RenderWorker::volume() const
-{
-    return audioRender_ ? audioRender_->volume() : 0.0;
-}
-
-void RenderWorker::prepareStop()
-{
-    if (render_) {
-        render_.reset(nullptr);
-        context_->doneCurrent();
+    switch (format) {
+#ifdef CUDA_AVAILABLE
+        case decoder_sdk::ImageFormat::kCuda:
+            return QSharedPointer<VideoRender>(new Nv12Render_Cuda);
+#endif
+#ifdef D3D11VA_AVAILABLE
+        case decoder_sdk::ImageFormat::kD3d11va:
+            return QSharedPointer<VideoRender>(new Nv12Render_D3d11va);
+#endif
+#ifdef DXVA2_AVAILABLE
+        case decoder_sdk::ImageFormat::kDxva2:
+            return QSharedPointer<VideoRender>(new Nv12Render_Dxva2);
+#endif
+#ifdef VAAPI_AVAILABLE
+        case decoder_sdk::ImageFormat::kVaapi:
+            return QSharedPointer<VideoRender>(new Nv12Render_Vaapi(context_));
+#endif
+        default:
+            // 对于软解格式，使用软解渲染器作为默认选择
+            return QSharedPointer<VideoRender>(new SoftwareRender);
     }
-    if (audioRender_) {
-        audioRender_.reset(nullptr);
-    }
-    
-    currentPixelFormat_ = decoder_sdk::ImageFormat::kUnknown;
-    readyRender_.store(false);
-    
-    qDebug() << "[RenderWorker] Prepared for stop";
-}
-
-void RenderWorker::preparePause()
-{
-    if (render_) {
-        render_.reset(nullptr);
-    }
-    if (audioRender_) {
-        audioRender_.reset(nullptr);
-    }
-    
-    currentPixelFormat_ = decoder_sdk::ImageFormat::kUnknown;
-
-    readyRender_.store(false);
-}
-
-void RenderWorker::preparePlaying()
-{
-    readyRender_.store(true);
 }

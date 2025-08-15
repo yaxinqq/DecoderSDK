@@ -170,7 +170,7 @@ bool Nv12Render_D3d11va::initializeVideoProcessor(int width, int height)
     contentDesc.InputHeight = height;
     contentDesc.OutputWidth = width;
     contentDesc.OutputHeight = height;
-    contentDesc.Usage = D3D11_VIDEO_USAGE_PLAYBACK_NORMAL;
+    contentDesc.Usage = D3D11_VIDEO_USAGE_OPTIMAL_SPEED;
 
     hr = videoDevice_->CreateVideoProcessorEnumerator(&contentDesc, &videoProcessorEnum_);
     if (FAILED(hr)) {
@@ -321,7 +321,7 @@ bool Nv12Render_D3d11va::processNV12ToRGB(const decoder_sdk::Frame &frame)
         }
     }
 
-    // 设置颜色空间 - 修复版本
+    // 设置颜色空间
     D3D11_VIDEO_PROCESSOR_COLOR_SPACE inputColorSpace = {};
     inputColorSpace.YCbCr_Matrix = 1; // BT.709
     inputColorSpace.YCbCr_xvYCC = 0;
@@ -364,8 +364,10 @@ bool Nv12Render_D3d11va::processNV12ToRGB(const decoder_sdk::Frame &frame)
     stream.Enable = TRUE;
     stream.pInputSurface = entry.inputView.Get();
 
+    wglD3DDevice_.wglDXUnlockObjectsNV(1, &wglTextureHandle_);
     HRESULT hr =
         videoContext_->VideoProcessorBlt(videoProcessor_.Get(), outputView_.Get(), 0, 1, &stream);
+    wglD3DDevice_.wglDXLockObjectsNV(1, &wglTextureHandle_);
 
     if (FAILED(hr)) {
         qWarning() << QStringLiteral("[Nv12Render_D3d11va] VideoProcessorBlt failed, HRESULT:")
@@ -475,22 +477,14 @@ bool Nv12Render_D3d11va::drawFrame(GLuint id)
     program_.setAttributeBuffer("vertexIn", GL_FLOAT, 0, 2, 0);
     program_.setAttributeBuffer("textureIn", GL_FLOAT, 2 * 4 * sizeof(GLfloat), 2, 0);
 
-    bool lockSuccess = false;
-    if (wglD3DDevice_.isValid() && wglTextureHandle_) {
-        lockSuccess = wglD3DDevice_.wglDXLockObjectsNV(1, &wglTextureHandle_);
-        if (lockSuccess) {
-            glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-            wglD3DDevice_.wglDXUnlockObjectsNV(1, &wglTextureHandle_);
-        } else {
-            qWarning() << QStringLiteral("[Nv12Render_D3d11va] Failed to lock WGL objects!");
-        }
-    }
+    // 绘制
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 
     program_.disableAttributeArray("vertexIn");
     program_.disableAttributeArray("textureIn");
     program_.release();
 
-    return lockSuccess;
+    return true;
 }
 
 #endif

@@ -49,10 +49,11 @@ public slots:
 private:
     void renderAudio(const std::shared_ptr<decoder_sdk::Frame> &audioFrame);
     void renderVideo(const std::shared_ptr<decoder_sdk::Frame> &videoFrame);
-private:
+
     // 根据像素格式创建对应的渲染器
     QSharedPointer<VideoRender> createRenderer(decoder_sdk::ImageFormat format);
 
+private:
     QSharedPointer<VideoRender> render_;
     QSurface *surface_;
     QOpenGLContext *context_;

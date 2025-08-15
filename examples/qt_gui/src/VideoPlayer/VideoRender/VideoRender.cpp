@@ -5,7 +5,7 @@
 #include <QThread>
 
 namespace {
-    const char *vsrc = R"(
+const char *vsrc = R"(
     #ifdef GL_ES
         precision mediump float;
     #endif
@@ -19,7 +19,7 @@ namespace {
         }
     )";
 
-    const char *fsrc = R"(
+const char *fsrc = R"(
     #ifdef GL_ES
         precision mediump float;
     #endif
@@ -64,7 +64,7 @@ void VideoRender::initialize(const std::shared_ptr<decoder_sdk::Frame> &frame,
     initializeOpenGLFunctions();
 
     // 初始化循环缓冲队列
-    if (!bufferQueue_->initialize(QSize(frame->width(), frame->height()), {}, frame->durationByFps() * 1000)) {
+    if (!bufferQueue_->initialize(QSize(frame->width(), frame->height()), {})) {
         qWarning() << QStringLiteral("[VideoRender] Failed to initialize buffer queue");
         return;
     }
@@ -104,7 +104,8 @@ void VideoRender::render(const std::shared_ptr<decoder_sdk::Frame> &frame)
     }
 
     // 获取一个空闲的buffer用于渲染
-    RenderBuffer *buffer = bufferQueue_->acquireForRender(static_cast<int>(frame->durationByFps() * 1000));
+    const auto frameDurationMs = frame->durationByFps() * 1000;
+    RenderBuffer *buffer = bufferQueue_->acquireForRender(static_cast<int>(frameDurationMs * 0.5));
     if (!buffer) {
         // 没有可用buffer，丢弃此帧
         return;
@@ -115,17 +116,33 @@ void VideoRender::render(const std::shared_ptr<decoder_sdk::Frame> &frame)
     glViewport(0, 0, frame->width(), frame->height());
     const bool success = renderFrame(*frame);
     buffer->fbo->release();
+    buffer->durationMs = frameDurationMs;
 
     if (success) {
         GLsync fence = nullptr;
 
-        // 如果支持fence，创建fence对象进行异步同步
+        // 如果支持fence，创建fence对象进行同步
         if (supportsGlFence_) {
             fence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
             if (!fence) {
                 qWarning() << QStringLiteral("[VideoRender] Failed to create fence");
             } else {
-                glClientWaitSync(fence, GL_SYNC_FLUSH_COMMANDS_BIT, renderFenceSyncIntervalNs_);
+                // 进行同步等待，期间让出CPU避免忙等。等待的时间为frame duration的一半，避免sleep
+                // for的精度问题
+                const auto halfDurationMicros = static_cast<int64_t>(frameDurationMs * 1000 * 0.5);
+                const auto sleepInterval = std::min((int64_t)1000, halfDurationMicros);
+                const auto finishTimePoint = std::chrono::steady_clock::now() +
+                                             std::chrono::microseconds(halfDurationMicros);
+                GLenum waitResult = GL_TIMEOUT_EXPIRED;
+                do {
+                    // 睡眠，避免占满 CPU
+                    std::this_thread::sleep_for(std::chrono::microseconds(sleepInterval));
+                    // 轮询fence是否完成
+                    waitResult = glClientWaitSync(fence, 0, 0);
+
+                } while (waitResult != GL_ALREADY_SIGNALED &&
+                         waitResult != GL_CONDITION_SATISFIED &&
+                         std::chrono::steady_clock::now() < finishTimePoint);
             }
         } else {
             // 不支持fence时，使用glFlush确保命令提交
@@ -150,7 +167,7 @@ void VideoRender::draw()
         return;
     }
 
-    // 高性能显示策略：智能buffer管理
+    // 获得新的展示Buffer
     RenderBuffer *newDisplayBuffer = bufferQueue_->acquireForDisplay();
 
     if (newDisplayBuffer && newDisplayBuffer->fbo && newDisplayBuffer->fbo->isValid()) {
@@ -201,10 +218,7 @@ bool VideoRender::isValid() const
 
 RenderBufferQueue::Statistics VideoRender::getStatistics() const
 {
-    if (bufferQueue_) {
-        return bufferQueue_->getStatistics();
-    }
-    return {};
+    return bufferQueue_->getStatistics();
 }
 
 void VideoRender::initDefaultVBO(QOpenGLBuffer &vbo, const bool horizontal,

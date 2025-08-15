@@ -267,7 +267,7 @@ bool SoftwareRender::renderFrame(const decoder_sdk::Frame &frame)
     }
 
     if (!checkGLError("texture upload")) {
-        return true;
+        return false;
     }
 
     return drawFrame(textures_, currentFormat);
