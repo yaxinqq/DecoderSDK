@@ -5,6 +5,7 @@
 
 extern "C" {
 #include <libavutil/error.h>
+#include <libavutil/rational.h>
 #include <libavutil/time.h>
 #include <libswscale/swscale.h>
 }
@@ -513,6 +514,8 @@ void VideoDecoder::decodeLoop()
 
     // 解码器id
     auto codecId = codecCtx_->codec_id;
+    // 目前推测到的帧率
+    const auto avgDuration = 1 / getFrameRate();
     while (!requestInterruption_.load()) {
         // 如果在等待预缓冲，则暂停解码
         if (waitingForPreBuffer_.load()) {
@@ -657,7 +660,7 @@ void VideoDecoder::decodeLoop()
 
             // 成功接收到一帧，进行处理
             // 计算帧持续时间(单位 s)
-            const double duration = 1 / av_q2d(stream_->avg_frame_rate);
+            const double duration = calculateFrameDuration(frame, avgDuration);
             // 计算PTS（单位s）
             const double pts = calculatePts(frame);
 
@@ -994,6 +997,23 @@ bool VideoDecoder::reinitializeWithSoftwareDecoder()
     avcodec_flush_buffers(codecCtx_);
 
     return true;
+}
+
+double VideoDecoder::calculateFrameDuration(const Frame &frame, double defaultDuration) const
+{
+    if (!frame.isValid())
+        return 0.0;
+
+    auto *avFrame = frame.get();
+    if (avFrame->duration > 0) {
+        return avFrame->duration * av_q2d(stream_->time_base);
+    }
+   /* if (lastPts >= 0 && avFrame->pts != AV_NOPTS_VALUE) {
+        double dur = (avFrame->pts - lastPts) * av_q2d(stream_->time_base);
+        return dur;
+    }*/
+
+    return defaultDuration;
 }
 
 INTERNAL_NAMESPACE_END

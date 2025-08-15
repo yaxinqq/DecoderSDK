@@ -175,7 +175,6 @@ void AudioDecoder::decodeLoop()
             }
 
             // 计算帧持续时间(单位 s)
-            // 计算帧持续时间应该使用实际的采样率
             double actualSampleRate =
                 needResample_ ? (codecCtx_->sample_rate * speed()) : codecCtx_->sample_rate;
             const double duration = outputFrame.nbSamples() / actualSampleRate;

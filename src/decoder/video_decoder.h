@@ -100,6 +100,12 @@ private:
      */
     bool reinitializeWithSoftwareDecoder();
 
+    /**
+     * @brief 计算帧的持续时间 单位：s
+     * @param frame 帧
+     */
+    double calculateFrameDuration(const Frame &frame, double defaultDuration) const;
+
 private:
     // 硬件加速器
     std::shared_ptr<HardwareAccel> hwAccel_;
