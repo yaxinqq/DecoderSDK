@@ -4,6 +4,9 @@
 #include "decodersdk/frame.h"
 
 #include <QDebug>
+#include <QOffscreenSurface>
+#include <QOpenGLContext>
+#include <QOpenGLFunctions>
 #include <QVariant>
 
 #if defined(WIN32)
@@ -13,6 +16,32 @@
 namespace {
 const QString kOk = QStringLiteral("OK");
 const QString kFail = QStringLiteral("FAIL");
+
+QString getGLRenderer()
+{
+    // 查找当前OpenGL Context所绑定的设备
+    QOpenGLContext glContext;
+    glContext.create();
+
+    QOffscreenSurface glOffscreenSurface;
+    glOffscreenSurface.create();
+
+    glContext.makeCurrent(&glOffscreenSurface);
+    QString glRenderer;
+    if (glContext.isValid()) {
+        glRenderer = QString(reinterpret_cast<const char *>(glGetString(GL_RENDERER)));
+    }
+    glContext.doneCurrent();
+
+    // 输出
+    if (glRenderer.isEmpty()) {
+        qWarning() << QStringLiteral("Failed to get OpenGL Renderer!");
+    } else {
+        qInfo() << QStringLiteral("OpenGL Renderer: %1").arg(glRenderer);
+    }
+
+    return glRenderer;
+}
 } // namespace
 
 void registerVideoMetaType()
@@ -137,7 +166,22 @@ private:
             return;
         }
 
-        int deviceIndex = StreamManager::instance()->defaultDecoderConfig().hwDeviceIndex;
+        const auto glRenderer = getGLRenderer();
+        int deviceIndex = -1;
+        for (int i = 0; i < deviceCount; ++i) {
+            CUdevice dev;
+            if (cuDeviceGet(&dev, i) != CUDA_SUCCESS)
+                continue;
+
+            char name[256];
+            cuDeviceGetName(name, 256, dev);
+            if (glRenderer.contains(QString::fromStdString(name), Qt::CaseInsensitive)) {
+                deviceIndex = i;
+                break;
+            }
+            
+        }
+
         if (deviceIndex < 0 || deviceIndex >= deviceCount) {
             // 非法的设备索引
             qInfo()
@@ -591,31 +635,18 @@ private:
             return;
         }
 
-        // 按照配置文件中的设置创建显卡
-        const auto gpuId = StreamManager::instance()->defaultDecoderConfig().hwDeviceIndex;
-        hr = factory->EnumAdapters(gpuId, &adapter);
-        if (FAILED(hr)) {
-            qWarning() << QStringLiteral("EnumAdapters failed, HRESULT:") << Qt::hex << hr
-                       << QStringLiteral("used default gpu!");
-        } else {
-            // 输出相关信息
+        const auto glRenderer = getGLRenderer();
+        UINT i = 0;
+        while (factory->EnumAdapters(i, &adapter) != DXGI_ERROR_NOT_FOUND) {
             DXGI_ADAPTER_DESC desc;
-            if (SUCCEEDED(adapter->GetDesc(&desc))) {
-                // 将 wchar_t 名称转换为 QString
-                QString adapterName = QString::fromWCharArray(desc.Description);
-
-                // 判断是否为软件适配器，如果是的话，就忽略它
-                if (adapterName.contains(QStringLiteral("Microsoft Basic Render Driver"),
-                                         Qt::CaseInsensitive) ||
-                    desc.VendorId == 0x1414) {
-                    qWarning()
-                        << QStringLiteral("Invalid adapter index: %1. Used default!").arg(gpuId);
-                    adapter.Reset();
-                } else {
-                    // 输出信息
-                    qInfo() << QStringLiteral("Adapter Name: %1").arg(adapterName);
-                }
+            adapter->GetDesc(&desc);
+            const auto adapterDesc = QString::fromWCharArray(desc.Description); 
+            if (glRenderer.contains(adapterDesc, Qt::CaseInsensitive)) {
+                break;  // 使用OpenGL Context对应的设备
             }
+
+            ++i;
+            adapter.Reset();
         }
 
         hr = D3D11CreateDevice(
@@ -759,31 +790,27 @@ private:
             return;
         }
 
+        const auto glRenderer = getGLRenderer();
         const UINT adapterCount = d3d9ex->GetAdapterCount();
-        UINT adapterIndex = StreamManager::instance()->defaultDecoderConfig().hwDeviceIndex;
+        UINT adapterIndex = D3DADAPTER_DEFAULT;
+        for (UINT i = 0; i < adapterCount; ++i) {
+            D3DADAPTER_IDENTIFIER9 desc;
+            HRESULT hr = d3d9ex->GetAdapterIdentifier(i, 0, &desc);
+            if (FAILED(hr)) {
+                qWarning() << QStringLiteral("Failed to get adapter identifier for adapter %1").arg(i);
+                continue;
+            }
 
-        // 这里 - 1 是为了排除Microsoft Basic Render Driver
-        if (adapterIndex >= adapterCount - 1) {
-            qWarning() << QStringLiteral("Adapter index %1 is not existed! Used default adapter!")
-                              .arg(adapterIndex);
-            adapterIndex = D3DADAPTER_DEFAULT;
+            const auto adapterDesc = QString::fromStdString(desc.Description); 
+            if (glRenderer.contains(adapterDesc, Qt::CaseInsensitive)) {
+                adapterIndex = i;
+                break; // 使用OpenGL Context对应的设备
+            }
         }
-
-        // 获取默认适配器信息
-        D3DADAPTER_IDENTIFIER9 adapterInfo;
-        HRESULT hr = d3d9ex->GetAdapterIdentifier(adapterIndex, 0, &adapterInfo);
-        if (FAILED(hr)) {
-            qWarning() << QStringLiteral("Failed to get adapter identifier, HRESULT:") << Qt::hex
-                       << hr;
-            return;
-        }
-        qInfo() << QStringLiteral("D3D9Ex DeviceName: %1, DeviceIndex: %2, Description: %3")
-                       .arg(adapterInfo.DeviceName, QString::number(adapterInfo.DeviceId),
-                            adapterInfo.Description);
 
         D3DDISPLAYMODEEX modeex = {0};
         modeex.Size = sizeof(D3DDISPLAYMODEEX);
-        d3d9ex->GetAdapterDisplayModeEx(adapterIndex, &modeex, NULL);
+        HRESULT hr = d3d9ex->GetAdapterDisplayModeEx(adapterIndex, &modeex, NULL);
         if (FAILED(hr)) {
             d3d9ex->Release();
             qWarning() << QStringLiteral("Failed to get display mode, HRESULT:") << Qt::hex << hr;

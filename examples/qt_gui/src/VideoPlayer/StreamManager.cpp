@@ -289,7 +289,6 @@ StreamDecoderWorker *StreamManager::getOrCreateDecoder(const QString &url,
 
 void StreamManager::initDefaultDecoderConfig()
 {
-    defaultDecoderConfig_.hwDeviceIndex = 0;
     defaultDecoderConfig_.enableFrameRateControl = true;
     defaultDecoderConfig_.hwAccelType = decoder_sdk::HWAccelType::kAuto;
     defaultDecoderConfig_.swVideoOutFormat = decoder_sdk::ImageFormat::kYUV420P;

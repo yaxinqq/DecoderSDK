@@ -3,6 +3,15 @@
 
 #include <QApplication>
 
+#ifdef Q_OS_WIN
+#include <windows.h>
+extern "C" {
+__declspec(dllexport) DWORD NvOptimusEnablement = 0x00000001;       // NVIDIA
+__declspec(dllexport) int AmdPowerXpressRequestHighPerformance = 1; // AMD
+}
+#endif
+
+
 int main(int argc, char *argv[])
 {
     // 禁用高 DPI 缩放
