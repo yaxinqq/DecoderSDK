@@ -117,6 +117,15 @@ public:
     }
 
     /**
+     * @brief 是否使用的是用户传入的硬件设备上下文
+     * @return 是否使用的是用户传入的硬件设备上下文
+     */
+    bool isUserContext() const
+    {
+        return isUserContext_;
+    }
+
+    /**
      * @brief 获取支持的硬件加速类型列表
      * @return 硬件加速类型列表
      */
@@ -214,6 +223,7 @@ private:
     AVBufferRef *hwDeviceCtx_; // 硬件设备上下文
     AVPixelFormat hwPixFmt_;   // 硬件像素格式
     bool initialized_;         // 是否已初始化
+    bool isUserContext_;       // 是否是用户传进来的硬件设备上下文
     int deviceIndex_;          // 设备索引
     std::mutex mutex_;         // 互斥锁
 

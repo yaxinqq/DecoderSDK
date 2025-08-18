@@ -80,6 +80,7 @@ HardwareAccel::HardwareAccel()
       hwDeviceCtx_(nullptr),
       hwPixFmt_(AV_PIX_FMT_NONE),
       initialized_(false),
+      isUserContext_(false),
       deviceIndex_(0)
 {
 }
@@ -559,6 +560,7 @@ bool HardwareAccel::initHWDevice(AVHWDeviceType deviceType, int deviceIndex,
                     if (ret >= 0) {
                         LOG_INFO(
                             "Successfully created hardware device context from user callback!");
+                        isUserContext_ = true;
                         return true;
                     } else {
                         LOG_WARN(
