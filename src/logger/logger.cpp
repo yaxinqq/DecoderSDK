@@ -156,7 +156,7 @@ bool LoggerManager::loadConfig(const std::string &configFile, LogConfig &config)
     try {
         std::ifstream file(configFile);
         if (!file.is_open()) {
-            std::cerr << "无法打开配置文件: " << configFile << std::endl;
+            std::cerr << "Can not open config file: " << configFile << std::endl;
             return false;
         }
 
@@ -164,7 +164,8 @@ bool LoggerManager::loadConfig(const std::string &configFile, LogConfig &config)
         file >> j;
 
         if (!j.contains("log")) {
-            std::cerr << "配置文件中缺少log配置节" << std::endl;
+            std::cerr << "The log configuration section is missing in the configuration file."
+                      << std::endl;
             return false;
         }
 
@@ -196,7 +197,7 @@ bool LoggerManager::loadConfig(const std::string &configFile, LogConfig &config)
 
         return true;
     } catch (const std::exception &e) {
-        std::cerr << "解析配置文件失败: " << e.what() << std::endl;
+        std::cerr << "Failed to parse the configuration file: " << e.what() << std::endl;
         return false;
     }
 }
@@ -300,7 +301,7 @@ void LoggerManager::createLogger()
             spdlog::register_logger(logger_);
         }
     } catch (const std::exception &e) {
-        std::cerr << "创建日志器失败: " << e.what() << std::endl;
+        std::cerr << "Failed to create logger: " << e.what() << std::endl;
     }
 }
 
