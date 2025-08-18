@@ -16,6 +16,7 @@
 namespace {
 const QString kOk = QStringLiteral("OK");
 const QString kFail = QStringLiteral("FAIL");
+static QString kGlRenderer;
 
 QString getGLRenderer()
 {
@@ -52,6 +53,15 @@ void registerVideoMetaType()
     qRegisterMetaType<std::shared_ptr<decoder_sdk::EventArgs>>(
         "std::shared_ptr<decoder_sdk::EventArgs>");
     qRegisterMetaType<decoder_sdk::EventType>("decoder_sdk::EventType");
+}
+
+QString getCurrentGLRenderer()
+{
+    if (kGlRenderer.isEmpty()) {
+        kGlRenderer = getGLRenderer();
+    }
+
+    return kGlRenderer;
 }
 
 void clearGPUResource()
@@ -166,7 +176,7 @@ private:
             return;
         }
 
-        const auto glRenderer = getGLRenderer();
+        const auto glRenderer = getCurrentGLRenderer();
         int deviceIndex = -1;
         for (int i = 0; i < deviceCount; ++i) {
             CUdevice dev;
@@ -635,7 +645,7 @@ private:
             return;
         }
 
-        const auto glRenderer = getGLRenderer();
+        const auto glRenderer = getCurrentGLRenderer();
         UINT i = 0;
         while (factory->EnumAdapters(i, &adapter) != DXGI_ERROR_NOT_FOUND) {
             DXGI_ADAPTER_DESC desc;
@@ -790,7 +800,7 @@ private:
             return;
         }
 
-        const auto glRenderer = getGLRenderer();
+        const auto glRenderer = getCurrentGLRenderer();
         const UINT adapterCount = d3d9ex->GetAdapterCount();
         UINT adapterIndex = D3DADAPTER_DEFAULT;
         for (UINT i = 0; i < adapterCount; ++i) {

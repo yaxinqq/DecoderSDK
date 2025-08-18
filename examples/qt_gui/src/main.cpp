@@ -24,6 +24,7 @@ int main(int argc, char *argv[])
     app.setQuitOnLastWindowClosed(true);
 
     registerVideoMetaType();
+    getCurrentGLRenderer();
 
     SimplePlayer w;
     w.resize(1200, 600);

@@ -1,6 +1,9 @@
 ﻿#pragma once
+#include <QString>
+
 void registerVideoMetaType();
 void clearGPUResource();
+QString getCurrentGLRenderer();
 
 #ifdef CUDA_AVAILABLE
 #include <cuda.h>
