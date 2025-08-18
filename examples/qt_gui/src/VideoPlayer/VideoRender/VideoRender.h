@@ -1,8 +1,8 @@
 #ifndef VIDEORENDER_H
 #define VIDEORENDER_H
 
-#include "decodersdk/frame.h"
 #include "RenderBufferQueue.h"
+#include "decodersdk/frame.h"
 
 #include <QMutex>
 #include <QOpenGLBuffer>
@@ -14,8 +14,7 @@
 #include <QSharedPointer>
 #include <memory>
 
-class VideoRender : protected QOpenGLExtraFunctions
-{
+class VideoRender : protected QOpenGLExtraFunctions {
 public:
     VideoRender();
     virtual ~VideoRender();
@@ -149,6 +148,8 @@ private:
     std::atomic_bool initialized_;
     // 是否支持glFence
     bool supportsGlFence_ = false;
+    // 是否强制GPU等待，一些老旧型号的显卡，需要打开这个选项
+    bool forceGpuFinish_ = false;
 };
 
 #endif // VIDEORENDER_H

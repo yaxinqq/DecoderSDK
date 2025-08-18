@@ -176,6 +176,8 @@ private:
 
     // 是否初始化完成
     bool initialized_ = false;
+    // 是否输出调试信息
+    bool enableDebug_ = false;
 
     // 统计信息
     // 生成（渲染）帧数

@@ -8,8 +8,6 @@
 
 #include <algorithm>
 
-#define RENDER_BUFFER_QUEUE_DEBUG 0
-
 namespace {
 constexpr int kFenceMicroWaitNs = 1000; // fence微等待时间(纳秒)
 } // namespace
@@ -22,6 +20,7 @@ RenderBufferQueue::RenderBufferQueue(int bufferCount)
     }
 
     globalTimer_.start();
+    enableDebug_ = false;
 }
 
 RenderBufferQueue::~RenderBufferQueue()
@@ -89,38 +88,36 @@ RenderBuffer *RenderBufferQueue::acquireForRender(int waitTimeoutMs)
     droppedFrameCount_.fetch_add(1);
 
     // 添加详细的跳帧输出
-#if RENDER_BUFFER_QUEUE_DEBUG
-    qWarning() << QStringLiteral(
-                      "[RenderBufferQueue] 渲染跳帧 - 无可用Buffer | "
-                      "帧序号: %1 | 等待时间: %2ms | 当前时间: %3ms | "
-                      "总丢帧数: %4")
-                      .arg(frameCounter_ + 1)
-                      .arg(waitTimeoutMs)
-                      .arg(currentTime)
-                      .arg(droppedFrameCount_.load())
-               << QThread::currentThreadId();
-    ;
-#endif
+    if (enableDebug_) {
+        qWarning() << QStringLiteral(
+                          "[RenderBufferQueue] 渲染跳帧 - 无可用Buffer | "
+                          "帧序号: %1 | 等待时间: %2ms | 当前时间: %3ms | "
+                          "总丢帧数: %4")
+                          .arg(frameCounter_ + 1)
+                          .arg(waitTimeoutMs)
+                          .arg(currentTime)
+                          .arg(droppedFrameCount_.load())
+                   << QThread::currentThreadId();
+        ;
 
-#if RENDER_BUFFER_QUEUE_DEBUG
-    // 输出当前所有buffer状态用于调试
-    QString bufferStatus;
-    for (size_t i = 0; i < buffers_.size(); ++i) {
-        const auto &buffer = buffers_[i];
-        bufferStatus +=
-            QStringLiteral(
-                "Buffer[%1]: inUse=%2 displaying=%3 ready=%4 pending=%5 outdated=%6 frameIdx=%7; ")
-                .arg(i)
-                .arg(buffer->inUse.load())
-                .arg(buffer->displaying.load())
-                .arg(buffer->ready.load())
-                .arg(buffer->pendingRelease.load())
-                .arg(buffer->outdated.load())
-                .arg(buffer->frameIndex);
+        // 输出当前所有buffer状态用于调试
+        QString bufferStatus;
+        for (size_t i = 0; i < buffers_.size(); ++i) {
+            const auto &buffer = buffers_[i];
+            bufferStatus += QStringLiteral(
+                                "Buffer[%1]: inUse=%2 displaying=%3 ready=%4 pending=%5 "
+                                "outdated=%6 frameIdx=%7; ")
+                                .arg(i)
+                                .arg(buffer->inUse.load())
+                                .arg(buffer->displaying.load())
+                                .arg(buffer->ready.load())
+                                .arg(buffer->pendingRelease.load())
+                                .arg(buffer->outdated.load())
+                                .arg(buffer->frameIndex);
+        }
+        qDebug() << QStringLiteral("[RenderBufferQueue] Buffer状态: %1").arg(bufferStatus)
+                 << QThread::currentThreadId();
     }
-    qDebug() << QStringLiteral("[RenderBufferQueue] Buffer状态: %1").arg(bufferStatus)
-             << QThread::currentThreadId();
-#endif
 
     return nullptr;
 }
@@ -219,34 +216,34 @@ RenderBuffer *RenderBufferQueue::acquireForDisplay()
         shouldSwitch = isConsecutiveFrame || isTooOld || gapTooLarge;
 
         if (!shouldSwitch) {
-#if RENDER_BUFFER_QUEUE_DEBUG
-            // 记录保持当前buffer的原因
-            qDebug() << QStringLiteral(
-                            "[RenderBufferQueue] 保持当前Buffer | "
-                            "当前帧: %1 | 候选帧: %2 | Buffer年龄: %3ms | "
-                            "连续帧: %4")
-                            .arg(currentDisplayFrameIndex)
-                            .arg(candidateBuffer->frameIndex)
-                            .arg(bufferAge)
-                            .arg(isConsecutiveFrame ? "是" : "否")
-                     << QThread::currentThreadId();
-#endif
+            if (enableDebug_) {
+                // 记录保持当前buffer的原因
+                qDebug() << QStringLiteral(
+                                "[RenderBufferQueue] 保持当前Buffer | "
+                                "当前帧: %1 | 候选帧: %2 | Buffer年龄: %3ms | "
+                                "连续帧: %4")
+                                .arg(currentDisplayFrameIndex)
+                                .arg(candidateBuffer->frameIndex)
+                                .arg(bufferAge)
+                                .arg(isConsecutiveFrame ? "是" : "否")
+                         << QThread::currentThreadId();
+            }
             return nullptr;
         }
 
         // 记录切换信息
-#if RENDER_BUFFER_QUEUE_DEBUG
-        qInfo() << QStringLiteral(
-                       "[RenderBufferQueue] 切换显示Buffer | "
-                       "旧帧: %1 → 新帧: %2 | Buffer年龄: %3ms | "
-                       "连续帧: %4 | 跳帧数: %5")
-                       .arg(currentDisplayFrameIndex)
-                       .arg(candidateBuffer->frameIndex)
-                       .arg(bufferAge)
-                       .arg(isConsecutiveFrame ? "是" : "否")
-                       .arg(isConsecutiveFrame ? 0 : minFrameGap)
-                << QThread::currentThreadId();
-#endif
+        if (enableDebug_) {
+            qInfo() << QStringLiteral(
+                           "[RenderBufferQueue] 切换显示Buffer | "
+                           "旧帧: %1 → 新帧: %2 | Buffer年龄: %3ms | "
+                           "连续帧: %4 | 跳帧数: %5")
+                           .arg(currentDisplayFrameIndex)
+                           .arg(candidateBuffer->frameIndex)
+                           .arg(bufferAge)
+                           .arg(isConsecutiveFrame ? "是" : "否")
+                           .arg(isConsecutiveFrame ? 0 : minFrameGap)
+                    << QThread::currentThreadId();
+        }
 
         // 立即释放旧buffer
         lastDisplayBuffer_->displaying.store(false);
@@ -279,11 +276,11 @@ void RenderBufferQueue::releaseDisplayBuffer(RenderBuffer *buffer)
 
     // 简化释放逻辑，直接标记为待释放
     if (buffer->displaying.load()) {
-#if RENDER_BUFFER_QUEUE_DEBUG
-        qInfo() << QStringLiteral("[RenderBufferQueue] 标记Buffer待释放 | 帧序号: %1")
-                       .arg(buffer->frameIndex)
-                << QThread::currentThreadId();
-#endif
+        if (enableDebug_) {
+            qInfo() << QStringLiteral("[RenderBufferQueue] 标记Buffer待释放 | 帧序号: %1")
+                           .arg(buffer->frameIndex)
+                    << QThread::currentThreadId();
+        }
 
         buffer->displaying.store(false);
         buffer->pendingRelease.store(true);
@@ -383,11 +380,9 @@ void RenderBufferQueue::processPendingReleases()
         }
     }
 
-    if (releasedCount > 0) {
-#if RENDER_BUFFER_QUEUE_DEBUG
+    if (releasedCount > 0 && enableDebug_) {
         qInfo() << QStringLiteral("[RenderBufferQueue] 释放了 %1 个待释放Buffer").arg(releasedCount)
                 << QThread::currentThreadId();
-#endif
     }
 }
 
@@ -418,19 +413,19 @@ void RenderBufferQueue::processOutdatedFrames()
                     outdatedFrameCount_.fetch_add(1);
 
                     // 添加过时帧输出
-#if RENDER_BUFFER_QUEUE_DEBUG
-                    qInfo() << QStringLiteral(
-                                   "[RenderBufferQueue] 帧标记为过时 | "
-                                   "帧序号: %1 | 帧年龄: %2ms | "
-                                   "当前时间: %3ms | Ready帧数: %4 | "
-                                   "总过时帧数: %5")
-                                   .arg(buffer->frameIndex)
-                                   .arg(bufferAge)
-                                   .arg(currentTime)
-                                   .arg(readyBufferCount)
-                                   .arg(outdatedFrameCount_.load())
-                            << QThread::currentThreadId();
-#endif
+                    if (enableDebug_) {
+                        qInfo() << QStringLiteral(
+                                       "[RenderBufferQueue] 帧标记为过时 | "
+                                       "帧序号: %1 | 帧年龄: %2ms | "
+                                       "当前时间: %3ms | Ready帧数: %4 | "
+                                       "总过时帧数: %5")
+                                       .arg(buffer->frameIndex)
+                                       .arg(bufferAge)
+                                       .arg(currentTime)
+                                       .arg(readyBufferCount)
+                                       .arg(outdatedFrameCount_.load())
+                                << QThread::currentThreadId();
+                    }
                 }
             }
         }
@@ -451,20 +446,17 @@ void RenderBufferQueue::dropOlderReadyFrames(qint64 thresholdFrameIndex)
     // 注意：此函数在mutex保护下调用
     int droppedCount = 0;
 
-#if RENDER_BUFFER_QUEUE_DEBUG
     QStringList droppedFrames;
-#endif
-
     for (auto &buffer : buffers_) {
         // 只丢弃比阈值更老的ready帧
         if (buffer->ready.load() && !buffer->displaying.load() && !buffer->inUse.load() &&
             !buffer->pendingRelease.load() && buffer->frameIndex < thresholdFrameIndex) {
-#if RENDER_BUFFER_QUEUE_DEBUG
-            // 记录要丢弃的帧信息
-            droppedFrames << QStringLiteral("帧%1(年龄:%2ms)")
-                                 .arg(buffer->frameIndex)
-                                 .arg(globalTimer_.elapsed() - buffer->renderTime);
-#endif
+            if (enableDebug_) {
+                // 记录要丢弃的帧信息
+                droppedFrames << QStringLiteral("帧%1(年龄:%2ms)")
+                                     .arg(buffer->frameIndex)
+                                     .arg(globalTimer_.elapsed() - buffer->renderTime);
+            }
 
             droppedCount++;
 
@@ -490,8 +482,7 @@ void RenderBufferQueue::dropOlderReadyFrames(qint64 thresholdFrameIndex)
     }
 
     // 输出丢弃帧的详细信息
-    if (droppedCount > 0) {
-#if RENDER_BUFFER_QUEUE_DEBUG
+    if (droppedCount > 0 && enableDebug_) {
         qWarning() << QStringLiteral(
                           "[RenderBufferQueue] 清理老帧 | "
                           "阈值帧序号: %1 | 丢弃帧数: %2 | "
@@ -501,7 +492,6 @@ void RenderBufferQueue::dropOlderReadyFrames(qint64 thresholdFrameIndex)
                           .arg(droppedFrames.join(", "))
                           .arg(droppedFrameCount_.load())
                    << QThread::currentThreadId();
-#endif
     }
 }
 
@@ -514,13 +504,11 @@ void RenderBufferQueue::validateBufferStates() const
         }
     }
 
-    if (displayingCount > 1) {
-#if RENDER_BUFFER_QUEUE_DEBUG
+    if (displayingCount > 1 && enableDebug_) {
         qWarning() << QStringLiteral(
                           "[RenderBufferQueue] Buffer状态异常 - 发现 %1 个displaying状态的buffer")
                           .arg(displayingCount)
                    << QThread::currentThreadId();
-#endif
     }
 }
 
@@ -549,18 +537,18 @@ void RenderBufferQueue::smartCleanupIfNeeded()
     const bool tooManyOldFrames = oldFrameCount > (totalBuffers / 2);
 
     if (tooManyOldFrames) {
-#if RENDER_BUFFER_QUEUE_DEBUG
-        qInfo() << QStringLiteral(
-                       "[RenderBufferQueue] 触发智能清理 | "
-                       "Ready帧数: %1/%2 | 老帧数: %3 | "
-                       "当前显示帧: %4 | 清理原因: %5")
-                       .arg(readyCount)
-                       .arg(totalBuffers)
-                       .arg(oldFrameCount)
-                       .arg(currentDisplayFrame)
-                       .arg(QStringLiteral("老帧过多"))
-                << QThread::currentThreadId();
-#endif
+        if (enableDebug_) {
+            qInfo() << QStringLiteral(
+                           "[RenderBufferQueue] 触发智能清理 | "
+                           "Ready帧数: %1/%2 | 老帧数: %3 | "
+                           "当前显示帧: %4 | 清理原因: %5")
+                           .arg(readyCount)
+                           .arg(totalBuffers)
+                           .arg(oldFrameCount)
+                           .arg(currentDisplayFrame)
+                           .arg(QStringLiteral("老帧过多"))
+                    << QThread::currentThreadId();
+        }
 
         // 只清理真正老的帧
         dropOlderReadyFrames(currentDisplayFrame);

@@ -35,6 +35,7 @@ const char *fsrc = R"(
 VideoRender::VideoRender() : initialized_{false}, fboDrawResourcesInitialized_{false}
 {
     bufferQueue_ = std::make_unique<RenderBufferQueue>(3);
+    forceGpuFinish_ = false;
 }
 
 VideoRender::~VideoRender()
@@ -93,6 +94,8 @@ void VideoRender::initialize(const std::shared_ptr<decoder_sdk::Frame> &frame,
     // 查询是否支持glFence
     supportsGlFence_ = context->hasExtension(QByteArrayLiteral("GL_ARB_sync")) ||
                        context->hasExtension(QByteArrayLiteral("GL_OES_EGL_sync"));
+    qInfo() << QStringLiteral("[VideoRender] Support glFence: %1")
+                   .arg(supportsGlFence_ ? QStringLiteral("true") : QStringLiteral("false"));
 
     initialized_.store(true);
 }
@@ -120,33 +123,37 @@ void VideoRender::render(const std::shared_ptr<decoder_sdk::Frame> &frame)
 
     if (success) {
         GLsync fence = nullptr;
-
-        // 如果支持fence，创建fence对象进行同步
-        if (supportsGlFence_) {
-            fence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
-            if (!fence) {
-                qWarning() << QStringLiteral("[VideoRender] Failed to create fence");
-            } else {
-                // 进行同步等待，期间让出CPU避免忙等。等待的时间为frame duration的一半，避免sleep
-                // for的精度问题
-                const auto halfDurationMicros = static_cast<int64_t>(frameDurationMs * 1000 * 0.5);
-                const auto sleepInterval = std::min((int64_t)1000, halfDurationMicros);
-                const auto finishTimePoint = std::chrono::steady_clock::now() +
-                                             std::chrono::microseconds(halfDurationMicros);
-                GLenum waitResult = GL_TIMEOUT_EXPIRED;
-                do {
-                    // 睡眠，避免占满 CPU
-                    std::this_thread::sleep_for(std::chrono::microseconds(sleepInterval));
-                    // 轮询fence是否完成
-                    waitResult = glClientWaitSync(fence, 0, 0);
-
-                } while (waitResult != GL_ALREADY_SIGNALED &&
-                         waitResult != GL_CONDITION_SATISFIED &&
-                         std::chrono::steady_clock::now() < finishTimePoint);
-            }
+        if (forceGpuFinish_) {
+            glFinish();
         } else {
-            // 不支持fence时，使用glFlush确保命令提交
-            glFlush();
+            // 如果支持fence，创建fence对象进行同步
+            if (supportsGlFence_) {
+                fence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+                if (!fence) {
+                    qWarning() << QStringLiteral("[VideoRender] Failed to create fence");
+                } else {
+                    // 进行同步等待，期间让出CPU避免忙等。等待的时间为frame
+                    // duration的一半，避免sleep for的精度问题
+                    const auto halfDurationMicros =
+                        static_cast<int64_t>(frameDurationMs * 1000 * 0.5);
+                    const auto sleepInterval = std::min((int64_t)1000, halfDurationMicros);
+                    const auto finishTimePoint = std::chrono::steady_clock::now() +
+                                                 std::chrono::microseconds(halfDurationMicros);
+                    GLenum waitResult = GL_TIMEOUT_EXPIRED;
+                    do {
+                        // 睡眠，避免占满 CPU
+                        std::this_thread::sleep_for(std::chrono::microseconds(sleepInterval));
+                        // 轮询fence是否完成
+                        waitResult = glClientWaitSync(fence, 0, 0);
+
+                    } while (waitResult != GL_ALREADY_SIGNALED &&
+                             waitResult != GL_CONDITION_SATISFIED &&
+                             std::chrono::steady_clock::now() < finishTimePoint);
+                }
+            } else {
+                // 不支持fence时，使用glFlush确保命令提交
+                glFlush();
+            }
         }
 
         // 标记渲染完成，不阻塞等待
