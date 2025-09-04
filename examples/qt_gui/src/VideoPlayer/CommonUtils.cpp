@@ -1,4 +1,4 @@
-﻿#include "Commonutils.h"
+﻿#include "CommonUtils.h"
 #include "StreamManager.h"
 
 #include "decodersdk/frame.h"
@@ -189,7 +189,6 @@ private:
                 deviceIndex = i;
                 break;
             }
-            
         }
 
         if (deviceIndex < 0 || deviceIndex >= deviceCount) {
@@ -650,9 +649,9 @@ private:
         while (factory->EnumAdapters(i, &adapter) != DXGI_ERROR_NOT_FOUND) {
             DXGI_ADAPTER_DESC desc;
             adapter->GetDesc(&desc);
-            const auto adapterDesc = QString::fromWCharArray(desc.Description); 
+            const auto adapterDesc = QString::fromWCharArray(desc.Description);
             if (glRenderer.contains(adapterDesc, Qt::CaseInsensitive)) {
-                break;  // 使用OpenGL Context对应的设备
+                break; // 使用OpenGL Context对应的设备
             }
 
             ++i;
@@ -807,11 +806,12 @@ private:
             D3DADAPTER_IDENTIFIER9 desc;
             HRESULT hr = d3d9ex->GetAdapterIdentifier(i, 0, &desc);
             if (FAILED(hr)) {
-                qWarning() << QStringLiteral("Failed to get adapter identifier for adapter %1").arg(i);
+                qWarning()
+                    << QStringLiteral("Failed to get adapter identifier for adapter %1").arg(i);
                 continue;
             }
 
-            const auto adapterDesc = QString::fromStdString(desc.Description); 
+            const auto adapterDesc = QString::fromStdString(desc.Description);
             if (glRenderer.contains(adapterDesc, Qt::CaseInsensitive)) {
                 adapterIndex = i;
                 break; // 使用OpenGL Context对应的设备
