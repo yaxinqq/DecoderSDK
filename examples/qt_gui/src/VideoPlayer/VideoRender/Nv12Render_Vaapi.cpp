@@ -7,7 +7,7 @@
 #include <EGL/eglext.h>
 #include <QtPlatformHeaders/QEGLNativeContext>
 
-#include "../Commonutils.h"
+#include "../CommonUtils.h"
 
 namespace {
 const char *vsrc = R"(
@@ -60,7 +60,8 @@ inline bool checkError(const char *msg, int iLine, const char *szFile)
 {
     EGLint err = eglGetError();
     if (err != EGL_SUCCESS) {
-        qDebug() << "ERROR: " << msg << err << " at line " << iLine << " in file " << szFile;
+        qDebug() << "[Nv12Render_Vaapi] ERROR: " << msg << err << " at line " << iLine
+                 << " in file " << szFile;
         return false;
     }
     return true;
@@ -73,7 +74,7 @@ Nv12Render_Vaapi::Nv12Render_Vaapi(QOpenGLContext *ctx)
     if (ctx && ctx->isValid()) {
         nativeEglHandle_ = ctx->nativeHandle();
         if (!nativeEglHandle_.canConvert<QEGLNativeContext>()) {
-            qWarning() << QStringLiteral("Can not get eglContext!");
+            qWarning() << QStringLiteral("[Nv12Render_Vaapi] Can not get eglContext!");
         }
     }
 }
@@ -177,7 +178,8 @@ bool Nv12Render_Vaapi::renderFrame(const decoder_sdk::Frame &frame)
     yImage_.imageKHR = egl::egl_create_image_KHR(
         eglContext.display(), EGL_NO_CONTEXT, EGL_LINUX_DMA_BUF_EXT, (EGLClientBuffer)NULL, yAttrs);
     if (!yImage_.imageKHR) {
-        qWarning() << QStringLiteral("egl_create_image_KHR to create yImageKHR failed!");
+        qWarning() << QStringLiteral(
+            "[Nv12Render_Vaapi] egl_create_image_KHR to create yImageKHR failed!");
     }
     yImage_.fd = desc.objects[0].fd;
 
@@ -198,7 +200,8 @@ bool Nv12Render_Vaapi::renderFrame(const decoder_sdk::Frame &frame)
         egl::egl_create_image_KHR(eglContext.display(), EGL_NO_CONTEXT, EGL_LINUX_DMA_BUF_EXT,
                                   (EGLClientBuffer)NULL, uvAttrs);
     if (!uvImage_.imageKHR) {
-        qWarning() << QStringLiteral("egl_create_image_KHR to create uvImageKHR failed!");
+        qWarning() << QStringLiteral(
+            "[Nv12Render_Vaapi] egl_create_image_KHR to create uvImageKHR failed!");
     }
     uvImage_.fd = desc.objects[0].fd;
 

@@ -590,7 +590,8 @@ void VideoDecoder::decodeLoop()
         // 处理SPS profile可能存在的错误
         if (codecId == AV_CODEC_ID_H264 && hwAccel_ &&
             (hwAccel_->getType() == HWAccelType::kD3d11va ||
-             hwAccel_->getType() == HWAccelType::kDxva2) &&
+             hwAccel_->getType() == HWAccelType::kDxva2 ||
+             hwAccel_->getType() == HWAccelType::kVaapi) &&
             needFixSPSProfile_) {
             if (isAnnexBFormat(packet.get()->data, packet.get()->size)) {
                 // 检查是否是IDR帧（关键帧）
@@ -783,8 +784,9 @@ bool VideoDecoder::setupHardwareDecode()
         return false;
     } else {
         const std::string hardwareSource =
-            hwAccel_->isUserContext() ? "user hardware context"
-                                      : "device index " + std::to_string(hwAccel_->getDeviceIndex());
+            hwAccel_->isUserContext()
+                ? "user hardware context"
+                : "device index " + std::to_string(hwAccel_->getDeviceIndex());
         LOG_INFO("Using hardware accelerator: {} ({}), source: {}", hwAccel_->getDeviceName(),
                  hwAccel_->getDeviceDescription(), hardwareSource);
 
@@ -798,7 +800,8 @@ bool VideoDecoder::setupHardwareDecode()
 
     // 如果创建的是D3D11、DXVA2类型的硬解码器，且是H264编码，则修复异常的SPS profile
     if ((hwAccel_->getType() == HWAccelType::kD3d11va ||
-         hwAccel_->getType() == HWAccelType::kDxva2) &&
+         hwAccel_->getType() == HWAccelType::kDxva2 ||
+         hwAccel_->getType() == HWAccelType::kVaapi) &&
         codecCtx_->codec_id == AV_CODEC_ID_H264 && codecCtx_->extradata &&
         codecCtx_->extradata_size > 0) {
         needFixSPSProfile_ = fixH264ProfileIfNeeded(codecCtx_);
@@ -1008,13 +1011,19 @@ double VideoDecoder::calculateFrameDuration(const Frame &frame, double defaultDu
         return 0.0;
 
     auto *avFrame = frame.get();
+#if LIBAVUTIL_VERSION_MAJOR >= 58
     if (avFrame->duration > 0) {
         return avFrame->duration * av_q2d(stream_->time_base);
     }
-   /* if (lastPts >= 0 && avFrame->pts != AV_NOPTS_VALUE) {
-        double dur = (avFrame->pts - lastPts) * av_q2d(stream_->time_base);
-        return dur;
-    }*/
+#else
+    if (avFrame->pkt_duration > 0) {
+        return avFrame->pkt_duration * av_q2d(stream_->time_base);
+    }
+#endif
+    /* if (lastPts >= 0 && avFrame->pts != AV_NOPTS_VALUE) {
+         double dur = (avFrame->pts - lastPts) * av_q2d(stream_->time_base);
+         return dur;
+     }*/
 
     return defaultDuration;
 }

@@ -643,7 +643,9 @@ bool Demuxer::openInternal(const std::string &url, const Config &config,
 
     // 设置FFmpeg选项
     AVDictionary *options = nullptr;
+#if LIBAVUTIL_VERSION_MAJOR >= 58
     av_dict_set(&options, "timeout", "2000000", 0); // 2秒超时
+#endif
     av_dict_set(&options, "max_delay", "0", 0);
     av_dict_set(&options, "buffer_size", "1048576", 0); // 1MB缓冲
     av_dict_set(&options, "analyzeduration", "1000000", 0);

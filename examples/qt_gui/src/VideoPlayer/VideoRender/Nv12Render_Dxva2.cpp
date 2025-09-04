@@ -1,6 +1,5 @@
 ﻿#ifdef DXVA2_AVAILABLE
 #include "Nv12Render_Dxva2.h"
-#include "Commonutils.h"
 
 #ifdef _WIN32
 #include <Windows.h>

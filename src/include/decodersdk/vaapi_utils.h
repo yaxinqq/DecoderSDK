@@ -16,10 +16,9 @@ namespace decoder_sdk {
  * @brief 创建一个DRM VADisplay
  *
  * @param fd 输出的文件描述符
- * @param deviceIndex DRM设备索引
  * @return 返回的VADisplay对象
  */
-VADisplay DECODER_SDK_API createDrmVADisplay(int &fd, int deviceIndex);
+VADisplay DECODER_SDK_API createDrmVADisplay(int &fd);
 
 /**
  * @brief 销毁一个DRM VADisplay

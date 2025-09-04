@@ -133,9 +133,10 @@ extern void va_image_init_defaults(VAImage *image);
  * 然后创建VADisplay并进行初始化。支持自动回退到card节点。
  *
  * @param fd 输出参数，返回打开的DRM设备文件描述符
+ * @param deviceIndex DRM设备索引，默认值为0
  * @return VADisplay 成功时返回有效的VADisplay，失败时返回空值
  */
-extern VADisplay createDrmVADisplay(int &fd);
+extern VADisplay createDrmVADisplay(int &fd, int deviceIndex = 0);
 
 /**
  * @brief 销毁DRM后端的VADisplay并关闭相关资源
@@ -171,7 +172,7 @@ extern VADRMPRIMESurfaceDescriptor exportVASurfaceHandle(VADisplay vaDisplay,
  * @param vaSurfaceID 要同步的VA Surface ID
  */
 extern void syncVASurface(VADisplay vaDisplay, VASurfaceID vaSurfaceID);
-}
+} // namespace va_wrapper
 
 INTERNAL_NAMESPACE_END
 DECODER_SDK_NAMESPACE_END

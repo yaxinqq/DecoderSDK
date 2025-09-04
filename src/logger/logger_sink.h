@@ -287,7 +287,7 @@ private:
 #ifdef _WIN32
         localtime_s(&tm, &now_t);
 #else
-        localtime_r(&now_c, &tm);
+        localtime_r(&now_t, &tm);
 #endif
 
         tm.tm_min = 0;
@@ -311,7 +311,7 @@ private:
 #ifdef _WIN32
         localtime_s(&tm, &now_t);
 #else
-        localtime_r(&now_c, &tm);
+        localtime_r(&now_t, &tm);
 #endif
 
         tm.tm_hour = 0;

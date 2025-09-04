@@ -2,7 +2,7 @@
 #define NV12RENDER_DXVA2_H
 #ifdef DXVA2_AVAILABLE
 
-#include "Commonutils.h"
+#include "CommonUtils.h"
 #include "VideoRender.h"
 
 #include <QDebug>

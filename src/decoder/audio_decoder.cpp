@@ -150,7 +150,7 @@ void AudioDecoder::decodeLoop()
                     break;
                 }
             }
-            const auto currentTime = std::chrono::high_resolution_clock::now();
+            const auto currentTime = std::chrono::steady_clock::now();
 
             // 成功接收到一帧，进行处理
             // 检查是否需要重新初始化重采样
@@ -329,8 +329,7 @@ void AudioDecoder::decodeLoop()
                 // 使用同步后的延迟
                 if (utils::greater(baseDelay, 0.0)) {
                     std::this_thread::sleep_until(
-                        currentTime +
-                        std::chrono::milliseconds(static_cast<int64_t>(baseDelay)));
+                        currentTime + std::chrono::milliseconds(static_cast<int64_t>(baseDelay)));
                 }
             }
 

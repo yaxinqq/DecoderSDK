@@ -5,7 +5,7 @@
 #include <Windows.h>
 #endif // WIN32
 
-#include "../Commonutils.h"
+#include "../CommonUtils.h"
 
 namespace {
 const char *vsrc = R"(

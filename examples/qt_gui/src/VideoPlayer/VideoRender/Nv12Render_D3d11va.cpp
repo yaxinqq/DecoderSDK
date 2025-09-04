@@ -1,6 +1,5 @@
 ﻿#ifdef D3D11VA_AVAILABLE
 #include "Nv12Render_D3d11va.h"
-#include "Commonutils.h"
 
 #ifdef _WIN32
 #include <Windows.h>

@@ -4,9 +4,9 @@
 #include "vaapi/vaapi_utils.h"
 
 namespace decoder_sdk {
-VADisplay createDrmVADisplay(int &fd, int deviceIndex)
+VADisplay createDrmVADisplay(int &fd)
 {
-    return internal::va_wrapper::createDrmVADisplay(fd, deviceIndex);
+    return internal::va_wrapper::createDrmVADisplay(fd);
 }
 
 void destoryDrmVADisplay(VADisplay &vaDisplay, int &fd)

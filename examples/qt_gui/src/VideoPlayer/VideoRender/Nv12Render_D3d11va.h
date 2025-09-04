@@ -1,6 +1,6 @@
 #pragma once
 #ifdef D3D11VA_AVAILABLE
-#include "Commonutils.h"
+#include "CommonUtils.h"
 #include "VideoRender.h"
 
 #include <QOpenGLBuffer>
