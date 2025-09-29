@@ -380,9 +380,25 @@ void Demuxer::realTimeStreamDemuxLoop(AVPacket *pkt)
     int readFailedCount = 0;
     const auto maxAccumulatedPacketCount = kAccumulatedPacketCount + preBufferVideoFrames_;
 
-    const auto frameRate = (videoStreamIndex_ != -1)
-                               ? static_cast<int>(av_q2d(formatContext_->streams[videoStreamIndex_]->avg_frame_rate))
-                               : 25;
+    // 默认视频帧率25fps
+    int frameRate = 25;
+    // 视频时间基
+    AVRational videoTimeBase = {0, 1};
+    // 如果有视频流，则尝试获取帧率
+    if (videoStreamIndex_ != -1) {
+        auto *const stream = formatContext_->streams[videoStreamIndex_];
+        if (stream) {
+            if (stream->avg_frame_rate.num > 0 && stream->avg_frame_rate.den > 0) {
+                frameRate = static_cast<int>(av_q2d(stream->avg_frame_rate));
+            } else if (stream->r_frame_rate.num > 0 && stream->r_frame_rate.den > 0) {
+                frameRate = static_cast<int>(av_q2d(stream->r_frame_rate));
+            }
+
+            videoTimeBase = stream->time_base;
+        }
+    }
+    // 对帧率进行合理限制
+    frameRate = std::clamp(frameRate, 10, 240);
 
     // Jitter配置
     JitterDetector::Config jitterConfig;
@@ -394,12 +410,6 @@ void Demuxer::realTimeStreamDemuxLoop(AVPacket *pkt)
     JitterDetector jitterDetector(url_, jitterConfig);
     // 流是否稳定
     bool streamStable = false;
-
-    // 得到视频时间基
-    AVRational videoTimeBase = {0, 1};
-    if (videoStreamIndex_ != -1) {
-        videoTimeBase = formatContext_->streams[videoStreamIndex_]->time_base;
-    }
 
     while (!requestInterruption_.load()) {
         // 实时流不支持seek，清除任何pending的seek请求
@@ -724,9 +734,8 @@ bool Demuxer::openInternal(const std::string &url, const Config &config,
 
     // 设置FFmpeg选项
     AVDictionary *options = nullptr;
-    av_dict_set(&options, "max_delay", "0", 0);
-    av_dict_set(&options, "buffer_size", "1048576", 0); // 1MB缓冲
-    av_dict_set(&options, "analyzeduration", "1000000", 0);
+    av_dict_set(&options, "max_delay", "0.0", 0);
+    av_dict_set(&options, "buffer_size", "10000000", 0);
 
     if (isRealTime) {
         av_dict_set(&options, "rtsp_transport",

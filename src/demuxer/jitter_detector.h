@@ -19,14 +19,15 @@ INTERNAL_NAMESPACE_BEGIN
 class JitterDetector {
 public:
     struct Config {
-        int64_t fallbackIntervalMs = 40; // 当DTS不可用时的fallback间隔（毫秒），默认40ms（约25fps）
+        int64_t fallbackIntervalMs = 40;    // 当PTS不可用时的fallback间隔（毫秒），默认40ms（约25fps）
         double stabilityThresholdMs = 20.0; // 稳定性判断阈值（毫秒），默认20ms
         size_t stabilityWindowSize = 30;    // 稳定性判断窗口大小，默认30个包
+        int64_t stabilityTimeoutMs = 5000;  // 稳定性检测超时时间（毫秒），默认5秒
 
         // 丢包策略相关参数
         bool enableDropLatePacket = true;    // 是否启用延迟包丢弃策略
         int64_t dropJitterThreshold = 200;   // 丢包抖动阈值（毫秒），默认200ms
-        int64_t dropIntervalThreshold = 5;   // 丢包间隔阈值（毫秒），默认10ms
+        int64_t dropIntervalThreshold = 5;   // 丢包间隔阈值（毫秒），默认5ms
         size_t consecutiveAbnormalCount = 4; // 连续异常包数量阈值，默认4个
     };
 
@@ -80,12 +81,12 @@ private:
 
 private:
     /**
-     * @brief 计算期望间隔（基于DTS差值）
-     * @param currentDts 当前包的DTS
+     * @brief 计算期望间隔（基于PTS差值）
+     * @param currentPts 当前包的PTS
      * @param timeBase 时间基准
      * @return 期望间隔（毫秒），如果无法计算则返回-1
      */
-    int64_t calculateExpectedInterval(int64_t currentDts, AVRational timeBase) const;
+    int64_t calculateExpectedInterval(int64_t currentPts, AVRational timeBase) const;
 
     /**
      * @brief 检查流稳定性（基于固定窗口的平均jitter算法）
@@ -111,7 +112,7 @@ private:
     // 时间记录
     std::chrono::steady_clock::time_point lastArrivalTime_;    // 上次包到达时间
     std::chrono::steady_clock::time_point stabilityStartTime_; // 开始判稳的时间
-    int64_t lastDts_;                                          // 上次包的DTS
+    int64_t lastPts_;                                          // 上次包的PTS
     bool hasFirstPacket_;                                      // 是否已收到第一个包
 
     // Jitter计算
