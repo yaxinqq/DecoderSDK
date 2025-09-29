@@ -387,7 +387,7 @@ void Frame::setSampleFormat(AVSampleFormat fmt)
         frame_->format = fmt;
 }
 
-#if LIBAVUTIL_VERSION_MAJOR >= 57
+#if LIBAVUTIL_VERSION_INT >= AV_VERSION_INT(57, 28, 100) // FFmpeg 5.1+
 AVChannelLayout Frame::channelLayout() const
 {
     return frame_ ? frame_->ch_layout : AVChannelLayout{};
@@ -420,7 +420,7 @@ void Frame::setChannels(int ch)
 
 int Frame::channels() const
 {
-#if LIBAVUTIL_VERSION_MAJOR >= 57
+#if LIBAVUTIL_VERSION_INT >= AV_VERSION_INT(57, 28, 100) // FFmpeg 5.1+
     return frame_ ? frame_->ch_layout.nb_channels : 0;
 #else
     return frame_ ? frame_->channels : 0;

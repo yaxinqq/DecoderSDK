@@ -617,7 +617,7 @@ bool AudioDecoder::convertAudioFormat(Frame &frame, AVSampleFormat targetFormat)
 
     const AVSampleFormat srcFormat = static_cast<AVSampleFormat>(avFrame->format);
     const int sampleRate = frame.sampleRate();
-#if LIBAVUTIL_VERSION_MAJOR >= 57
+#if LIBAVUTIL_VERSION_INT >= AV_VERSION_INT(57, 28, 100) // FFmpeg 5.1+
     const int channels = frame.channelLayout().nb_channels;
 #else
     const int channels = frame.channels();
@@ -645,7 +645,7 @@ bool AudioDecoder::convertAudioFormat(Frame &frame, AVSampleFormat targetFormat)
     // 检查是否需要重新配置输出帧
     bool needReconfig = (formatConvertFrame_.get()->format != targetFormat) ||
                         (formatConvertFrame_.sampleRate() != sampleRate) ||
-#if LIBAVUTIL_VERSION_MAJOR >= 57
+#if LIBAVUTIL_VERSION_INT >= AV_VERSION_INT(57, 28, 100) // FFmpeg 5.1+
                         formatConvertFrame_.channelLayout().nb_channels != channels;
 #else
                         formatConvertFrame_.channels() != channels;

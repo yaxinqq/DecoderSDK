@@ -353,7 +353,7 @@ public:
     void setSampleFormat(AVSampleFormat fmt);
 
     // 声道布局（新版FFmpeg）
-#if LIBAVUTIL_VERSION_MAJOR >= 57
+#if LIBAVUTIL_VERSION_INT >= AV_VERSION_INT(57, 28, 100) // FFmpeg 5.1+
     /**
      * @brief 获得声道布局
      * @return AVChannelLayout 声道布局
