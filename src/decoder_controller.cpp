@@ -61,6 +61,12 @@ DecoderController::~DecoderController()
     cancelAsyncOpen();
     close();
 
+    // 等待异步处理线程结束
+    if (eventDispatcher_->isAsyncProcessingActive()) {
+        LOG_DEBUG("Waiting for async processing thread to join");
+        eventDispatcher_->stopAsyncProcessing();
+    }
+
     avformat_network_deinit();
     LOG_INFO("DecoderController destroyed");
 }
