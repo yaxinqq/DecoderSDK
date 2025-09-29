@@ -339,6 +339,33 @@ std::string rtspTransport2Str(Config::RtspTransport transport)
     }
     return "tcp";
 }
+
+bool isValidPacket(const AVPacket *const pkt)
+{
+    if (!pkt) {
+        return false;
+    }
+
+    // 有长度时必须有数据
+    if (pkt->size > 0 && !pkt->data) {
+        return false;
+    }
+
+    // 时间戳检查（避免溢出）
+    if (pkt->pts != AV_NOPTS_VALUE && pkt->pts >= INT64_MAX) {
+        return false;
+    }
+    if (pkt->dts != AV_NOPTS_VALUE && pkt->dts >= INT64_MAX) {
+        return false;
+    }
+
+    // 数据包是否标记为损坏
+    if (pkt->flags & AV_PKT_FLAG_CORRUPT) {
+        return false;
+    }
+
+    return true;
+}
 } // namespace utils
 
 INTERNAL_NAMESPACE_END

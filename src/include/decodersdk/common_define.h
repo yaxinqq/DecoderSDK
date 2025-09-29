@@ -445,6 +445,12 @@ struct Config {
         kUdpMulticast, // udp多播
     };
 
+    // 实时流模式
+    enum class RealTimeStreamMode : uint8_t {
+        kRealTimePriority, // 实时优先
+        kQualityPriority,  // 质量优先
+    };
+
     // 是否开启帧率控制
     bool enableFrameRateControl = true;
     // 播放速度
@@ -502,6 +508,9 @@ struct Config {
 
     // 是否解析用户自定义的SEI数据
     bool enableParseUserSEIData = true;
+
+    // 实时流模式
+    RealTimeStreamMode realTimeStreamMode = RealTimeStreamMode::kRealTimePriority;
 };
 
 // 预缓冲状态

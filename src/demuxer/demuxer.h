@@ -205,15 +205,13 @@ private:
     /**
      * @brief 读取并处理数据包
      * @param pkt 数据包
-     * @param occuredErrorTime 出错时间
      * @param readFirstPacket 是否已读取首包引用
+     * @param readFailedCount 读取失败次数
      * @param isEof 是否已经处理过eof
      * @return 读取结果：0=成功，1=EOF，-1=错误需要继续，-2=严重错误需要退出
      */
-    int readAndProcessPacket(
-        AVPacket *pkt,
-        std::optional<std::chrono::high_resolution_clock::time_point> &occuredErrorTime,
-        bool &readFirstPacket, bool isEof = false);
+    int readAndProcessPacket(AVPacket *pkt, bool &readFirstPacket, int &readFailedCount,
+                             bool isEof = false);
 
     /**
      * @brief 检查预缓冲状态
@@ -244,10 +242,9 @@ private:
     /**
      * @brief 处理读取错误
      * @param occuredErrorTime 出错时间s
-     * @return 处理结果：-1=需要继续，-2=严重错误
+     * @return 处理结果：-2=严重错误
      */
-    int handleReadError(
-        std::optional<std::chrono::high_resolution_clock::time_point> &occuredErrorTime);
+    int handleReadError();
 
     /**
      * @brief 处理seek请求
@@ -328,6 +325,9 @@ private:
     bool preBufferEnabled_{false};
     bool preBufferReady_{false};
     std::function<void()> preBufferReadyCallback_;
+
+    // 实时流的模式
+    Config::RealTimeStreamMode realTimeStreamMode_ = Config::RealTimeStreamMode::kRealTimePriority;
 
     // 循环播放相关成员变量
     std::atomic<LoopMode> loopMode_{LoopMode::kNone};

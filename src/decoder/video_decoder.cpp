@@ -25,6 +25,22 @@ const std::string kVideoDecoderName = "Video Decoder";
 // 硬解出错，降级到软解的容忍时间
 constexpr int kDefaultFallbackToleranceTime = 2000; // 单位：毫秒
 
+bool frameIsKey(const Frame &frame)
+{
+    if (!frame.isValid())
+        return false;
+
+#if LIBAVUTIL_VERSION_MAJOR >= 58
+    if (frame.get()->flags & AV_FRAME_FLAG_KEY) {
+#else
+    if (frame.get()->key_frame == 1) {
+#endif
+        return true;
+    }
+
+    return false;
+}
+
 /**
  * @brief 获取合法的H264 profile列表
  * @return 合法的H264 profile列表
@@ -560,8 +576,7 @@ void VideoDecoder::decodeLoop()
         bool gotPacket = packetQueue->pop(packet, 1);
         if (!gotPacket) {
             // 没有包可用，可能是队列为空或已中止
-            if (packetQueue->isAborted())
-                break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
             continue;
         }
 
@@ -570,7 +585,8 @@ void VideoDecoder::decodeLoop()
             continue;
 
         // 等待关键帧
-        if (!hasKeyFrame && (packet.get()->flags & AV_PKT_FLAG_KEY) == 0) {
+        const bool isKeyFrame = (packet.get()->flags & AV_PKT_FLAG_KEY) != 0;
+        if (!hasKeyFrame && !isKeyFrame) {
             continue;
         }
         hasKeyFrame = true;
@@ -594,11 +610,8 @@ void VideoDecoder::decodeLoop()
              hwAccel_->getType() == HWAccelType::kVaapi) &&
             needFixSPSProfile_) {
             if (isAnnexBFormat(packet.get()->data, packet.get()->size)) {
-                // 检查是否是IDR帧（关键帧）
-                bool isIDRFrame = (packet.get()->flags & AV_PKT_FLAG_KEY) != 0;
-
                 // 如果是关键帧，检查并修正SPS profile
-                if (isIDRFrame) {
+                if (isKeyFrame) {
                     fixAnnexBSPSProfileInPacket(packet.get());
                 }
             }
@@ -606,10 +619,23 @@ void VideoDecoder::decodeLoop()
 
         // 发送包到解码器
         int ret = avcodec_send_packet(codecCtx_, packet.get());
-        if (ret < 0 && ret != AVERROR(EAGAIN) && ret != AVERROR_EOF) {
+        if (ret != 0) {
             // 记录出错的信息
             LOG_WARN("{} send packet error, error code: {}, error string: {}", demuxer_->url(), ret,
                      utils::avErr2Str(ret));
+
+            // 如果出错的是I帧，则等待下一个I帧恢复正常
+            if (isKeyFrame) {
+                // 处理关键帧错误
+                handleKeyFrameError(hasKeyFrame,
+                                    "Key frame decode failed, waiting for next key frame");
+                continue;
+            }
+
+            // 如果是EAGAIN或EOF错误，继续等待下一个包
+            if (ret == AVERROR(EAGAIN) || ret == AVERROR(EOF)) {
+                continue; // 继续
+            }
 
             // 判断是否需要退化到软解
             if (readFirstFrame || !shouldFallbackToSoftware(ret))
@@ -644,8 +670,8 @@ void VideoDecoder::decodeLoop()
         // 循环接收所有可能的解码帧
         while (true) {
             ret = avcodec_receive_frame(codecCtx_, frame.get());
-            if (ret < 0) {
-                if (ret == AVERROR(EAGAIN)) {
+            if (ret != 0) {
+                if (ret == AVERROR(EAGAIN) || ret == AVERROR(EOF)) {
                     // 需要更多输入数据，跳出内层循环继续读取packet
                     break;
                 } else {
@@ -653,11 +679,31 @@ void VideoDecoder::decodeLoop()
                     if (handleDecodeError(kVideoDecoderName, MediaType::kMediaTypeVideo, ret,
                                           "Decoder error: ")) {
                         occuredError = true;
+
+                        // 如果是I帧，等待下一个I帧过来
+                        if (frameIsKey(frame)) {
+                            handleKeyFrameError(
+                                hasKeyFrame, "Key frame decode failed, waiting for next key frame");
+                        }
                     }
                     break;
                 }
             }
-            const auto currentTime = std::chrono::steady_clock::now();
+
+            // 出现坏包，跳过
+            if (auto *const avFrame = frame.get(); !avFrame ||
+                                                   (avFrame->flags & AV_FRAME_FLAG_CORRUPT) != 0 ||
+                                                   avFrame->decode_error_flags != 0) {
+                // 提示坏包
+                LOG_WARN("{} Frame decode corrupt", demuxer_->url());
+
+                // 如果是I帧，等待下一个I帧过来
+                if (frameIsKey(frame)) {
+                    handleKeyFrameError(hasKeyFrame,
+                                        "Key frame decode failed, waiting for next key frame");
+                }
+                break;
+            }
 
             // 成功接收到一帧，进行处理
             // 计算帧持续时间(单位 s)
@@ -734,6 +780,7 @@ void VideoDecoder::decodeLoop()
 
             // 如果启用了帧率控制，则根据帧率控制推送速度
             if (isFrameRateControlEnabled()) {
+                const auto currentTime = std::chrono::steady_clock::now();
                 const auto durationMs = duration * 1000;
 
                 const double baseDelay =
@@ -1034,6 +1081,15 @@ double VideoDecoder::calculateFrameDuration(const Frame &frame, double defaultDu
      }*/
 
     return defaultDuration;
+}
+
+void VideoDecoder::handleKeyFrameError(bool &hasKeyFrame, const std::string &errorString)
+{
+    // 丢弃整个GOP：清空解码器缓冲区
+    avcodec_flush_buffers(codecCtx_);
+    // 等待下一个关键帧到来
+    hasKeyFrame = false;
+    LOG_WARN("{}, url: {}", errorString, demuxer_->url());
 }
 
 INTERNAL_NAMESPACE_END

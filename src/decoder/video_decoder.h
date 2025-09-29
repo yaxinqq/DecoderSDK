@@ -106,6 +106,12 @@ private:
      */
     double calculateFrameDuration(const Frame &frame, double defaultDuration) const;
 
+    /*
+     * @brief 处理关键帧错误
+     * 当硬解解码到关键帧失败时，会调用此函数
+     */
+    void handleKeyFrameError(bool &hasKeyFrame, const std::string &errorString);
+
 private:
     // 硬件加速器
     std::shared_ptr<HardwareAccel> hwAccel_;

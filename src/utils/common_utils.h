@@ -4,6 +4,7 @@
 #include <string>
 
 extern "C" {
+#include <libavcodec/packet.h>
 #include <libavutil/avutil.h>
 #include <libavutil/pixfmt.h>
 #include <libavutil/samplefmt.h>
@@ -64,6 +65,9 @@ AVMediaType mediaType2AVMediaType(MediaType type);
 
 // RtspTransport 转为字符串
 std::string rtspTransport2Str(Config::RtspTransport transport);
+
+// 传入的AVPacket是否是有效的
+bool isValidPacket(const AVPacket *const pkt);
 
 // 原子变量更新函数
 template <typename T>

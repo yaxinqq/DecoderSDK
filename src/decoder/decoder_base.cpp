@@ -207,7 +207,7 @@ bool DecoderBase::handleFirstFrame(const std::string &decoderName, MediaType med
 bool DecoderBase::handleDecodeError(const std::string &decoderName, MediaType mediaType,
                                     int errorCode, const std::string &description)
 {
-    if (errorCode == AVERROR_EOF || errorCode == AVERROR(EAGAIN))
+    if (errorCode == AVERROR(EOF) || errorCode == AVERROR(EAGAIN))
         return false;
 
     statistics_.errorsCount.fetch_add(1);
@@ -254,7 +254,7 @@ double DecoderBase::calculateFrameDisplayTime(
     // 首次调用，初始化
     if (!lastFrameTime.has_value()) {
         lastFrameTime = currentTime;
-        return 0.0;
+        return duration;
     }
 
     // 基于帧率计算理论帧间隔，并考虑播放速度
