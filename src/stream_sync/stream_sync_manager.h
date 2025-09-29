@@ -6,6 +6,7 @@
 
 #include "base/base_define.h"
 #include "clock.h"
+#include "external_clock.h"
 #include "include/decodersdk/common_define.h"
 
 DECODER_SDK_NAMESPACE_BEGIN
@@ -82,15 +83,20 @@ public:
      */
     void updateVideoClock(double pts, uint64_t serial = 0);
     /**
-     * @brief 更新外部时钟
-     * @param pts 时间戳
-     * @param serial 序列号
-     */
-    void updateExternalClock(double pts, uint64_t serial = 0);
-    /**
-     * @brief 重置所有时钟
+     * @brief 重置音视频时钟
      */
     void resetClocks();
+
+    /**
+     * @brief 跳转外部时钟到某个时间点
+     * @param pts 目标时间点（秒）
+     */
+    void externalClockSeekTo(double pts);
+    /**
+     * @brief 设置外部时钟是否暂停
+     * @param paused 是否暂停
+     */
+    void externalClockSetPaused(bool paused);
 
     /**
      * @brief 计算视频延迟
@@ -170,7 +176,7 @@ private:
     std::atomic<ClockType> master_; // 主时钟类型
     Clock audioClock_;              // 音频时钟
     Clock videoClock_;              // 视频时钟
-    Clock externalClock_;           // 外部时钟
+    ExternalClock externalClock_;   // 外部时钟
 
     // 同步参数
     std::atomic<double> syncThreshold_{0.0}; // 音视频同步阈值

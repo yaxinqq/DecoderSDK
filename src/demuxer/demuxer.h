@@ -15,6 +15,7 @@ extern "C" {
 #include "base/packet.h"
 #include "event_system/event_dispatcher.h"
 #include "recorder/real_time_stream_recorder.h"
+#include "stream_sync/stream_sync_manager.h"
 
 DECODER_SDK_NAMESPACE_BEGIN
 INTERNAL_NAMESPACE_BEGIN
@@ -25,7 +26,8 @@ public:
      * @brief 构造函数
      * @param eventDispatcher 事件分发器
      */
-    explicit Demuxer(std::shared_ptr<EventDispatcher> eventDispatcher);
+    explicit Demuxer(std::shared_ptr<EventDispatcher> eventDispatcher,
+                     std::shared_ptr<StreamSyncManager> streamSyncManager);
     /**
      * @brief 析构函数
      */
@@ -316,6 +318,8 @@ private:
 
     // 事件分发器
     std::shared_ptr<EventDispatcher> eventDispatcher_;
+    // 时间同步器
+    std::shared_ptr<StreamSyncManager> streamSyncManager_;
 
     // 预缓冲配置
     uint32_t preBufferVideoFrames_ = 0;

@@ -13,7 +13,7 @@ INTERNAL_NAMESPACE_BEGIN
 DecoderController::DecoderController()
     : eventDispatcher_(std::make_shared<EventDispatcher>()),
       syncController_(std::make_shared<StreamSyncManager>()),
-      demuxer_(std::make_shared<Demuxer>(eventDispatcher_)),
+      demuxer_(std::make_shared<Demuxer>(eventDispatcher_, syncController_)),
       asyncOpenInProgress_(false),
       shouldCancelAsyncOpen_(false)
 {
@@ -824,8 +824,9 @@ bool DecoderController::startDecodeInternal()
         syncController_->setMaster(ClockType::kAudio);
         LOG_DEBUG("Master clock set to audio");
     } else if (demuxer_->hasVideo() && videoDecoder_) {
-        syncController_->setMaster(ClockType::kVideo);
-        LOG_DEBUG("Master clock set to video");
+        // 只有视频时，适用外部时钟
+        syncController_->setMaster(ClockType::kExternal);
+        LOG_DEBUG("Master clock set to external");
     }
 
     // 如果启用了预缓冲，设置等待状态

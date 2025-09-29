@@ -67,7 +67,7 @@ StreamSyncManager::StreamSyncManager(ClockType master, double syncThreshold, dou
 {
     videoClock_.init(0);
     audioClock_.init(0);
-    externalClock_.init(0);
+    externalClock_.reset();
     adaptiveThreshold_.store(syncThreshold);
 }
 
@@ -96,7 +96,7 @@ void StreamSyncManager::setSpeed(double speed)
 {
     audioClock_.setClockSpeed(speed);
     videoClock_.setClockSpeed(speed);
-    externalClock_.setClockSpeed(speed);
+    externalClock_.setSpeed(speed);
 }
 
 void StreamSyncManager::updateAudioClock(double pts, uint64_t serial)
@@ -111,16 +111,10 @@ void StreamSyncManager::updateVideoClock(double pts, uint64_t serial)
     videoClock_.calibrate();
 }
 
-void StreamSyncManager::updateExternalClock(double pts, uint64_t serial)
-{
-    externalClock_.setClock(pts, serial);
-}
-
 void StreamSyncManager::resetClocks()
 {
     audioClock_.reset();
     videoClock_.reset();
-    externalClock_.reset();
 
     // 重置统计信息
     smoothedVideoDrift_.store(0.0, std::memory_order_release);
@@ -130,62 +124,43 @@ void StreamSyncManager::resetClocks()
     syncQualityCounter_.store(0, std::memory_order_release);
 }
 
+void StreamSyncManager::externalClockSeekTo(double pts)
+{
+    externalClock_.seekTo(pts);
+}
+
+void StreamSyncManager::externalClockSetPaused(bool paused)
+{
+    externalClock_.setPaused(paused);
+}
+
 double StreamSyncManager::computeVideoDelay(double framePts, double frameDuration, double baseDelay,
                                             double speed)
 {
+    // 主时钟
     double master = getMasterClock();
-    double diff = framePts - master;
+    double diff = framePts - master; // PTS 与主时钟的差值 (秒)
 
-    // EMA平滑
-    double prevDrift = smoothedVideoDrift_.load(std::memory_order_acquire);
-    double newDrift = smoothEMA(alpha_.load(), prevDrift, diff, speed, 0.1);
-    smoothedVideoDrift_.store(newDrift, std::memory_order_release);
+    // 默认延迟
+    double delay = 0.0;
 
-    // 自适应阈值
-    double threshold = adaptiveSync_.load() ? computeAdaptiveThreshold() : syncThreshold_.load();
-    threshold /= speed;
+    // 偏差阈值，避免过度抖动
+    double threshold = syncThreshold_.load() / speed;
 
-    // 更新同步质量
-    // updateSyncQuality(std::abs(newDrift));
-
-    // 改进的丢帧判断
-    if (newDrift < -threshold) {
-        // 检查是否应该丢帧
-        if (shouldDropFrame(framePts, frameDuration)) {
-            droppedFrames_.fetch_add(1, std::memory_order_acq_rel);
-            LOG_DEBUG("Dropping frame, drift: {:.3f}ms, threshold: {:.3f}ms", newDrift * 1000,
-                      threshold * 1000);
-            return -1.0;
-        }
-    }
-
-    // 计算延迟，平衡处理超前和滞后情况
-    double delay = baseDelay;
-    if (std::abs(newDrift) > threshold) {
-        if (newDrift > 0) {
-            // 视频超前，增加延迟，考虑速度因素
-            delay += newDrift * 1000.0 / speed;
+    if (std::abs(diff) > threshold) {
+        if (diff > 0) {
+            // 视频比音频超前 -> 延长等待
+            delay += diff * 1000.0 / speed;
         } else {
-            // 视频滞后，根据速度更积极地减少延迟
-            double factor = std::min(1.0, 0.5 * speed); // 速度越快，减少越多
-            delay = std::max(0.0, delay + newDrift * 1000.0 * factor);
-        }
-
-        // 检查是否需要重复帧
-        if (newDrift > threshold && shouldDuplicateFrame(framePts, frameDuration)) {
-            duplicatedFrames_.fetch_add(1, std::memory_order_acq_rel);
+            // 视频比音频落后 -> 减少等待
+            delay = std::max(0.0, delay + diff * 1000.0);
         }
     }
 
-    // 更新平均延迟统计
-    double prevAvg = avgVideoDelay_.load(std::memory_order_acquire);
-    double newAvg = prevAvg * 0.95 + delay * 0.05;
-    avgVideoDelay_.store(newAvg, std::memory_order_release);
+   /* LOG_INFO("frame pts: {}, master: {}, diff: {}, baseDelay: {}, finalDelay: {}", framePts,
+       master, diff, baseDelay, delay);*/
 
-    /*LOG_INFO("frame pts: {}, master clock: {}, frameDuration: {}, newDrift: {}, base delay: {},
-       delay: {}", framePts, master, frameDuration, newDrift, baseDelay, delay);*/
-
-    return std::max(0.0, delay);
+    return delay; // 单位: 毫秒
 }
 
 bool StreamSyncManager::shouldDropFrame(double framePts, double frameDuration) const

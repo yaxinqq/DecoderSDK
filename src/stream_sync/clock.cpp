@@ -42,16 +42,18 @@ double Clock::getClock() const
     const double drift = ptsDrift_.load(std::memory_order_acquire);
     const double speed = speed_.load(std::memory_order_acquire);
 
-    // 时钟计算公式
-    const double elapsed = (currentTime - lastUpdate) * speed;
-    return drift + currentTime + elapsed;
+    // 时钟计算公式：基准PTS + 经过时间 * 播放速度
+    // 时钟计算公式：drift + currentTime + 速度调整的时间差
+    // 基准时钟值 + 速度调整
+    const double baseClock = drift + currentTime;
+    const double speedAdjustment = (speed - 1.0) * (currentTime - lastUpdate);
+
+    return baseClock + speedAdjustment;
 }
 
 void Clock::setClock(double pts, uint64_t serial)
 {
     const double currentTime = getCurrentSystemTime();
-
-    // 限制漂移范围，防止漂移过大
     const double drift = pts - currentTime;
 
     pts_.store(pts, std::memory_order_release);

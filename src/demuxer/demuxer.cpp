@@ -19,8 +19,10 @@ constexpr int kReadErrorMaxInterval = 3;
 DECODER_SDK_NAMESPACE_BEGIN
 INTERNAL_NAMESPACE_BEGIN
 
-Demuxer::Demuxer(std::shared_ptr<EventDispatcher> eventDispatcher)
+Demuxer::Demuxer(std::shared_ptr<EventDispatcher> eventDispatcher,
+                 std::shared_ptr<StreamSyncManager> streamSyncManager)
     : eventDispatcher_(eventDispatcher),
+      streamSyncManager_(streamSyncManager),
       realTimeStreamRecorder_(std::make_unique<RealTimeStreamRecorder>(eventDispatcher)),
       loopMode_(LoopMode::kNone),
       maxLoops_(-1),
@@ -619,6 +621,9 @@ bool Demuxer::handleSeekRequest()
         audioPacketQueue_->flush();
     }
 
+    // 更新外部时钟
+    streamSyncManager_->externalClockSeekTo(seekMsPosition * 0.001);
+
     LOG_INFO("{} seek completed to position: {:.2f}s", url_, position);
     return true;
 }
@@ -656,6 +661,10 @@ bool Demuxer::openInternal(const std::string &url, const Config &config,
         av_dict_set(&options, "fflags", "nobuffer", 0);
         av_dict_set(&options, "stimeout", "2000000", 0);
     }
+
+    // 开启外部时钟
+    streamSyncManager_->externalClockSeekTo(0.0);
+    streamSyncManager_->externalClockSetPaused(isPaused_.load());
 
     // 打开输入
     int ret = avformat_open_input(&formatContext_, url.c_str(), nullptr, &options);
