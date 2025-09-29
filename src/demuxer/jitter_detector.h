@@ -14,7 +14,7 @@ INTERNAL_NAMESPACE_BEGIN
 
 /**
  * @brief 轻量级Jitter检测器，该类只能在Demuxer中使用。并且不加锁，Demuxer中使用时需注意此问题
- * 基于DTS差值与实际到达间隔的对比来检测网络抖动
+ * 基于PTS差值与实际到达间隔的对比来检测网络抖动
  */
 class JitterDetector {
 public:
@@ -23,10 +23,10 @@ public:
         double stabilityThresholdMs = 20.0; // 稳定性判断阈值（毫秒），默认20ms
         size_t stabilityWindowSize = 30;    // 稳定性判断窗口大小，默认30个包
 
-        // 丢包策略相关参数 - 暂未启用
-        bool enableDropLatePacket = false;   // 是否启用延迟包丢弃策略
+        // 丢包策略相关参数
+        bool enableDropLatePacket = true;    // 是否启用延迟包丢弃策略
         int64_t dropJitterThreshold = 200;   // 丢包抖动阈值（毫秒），默认200ms
-        int64_t dropIntervalThreshold = 10;  // 丢包间隔阈值（毫秒），默认10ms
+        int64_t dropIntervalThreshold = 5;   // 丢包间隔阈值（毫秒），默认10ms
         size_t consecutiveAbnormalCount = 4; // 连续异常包数量阈值，默认4个
     };
 
@@ -88,9 +88,11 @@ private:
     int64_t calculateExpectedInterval(int64_t currentDts, AVRational timeBase) const;
 
     /**
-     * @brief 检查流稳定性（基于RFC3550 jitter算法）
+     * @brief 检查流稳定性（基于固定窗口的平均jitter算法）
+     *
+     * @param jitter 当前抖动值（毫秒）
      */
-    void checkStreamStability();
+    void checkStreamStability(int64_t jitter);
 
     /**
      * @brief 检查是否需要丢包
@@ -113,13 +115,13 @@ private:
     bool hasFirstPacket_;                                      // 是否已收到第一个包
 
     // Jitter计算
-    double averageJitter_;  // 平均Jitter估计值（毫秒）
-    int64_t instantJitter_; // 最近一次Δt偏差（毫秒）
+    int64_t instantJitter_; // 最近一次jitter值（毫秒）
     int64_t maxJitter_;     // 统计窗口内最大Jitter值
 
-    // 稳定性检测
-    bool streamStable_;       // 流是否稳定
-    bool stabilityCompleted_; // 稳定性检测是否完成
+    // 稳定性检测 - 使用固定窗口收集jitter样本
+    std::deque<int64_t> recentJitters_; // 最近的jitter值队列，用于稳定性判断
+    bool streamStable_;                 // 流是否稳定
+    bool stabilityCompleted_;           // 稳定性检测是否完成
 
     // 丢包策略相关
     std::deque<int64_t> recentAbnormalIntervals_; // 最近的异常间隔队列

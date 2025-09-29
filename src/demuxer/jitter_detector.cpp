@@ -13,7 +13,6 @@ JitterDetector::JitterDetector(const std::string &url, const Config config)
     : config_(config),
       lastDts_(AV_NOPTS_VALUE),
       hasFirstPacket_(false),
-      averageJitter_(0.0),
       instantJitter_(0),
       maxJitter_(0),
       streamStable_(false),
@@ -33,7 +32,7 @@ void JitterDetector::processPacket(const AVPacket *const packet, const AVRationa
     }
 
     const auto currentTime = std::chrono::steady_clock::now();
-    const int64_t currentDts = packet->dts;
+    const int64_t currentDts = packet->pts;
 
     if (!hasFirstPacket_) {
         // 第一个包，只记录时间和DTS
@@ -43,7 +42,6 @@ void JitterDetector::processPacket(const AVPacket *const packet, const AVRationa
         hasFirstPacket_ = true;
         packetCount_ = 1;
         // 初始化Jitter值
-        averageJitter_ = 0.0;
         instantJitter_ = 0;
         dropDecision.shouldDrop = false;
         return;
@@ -62,25 +60,20 @@ void JitterDetector::processPacket(const AVPacket *const packet, const AVRationa
         expectedInterval = config_.fallbackIntervalMs;
     }
 
-    // 计算传输间隔差异 D(i-1,i) = (t_arrival(i) - t_arrival(i-1)) - (t_expected(i) -
-    // t_expected(i-1))
-    const int64_t D = actualInterval - expectedInterval;
+    // 计算jitter = 实际间隔 - 期望间隔
+    const int64_t jitter = actualInterval - expectedInterval;
 
-    // 更新瞬时Jitter（最近一次Δt偏差）
-    instantJitter_ = std::abs(D);
-
-    // 使用算法更新平均Jitter估计
-    // J = J + (|D(i-1,i)| - J) / 16
-    averageJitter_ = averageJitter_ + (static_cast<double>(D) - averageJitter_) / 16.0;
+    // 更新瞬时Jitter（绝对值）
+    instantJitter_ = std::abs(jitter);
 
     // 更新最大Jitter值
     maxJitter_ = std::max(maxJitter_, instantJitter_);
 
     // 检查流稳定性
-    checkStreamStability();
+    checkStreamStability(instantJitter_);
 
     // 检查丢包决策
-    dropDecision = checkDropDecision(packet, D, actualInterval);
+    dropDecision = checkDropDecision(packet, jitter, actualInterval);
 
     // 更新状态
     lastArrivalTime_ = currentTime;
@@ -100,7 +93,6 @@ void JitterDetector::reset(const std::optional<Config> config)
 
     lastDts_ = AV_NOPTS_VALUE;
     hasFirstPacket_ = false;
-    averageJitter_ = 0.0;
     instantJitter_ = 0;
     maxJitter_ = 0;
     streamStable_ = false;
@@ -109,6 +101,7 @@ void JitterDetector::reset(const std::optional<Config> config)
     droppedPacketCount_ = 0;
 
     // 清空队列
+    recentJitters_.clear();
     recentAbnormalIntervals_.clear();
 }
 
@@ -128,55 +121,48 @@ bool JitterDetector::isStreamStable() const
     return false;
 }
 
-void JitterDetector::checkStreamStability()
+void JitterDetector::checkStreamStability(int64_t jitter)
 {
-    // 需要收集足够的样本才开始判断稳定性
-    if (packetCount_ < config_.stabilityWindowSize) {
+    // 如果稳定性检测已完成，不再重复检测
+    if (stabilityCompleted_) {
         return;
     }
 
-    // 使用的averageJitter_进行稳定性判断
-    if (std::abs(averageJitter_) <= config_.stabilityThresholdMs) {
-        // 当前稳定
-        if (!streamStable_) {
-            // 从不稳定变为稳定
-            streamStable_ = true;
-            stabilityCompleted_ = true;
+    // 收集jitter样本到固定大小的窗口中
+    if (recentJitters_.size() < config_.stabilityWindowSize) {
+        recentJitters_.push_back(jitter);
 
-            const auto currentTime = std::chrono::steady_clock::now();
-            const auto elapsedTime = std::chrono::duration_cast<std::chrono::milliseconds>(
-                                         currentTime - stabilityStartTime_)
-                                         .count();
-
-            LOG_DEBUG(
-                "JitterDetector: Stream became stable. average jitter: {:.2f}ms, Packets: {}, "
-                "Time elapsed: {}ms, url: {}",
-                averageJitter_, packetCount_, elapsedTime, url_);
+        // 如果样本数量还不够，继续收集
+        if (recentJitters_.size() < config_.stabilityWindowSize) {
+            return;
         }
+    }
+
+    // 当窗口满了，计算平均jitter
+    double avgJitter =
+        std::accumulate(recentJitters_.begin(), recentJitters_.end(), 0.0) / recentJitters_.size();
+
+    if (avgJitter > config_.stabilityThresholdMs) {
+        // 平均jitter超过阈值，移除最老的样本，继续收集
+        recentJitters_.pop_front();
+        LOG_INFO(
+            "JitterDetector: Stream unstable, average jitter: {:.2f}ms > {:.2f}ms, continuing "
+            "detection, url: {}",
+            avgJitter, config_.stabilityThresholdMs, url_);
     } else {
-        // 当前不稳定
-        if (streamStable_) {
-            LOG_DEBUG(
-                "JitterDetector: Stream became unstable. average jitter: {:.2f}ms > "
-                "{:.2f}ms, "
-                "restarting stability detection, url: {}",
-                averageJitter_, config_.stabilityThresholdMs, url_);
+        // 平均jitter在阈值内，流稳定
+        streamStable_ = true;
+        stabilityCompleted_ = true;
 
-            // 从稳定变为不稳定，重新开始检测
-            streamStable_ = false;
-            stabilityCompleted_ = false;
-            stabilityStartTime_ = std::chrono::steady_clock::now();
+        const auto currentTime = std::chrono::steady_clock::now();
+        const auto elapsedTime =
+            std::chrono::duration_cast<std::chrono::milliseconds>(currentTime - stabilityStartTime_)
+                .count();
 
-            packetCount_ = 0;
-            averageJitter_ = 0.0;
-            hasFirstPacket_ = false;
-        } else {
-            // 继续不稳定
-            LOG_TRACE(
-                "JitterDetector: Stream unstable, average jitter: {:.2f}ms > {:.2f}ms, continuing "
-                "detection, url: {}",
-                averageJitter_, config_.stabilityThresholdMs, url_);
-        }
+        LOG_INFO(
+            "JitterDetector: Stream became stable. average jitter: {:.2f}ms, Packets: {}, "
+            "Time elapsed: {}ms, url: {}",
+            avgJitter, packetCount_, elapsedTime, url_);
     }
 }
 
@@ -202,23 +188,39 @@ JitterDetector::DropDecision JitterDetector::checkDropDecision(const AVPacket *c
         return decision;
     }
 
-    // 检查是否达到连续异常包阈值
+    // 检查是否达到连续异常包阈值且当前间隔过小且不是关键帧
     if (recentAbnormalIntervals_.size() >= config_.consecutiveAbnormalCount &&
-        actualInterval <= config_.dropIntervalThreshold &&
-        !(packet->flags & AV_PKT_FLAG_KEY)) { // 不是关键帧
+        !(packet->flags & AV_PKT_FLAG_KEY)) {
+        // 计算到达时间平均值
+        const auto averageActualInterval =
+            std::accumulate(recentAbnormalIntervals_.begin(), recentAbnormalIntervals_.end(), 0.0) /
+            recentAbnormalIntervals_.size();
 
-        decision.shouldDrop = true;
+        if (averageActualInterval <= config_.dropIntervalThreshold) {
+            decision.shouldDrop = true;
 
-        // 构造丢包原因
-        char reasonBuffer[256];
-        snprintf(reasonBuffer, sizeof(reasonBuffer),
-                 "Network jitter detected, current jitter: %lldms", static_cast<long long>(jitter));
-        decision.reason = reasonBuffer;
+            // 构造丢包原因，记录最近几个异常间隔
+            char reasonBuffer[512];
+            std::string intervals;
+            for (size_t i = 0; i < std::min(recentAbnormalIntervals_.size(), size_t(4)); ++i) {
+                if (i > 0)
+                    intervals += ", ";
+                intervals += std::to_string(recentAbnormalIntervals_[i]);
+            }
 
-        // 移除最老的异常记录
-        recentAbnormalIntervals_.pop_front();
+            snprintf(
+                reasonBuffer, sizeof(reasonBuffer),
+                "Network jitter detected, recent intervals: [%s], current jitter: %lldms, actual "
+                "interval: %lldms",
+                intervals.c_str(), static_cast<long long>(jitter),
+                static_cast<long long>(actualInterval));
+            decision.reason = reasonBuffer;
 
-        LOG_TRACE("JitterDetector: {}, url: {}", decision.reason, url_);
+            // 清除当前的异常记录
+            recentAbnormalIntervals_.pop_front();
+
+            LOG_INFO("JitterDetector: {}, url: {}", decision.reason, url_);
+        }
     }
 
     return decision;

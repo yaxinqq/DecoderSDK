@@ -380,14 +380,15 @@ void Demuxer::realTimeStreamDemuxLoop(AVPacket *pkt)
     int readFailedCount = 0;
     const auto maxAccumulatedPacketCount = kAccumulatedPacketCount + preBufferVideoFrames_;
 
+    const auto frameRate = (videoStreamIndex_ != -1)
+                               ? static_cast<int>(av_q2d(formatContext_->streams[videoStreamIndex_]->avg_frame_rate))
+                               : 25;
+
     // Jitter配置
     JitterDetector::Config jitterConfig;
-    jitterConfig.fallbackIntervalMs =
-        (videoStreamIndex_ != -1)
-            ? static_cast<int>(
-                  std::ceil(1000 / av_q2d(formatContext_->streams[videoStreamIndex_]->avg_frame_rate)))
-            : 40;
-    jitterConfig.stabilityThresholdMs = jitterConfig.fallbackIntervalMs * 0.75;
+    jitterConfig.fallbackIntervalMs = 1000 / frameRate;
+    jitterConfig.stabilityThresholdMs = static_cast<double>(jitterConfig.fallbackIntervalMs);
+    jitterConfig.consecutiveAbnormalCount = std::min(static_cast<int>(frameRate * 0.4), 30);
 
     // 实时流Jitter检测器
     JitterDetector jitterDetector(url_, jitterConfig);
@@ -672,37 +673,32 @@ bool Demuxer::handleReadedVideoPacket(const AVPacket *const packet, const AVRati
     JitterDetector::DropDecision decision;
     jitterDetector.processPacket(packet, videoTimeBase, decision);
 
-    // 当流不稳定时，按GOP丢帧
+    // 检查是否是关键帧
+    const bool isKeyFrame = (packet->flags & AV_PKT_FLAG_KEY) != 0;
+
+    // 当流不稳定时，丢帧
     if (!jitterDetector.isStreamStable()) {
         streamStable = false;
-        // 检查是否是关键帧
-        const bool isKeyFrame = (packet->flags & AV_PKT_FLAG_KEY) != 0;
-        if (!isKeyFrame) {
-            // 不是关键帧，继续丢弃
-            return false;
-        }
-        // 是关键帧，但流仍不稳定，继续丢弃
-        // 等待流稳定后再接收完整GOP
         return false;
     }
 
-    // 当流稳定时，设置标志位
+    // 流已稳定的情况
     if (!streamStable) {
-        // 检查是否是关键帧
-        const bool isKeyFrame = (packet->flags & AV_PKT_FLAG_KEY) != 0;
+        // 流刚变稳定，等待关键帧开始接收
         if (!isKeyFrame) {
             // 流已稳定但当前包不是关键帧，继续等待关键帧
             return false;
         }
 
+        // 流稳定且遇到关键帧，开始正常接收
         streamStable = true;
-        // 清除队列中的包，确保从完整GOP开始
-        if (videoPacketQueue_) {
-            videoPacketQueue_->flush();
-        }
-        if (audioPacketQueue_) {
-            audioPacketQueue_->flush();
-        }
+    }
+
+    // 流稳定后，根据jitter detector的决策来决定是否按GOP丢包
+    if (decision.shouldDrop) {
+        // 等待下一个关键帧
+        streamStable = false;
+        return false;
     }
 
     return true;
