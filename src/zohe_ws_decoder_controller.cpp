@@ -8,6 +8,8 @@ INTERNAL_NAMESPACE_BEGIN
 
 ZoheWsDecoderController::ZoheWsDecoderController(const Config &config) : config_(config)
 {
+	// 查找当前可用的硬解码器类型
+    HardwareAccel::getSupportedHWAccelTypes();
 }
 
 ZoheWsDecoderController::~ZoheWsDecoderController()
@@ -98,7 +100,8 @@ void ZoheWsDecoderController::setFrameCallback(
     frameCallback_ = std::move(callback);
 }
 
-bool ZoheWsDecoderController::pushPacket(const uint8_t *data, int size, int64_t pts, int64_t dts)
+bool ZoheWsDecoderController::pushPacket(const uint8_t *data, int size, int64_t pts, int64_t dts,
+                                         MediaType mediaType)
 {
     if (!initialized_ || !data || size <= 0) {
         return false;
@@ -134,7 +137,7 @@ bool ZoheWsDecoderController::pushPacket(const uint8_t *data, int size, int64_t 
         }
 
         // 处理解码后的帧
-        processDecodedFrame();
+        processDecodedFrame(mediaType);
         av_frame_unref(frame_);
     }
 
@@ -143,7 +146,7 @@ bool ZoheWsDecoderController::pushPacket(const uint8_t *data, int size, int64_t 
     return true;
 }
 
-void ZoheWsDecoderController::flush()
+void ZoheWsDecoderController::flush(MediaType mediaType)
 {
     if (!initialized_) {
         return;
@@ -164,7 +167,7 @@ void ZoheWsDecoderController::flush()
             break;
         }
 
-        processDecodedFrame();
+        processDecodedFrame(mediaType);
         av_frame_unref(frame_);
     }
 }
@@ -229,13 +232,16 @@ bool ZoheWsDecoderController::setupHardwareAcceleration()
     return true;
 }
 
-void ZoheWsDecoderController::processDecodedFrame()
+void ZoheWsDecoderController::processDecodedFrame(MediaType mediaType)
 {
     if (!frame_ || !frameCallback_) {
         return;
     }
 
     Frame resultFrame(frame_);
+    // 设置媒体类型
+    resultFrame.setMediaType(utils::mediaType2AVMediaType(mediaType));
+
     const bool isHardwareFrame = hwAccel_ && frame_->hw_frames_ctx;
     const auto swAVFormat = utils::imageFormat2AVPixelFormat(config_.swVideoOutFormat);
     bool needToConvert = false;

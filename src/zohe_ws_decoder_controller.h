@@ -57,15 +57,18 @@ public:
      * @param size 数据包大小
      * @param pts 展示时间戳 (可选)
      * @param dts 解码时间戳 (可选)
+     * @param mediaType 媒体类型，默认视频 (可选)
      * @return true 成功, false 失败
      */
     bool pushPacket(const uint8_t *data, int size, int64_t pts = AV_NOPTS_VALUE,
-                    int64_t dts = AV_NOPTS_VALUE);
+                    int64_t dts = AV_NOPTS_VALUE, MediaType mediaType = MediaType::kMediaTypeVideo);
 
     /**
      * @brief 刷新解码器 (获取缓冲的帧)
+     * 
+     * @param mediaType 媒体类型，默认视频 (可选)
      */
-    void flush();
+    void flush(MediaType mediaType = MediaType::kMediaTypeVideo);
 
     /**
      * @brief 清理解码器
@@ -87,8 +90,10 @@ private:
 
     /**
      * @brief 处理解码后的帧
+     * 
+     * @param 数据帧的媒体类型
      */
-    void processDecodedFrame();
+    void processDecodedFrame(MediaType mediaType);
 
     /**
      * @brief 转换硬件帧到内存帧
