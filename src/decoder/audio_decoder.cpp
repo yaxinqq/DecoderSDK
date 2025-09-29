@@ -150,7 +150,7 @@ void AudioDecoder::decodeLoop()
                     break;
                 }
             }
-            const auto currentTime = std::chrono::steady_clock::now();
+            const auto currentTime = std::chrono::system_clock::now();
 
             // 成功接收到一帧，进行处理
             // 检查是否需要重新初始化重采样

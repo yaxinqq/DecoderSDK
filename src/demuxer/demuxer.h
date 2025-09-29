@@ -14,6 +14,7 @@ extern "C" {
 #include "base/base_define.h"
 #include "base/packet.h"
 #include "event_system/event_dispatcher.h"
+#include "jitter_detector.h"
 #include "recorder/real_time_stream_recorder.h"
 #include "stream_sync/stream_sync_manager.h"
 
@@ -251,6 +252,17 @@ private:
      * @return true 如果处理了seek请求; false 如果没有pending的seek请求
      */
     bool handleSeekRequest();
+
+    /**
+     * @brief 处理已经读取好的视频数据包
+     * 
+     * @param packet 数据包
+     * @param videoTimeBase 视频流时间基
+     * @param jitterDetector jitter探测器
+     * @param streamStable 流是否稳定
+     * @return 是否可以放入到包队列中
+     */
+    bool handleReadedVideoPacket(const AVPacket *const packet, const AVRational &videoTimeBase, JitterDetector &jitterDetector, bool &streamStable);
 
     /**
      * @brief 打开解复用器，内部调用，不加锁

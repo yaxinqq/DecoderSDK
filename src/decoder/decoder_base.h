@@ -236,8 +236,8 @@ protected:
      */
     double calculateFrameDisplayTime(
         double pts, double duration,
-        const std::chrono::steady_clock::time_point &currentTime,
-        std::optional<std::chrono::steady_clock::time_point> &lastFrameTime) const;
+        const std::chrono::system_clock::time_point &currentTime,
+        std::optional<std::chrono::system_clock::time_point> &lastFrameTime) const;
 
     /**
      * @brief 检查并更新序列号
@@ -274,7 +274,7 @@ protected:
     std::atomic_bool requestInterruption_ = false; // 是否请求中断解码线程
 
     // 解码时间戳
-    std::optional<std::chrono::steady_clock::time_point> lastFrameTime_;
+    std::optional<std::chrono::system_clock::time_point> lastFrameTime_;
 
     // 配置
     // 速度 此处存为整型，单位为 1000 倍

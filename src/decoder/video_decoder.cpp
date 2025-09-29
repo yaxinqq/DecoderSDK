@@ -515,7 +515,7 @@ void VideoDecoder::decodeLoop()
     bool readFirstFrame = false;
     bool occuredError = false;
     bool transToAVCC = false;
-    std::optional<std::chrono::high_resolution_clock::time_point> errorStartTime;
+    std::optional<std::chrono::system_clock::time_point> errorStartTime;
 
     std::vector<uint8_t> sps;
     std::vector<uint8_t> pps;
@@ -532,6 +532,8 @@ void VideoDecoder::decodeLoop()
     auto codecId = codecCtx_->codec_id;
     // 目前推测到的帧率
     const auto avgDuration = 1 / getFrameRate();
+    // 是否需要强行同步外部时钟
+    bool forceSyncExternalClock = false;
     while (!requestInterruption_.load()) {
         // 如果在等待预缓冲，则暂停解码
         if (waitingForPreBuffer_.load()) {
@@ -589,7 +591,10 @@ void VideoDecoder::decodeLoop()
         if (!hasKeyFrame && !isKeyFrame) {
             continue;
         }
-        hasKeyFrame = true;
+        if (!hasKeyFrame && isKeyFrame) {
+            forceSyncExternalClock = true;
+            hasKeyFrame = true;
+        }
 
         // 解析数据包中的SEI信息，仅支持H264、H265
         std::vector<UserSEIData> seiDataList;
@@ -642,7 +647,7 @@ void VideoDecoder::decodeLoop()
                 continue;
 
             // 记录出错时间
-            const auto currentTime = std::chrono::high_resolution_clock::now();
+            const auto currentTime = std::chrono::system_clock::now();
             if (!errorStartTime.has_value()) {
                 errorStartTime = currentTime; // 记录第一次错误时间
             }
@@ -747,10 +752,10 @@ void VideoDecoder::decodeLoop()
                 handleDecodeRecovery(kVideoDecoderName, MediaType::kMediaTypeVideo);
             }
 
-            // 外部时钟和当前的视频帧pts进行比对，如果差值大于一帧，更新外部时钟
+            // 外部时钟和当前的视频帧pts进行比对，如果差值大于3帧，更新外部时钟
             const auto externalClock = syncController_->getClock(ClockType::kExternal);
             const auto diffClock = pts - externalClock;
-            if (utils::greaterAndEqual(diffClock, duration)) {
+            if (utils::greaterAndEqual(diffClock, 3 * duration) || forceSyncExternalClock) {
                 LOG_DEBUG("Adjust external clock, diff: {}s, url: {}", diffClock, demuxer_->url());
                 syncController_->externalClockSeekTo(pts);
             }
@@ -780,7 +785,7 @@ void VideoDecoder::decodeLoop()
 
             // 如果启用了帧率控制，则根据帧率控制推送速度
             if (isFrameRateControlEnabled()) {
-                const auto currentTime = std::chrono::steady_clock::now();
+                const auto currentTime = std::chrono::system_clock::now();
                 const auto durationMs = duration * 1000;
 
                 const double baseDelay =

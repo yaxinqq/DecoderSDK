@@ -238,8 +238,8 @@ bool DecoderBase::handleDecodeRecovery(const std::string &decoderName, MediaType
 }
 
 double DecoderBase::calculateFrameDisplayTime(
-    double pts, double duration, const std::chrono::steady_clock::time_point &currentTime,
-    std::optional<std::chrono::steady_clock::time_point> &lastFrameTime) const
+    double pts, double duration, const std::chrono::system_clock::time_point &currentTime,
+    std::optional<std::chrono::system_clock::time_point> &lastFrameTime) const
 {
     if (std::isnan(pts)) {
         return 0.0;

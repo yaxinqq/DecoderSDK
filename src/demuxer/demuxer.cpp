@@ -380,6 +380,26 @@ void Demuxer::realTimeStreamDemuxLoop(AVPacket *pkt)
     int readFailedCount = 0;
     const auto maxAccumulatedPacketCount = kAccumulatedPacketCount + preBufferVideoFrames_;
 
+    // Jitter配置
+    JitterDetector::Config jitterConfig;
+    jitterConfig.fallbackIntervalMs =
+        (videoStreamIndex_ != -1)
+            ? static_cast<int>(
+                  std::ceil(1000 / av_q2d(formatContext_->streams[videoStreamIndex_]->avg_frame_rate)))
+            : 40;
+    jitterConfig.stabilityThresholdMs = jitterConfig.fallbackIntervalMs * 0.75;
+
+    // 实时流Jitter检测器
+    JitterDetector jitterDetector(url_, jitterConfig);
+    // 流是否稳定
+    bool streamStable = false;
+
+    // 得到视频时间基
+    AVRational videoTimeBase = {0, 1};
+    if (videoStreamIndex_ != -1) {
+        videoTimeBase = formatContext_->streams[videoStreamIndex_]->time_base;
+    }
+
     while (!requestInterruption_.load()) {
         // 实时流不支持seek，清除任何pending的seek请求
         if (seekMsPos_.load() > 0) {
@@ -390,15 +410,8 @@ void Demuxer::realTimeStreamDemuxLoop(AVPacket *pkt)
         // 读取并处理数据包
         const int result = readAndProcessPacket(pkt, readFirstPacket, readFailedCount);
         if (result == 0) {
-            // 分发数据包
-            if (videoPacketQueue_ && videoPacketQueue_->packetCount() > maxAccumulatedPacketCount &&
-                realTimeStreamMode_ == Config::RealTimeStreamMode::kRealTimePriority) {
-                LOG_WARN("Too many AVPackets are accumulated, flush! url: {}", url_);
-
-                videoPacketQueue_->flush();
-                if (audioPacketQueue_) {
-                    audioPacketQueue_->flush();
-                }
+            if (!handleReadedVideoPacket(pkt, videoTimeBase, jitterDetector, streamStable)) {
+                continue;
             }
 
             distributePacket(pkt);
@@ -645,6 +658,53 @@ bool Demuxer::handleSeekRequest()
     streamSyncManager_->externalClockSeekTo(seekMsPosition * 0.001);
 
     LOG_INFO("{} seek completed to position: {:.2f}s", url_, position);
+    return true;
+}
+
+bool Demuxer::handleReadedVideoPacket(const AVPacket *const packet, const AVRational &videoTimeBase,
+                                      JitterDetector &jitterDetector, bool &streamStable)
+{
+    if (packet->stream_index != videoStreamIndex_) {
+        return true;
+    }
+
+    // 判断jitter，当前只处理视频
+    JitterDetector::DropDecision decision;
+    jitterDetector.processPacket(packet, videoTimeBase, decision);
+
+    // 当流不稳定时，按GOP丢帧
+    if (!jitterDetector.isStreamStable()) {
+        streamStable = false;
+        // 检查是否是关键帧
+        const bool isKeyFrame = (packet->flags & AV_PKT_FLAG_KEY) != 0;
+        if (!isKeyFrame) {
+            // 不是关键帧，继续丢弃
+            return false;
+        }
+        // 是关键帧，但流仍不稳定，继续丢弃
+        // 等待流稳定后再接收完整GOP
+        return false;
+    }
+
+    // 当流稳定时，设置标志位
+    if (!streamStable) {
+        // 检查是否是关键帧
+        const bool isKeyFrame = (packet->flags & AV_PKT_FLAG_KEY) != 0;
+        if (!isKeyFrame) {
+            // 流已稳定但当前包不是关键帧，继续等待关键帧
+            return false;
+        }
+
+        streamStable = true;
+        // 清除队列中的包，确保从完整GOP开始
+        if (videoPacketQueue_) {
+            videoPacketQueue_->flush();
+        }
+        if (audioPacketQueue_) {
+            audioPacketQueue_->flush();
+        }
+    }
+
     return true;
 }
 
