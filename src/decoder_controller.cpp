@@ -927,12 +927,14 @@ void DecoderController::cleanupPreBufferState()
 void DecoderController::startReconnect()
 {
     LOG_DEBUG("Starting reconnect process");
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::unique_lock<std::mutex> lock(mutex_);
 
-    // 如果已经在重连中，则不重复启动
+    // 如果已经在重连中，则先停止
     if (isReconnecting_.load()) {
-        LOG_DEBUG("Reconnect already in progress, skipping");
-        return;
+        LOG_DEBUG("Reconnect already in progress, will stop!");
+        lock.unlock();
+        stopReconnect();
+        lock.lock();
     }
 
     // 如果重连被禁用，则不启动重连
@@ -941,15 +943,18 @@ void DecoderController::startReconnect()
         return;
     }
 
+    // 启动重连线程
+    if (reconnectThread_.joinable()) {
+        lock.unlock();
+        shouldStopReconnect_.store(true);
+        reconnectThread_.join();
+        lock.lock();
+    }
+
     // 设置重连状态
     isReconnecting_.store(true);
     shouldStopReconnect_.store(false);
     currentReconnectAttempt_.store(0);
-
-    // 启动重连线程
-    if (reconnectThread_.joinable()) {
-        reconnectThread_.join();
-    }
     reconnectThread_ = std::thread(&DecoderController::reconnectLoop, this);
 
     LOG_INFO("Reconnect started for URL: {}", originalUrl_);
@@ -960,7 +965,7 @@ void DecoderController::stopReconnect()
     LOG_DEBUG("Stopping reconnect process");
     std::unique_lock<std::mutex> lock(mutex_);
 
-    if (!isReconnecting_.load()) {
+    if (!isReconnecting_.load() && !reconnectThread_.joinable()) {
         LOG_DEBUG("No reconnect in progress, skipping stop");
         return;
     }
@@ -1033,9 +1038,13 @@ void DecoderController::reconnectLoop()
         LOG_INFO("Reconnect aborted for URL: {}", originalUrl_);
     }
 
-    cleanupReconnectState();
-    isReconnecting_.store(false);
-    LOG_DEBUG("Reconnect loop ended");
+    // 清除重连状态
+    {
+        std::unique_lock<std::mutex> lock(mutex_);
+
+        cleanupReconnectState();
+        LOG_DEBUG("Reconnect loop ended");
+    }
 }
 
 bool DecoderController::attemptReconnect()
