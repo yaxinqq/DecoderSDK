@@ -61,7 +61,7 @@ double smoothEMA(double alpha, double prev, double current, double speed, double
 DECODER_SDK_NAMESPACE_BEGIN
 INTERNAL_NAMESPACE_BEGIN
 
-StreamSyncManager::StreamSyncManager(MasterClock master, double syncThreshold, double maxDrift,
+StreamSyncManager::StreamSyncManager(ClockType master, double syncThreshold, double maxDrift,
                                      double jitterAlpha)
     : master_(master), syncThreshold_(syncThreshold), maxDrift_(maxDrift), alpha_(jitterAlpha)
 {
@@ -71,12 +71,12 @@ StreamSyncManager::StreamSyncManager(MasterClock master, double syncThreshold, d
     adaptiveThreshold_.store(syncThreshold);
 }
 
-void StreamSyncManager::setMaster(MasterClock m)
+void StreamSyncManager::setMaster(ClockType m)
 {
     master_.store(m, std::memory_order_release);
 }
 
-MasterClock StreamSyncManager::master() const
+ClockType StreamSyncManager::master() const
 {
     return master_.load(std::memory_order_acquire);
 }
@@ -102,11 +102,13 @@ void StreamSyncManager::setSpeed(double speed)
 void StreamSyncManager::updateAudioClock(double pts, uint64_t serial)
 {
     audioClock_.setClock(pts, serial);
+    audioClock_.calibrate();
 }
 
 void StreamSyncManager::updateVideoClock(double pts, uint64_t serial)
 {
     videoClock_.setClock(pts, serial);
+    videoClock_.calibrate();
 }
 
 void StreamSyncManager::updateExternalClock(double pts, uint64_t serial)
@@ -261,18 +263,18 @@ SyncQualityStats StreamSyncManager::getSyncQualityStats() const
             maxDrift_.load(std::memory_order_acquire)};
 }
 
-double StreamSyncManager::getMasterClock() const
+double StreamSyncManager::getClock(ClockType clock) const
 {
     double masterClock;
 
-    switch (master_.load(std::memory_order_acquire)) {
-        case MasterClock::kAudio:
+    switch (clock) {
+        case ClockType::kAudio:
             masterClock = audioClock_.getClock();
             break;
-        case MasterClock::kVideo:
+        case ClockType::kVideo:
             masterClock = videoClock_.getClock();
             break;
-        case MasterClock::kExternal:
+        case ClockType::kExternal:
             masterClock = externalClock_.getClock();
             break;
         default:
@@ -281,6 +283,11 @@ double StreamSyncManager::getMasterClock() const
     }
 
     return masterClock;
+}
+
+double StreamSyncManager::getMasterClock() const
+{
+    return getClock(master_.load());
 }
 
 void StreamSyncManager::updateSyncQuality(double drift)

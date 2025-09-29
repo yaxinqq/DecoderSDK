@@ -44,7 +44,7 @@ double Clock::getClock() const
 
     // 时钟计算公式
     const double elapsed = (currentTime - lastUpdate) * speed;
-    return drift + currentTime - elapsed;
+    return drift + currentTime + elapsed;
 }
 
 void Clock::setClock(double pts, uint64_t serial)

@@ -384,7 +384,7 @@ struct UserSEIData {
 #pragma region sync
 
 // 时钟同步选项
-enum class MasterClock : uint8_t {
+enum class ClockType : uint8_t {
     kAudio,   // 音频时钟
     kVideo,   // 视频时钟
     kExternal // 外部时钟

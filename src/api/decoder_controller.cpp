@@ -86,7 +86,7 @@ FrameQueue DecoderController::audioQueue()
     return FrameQueue(impl_->audioQueue().get());
 }
 
-void DecoderController::setMasterClock(MasterClock type)
+void DecoderController::setMasterClock(ClockType type)
 {
     if (!impl_)
         return;

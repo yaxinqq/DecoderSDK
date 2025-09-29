@@ -118,7 +118,7 @@ public:
      *
      * @param type 主时钟类型
      */
-    void setMasterClock(MasterClock type);
+    void setMasterClock(ClockType type);
 
     /**
      * @brief 获取视频帧率

@@ -477,7 +477,7 @@ std::shared_ptr<FrameQueue> DecoderController::audioQueue()
     return audioDecoder_ ? audioDecoder_->frameQueue() : emptyQueue;
 }
 
-void DecoderController::setMasterClock(MasterClock type)
+void DecoderController::setMasterClock(ClockType type)
 {
     LOG_DEBUG("Setting master clock type to: {}", static_cast<int>(type));
     syncController_->setMaster(type);
@@ -821,10 +821,10 @@ bool DecoderController::startDecodeInternal()
 
     // 默认使用音频作为主时钟
     if (demuxer_->hasAudio() && audioDecoder_) {
-        syncController_->setMaster(MasterClock::kAudio);
+        syncController_->setMaster(ClockType::kAudio);
         LOG_DEBUG("Master clock set to audio");
     } else if (demuxer_->hasVideo() && videoDecoder_) {
-        syncController_->setMaster(MasterClock::kVideo);
+        syncController_->setMaster(ClockType::kVideo);
         LOG_DEBUG("Master clock set to video");
     }
 

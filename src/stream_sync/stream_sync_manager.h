@@ -21,7 +21,7 @@ public:
      * @param avSyncMaxDrift 音视频最大同步漂移
      * @param jitterAlpha 抖动平滑系数
      */
-    StreamSyncManager(MasterClock type = MasterClock::kVideo,
+    StreamSyncManager(ClockType type = ClockType::kVideo,
                       double avSyncThreshold = 0.010, // 10 ms
                       double avSyncMaxDrift = 0.100,  // 100 ms
                       double jitterAlpha = 0.1);      // 抖动平滑系数
@@ -31,13 +31,13 @@ public:
      *
      * @param m 主时钟类型
      */
-    void setMaster(MasterClock m);
+    void setMaster(ClockType m);
     /**
      * @brief 获取主时钟类型
      *
-     * @return MasterClock 主时钟类型
+     * @return ClockType 主时钟类型
      */
-    MasterClock master() const;
+    ClockType master() const;
 
     /**
      * @brief 设置音视频同步阈值
@@ -52,6 +52,12 @@ public:
      */
     void setAdaptiveSync(bool enable);
 
+    /**
+     * @brief 获得当前时钟时间（单位：秒）
+     * @param clock 时钟类型
+     * @return double
+     */
+    double getClock(ClockType clock) const;
     /**
      * @brief 获得当前主时钟时间（单位：秒）
      * @return double
@@ -161,10 +167,10 @@ private:
     SyncState evaluateSyncState(double drift) const;
 
 private:
-    std::atomic<MasterClock> master_; // 主时钟类型
-    Clock audioClock_;                // 音频时钟
-    Clock videoClock_;                // 视频时钟
-    Clock externalClock_;             // 外部时钟
+    std::atomic<ClockType> master_; // 主时钟类型
+    Clock audioClock_;              // 音频时钟
+    Clock videoClock_;              // 视频时钟
+    Clock externalClock_;           // 外部时钟
 
     // 同步参数
     std::atomic<double> syncThreshold_{0.0}; // 音视频同步阈值
