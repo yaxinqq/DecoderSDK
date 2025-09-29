@@ -195,7 +195,6 @@ void ZoheWsDecoderController::cleanup()
             codecCtx_->extradata_size = 0;
         }
 
-        avcodec_close(codecCtx_);
         avcodec_free_context(&codecCtx_);
         codecCtx_ = nullptr;
     }
