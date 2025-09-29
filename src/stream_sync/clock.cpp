@@ -15,7 +15,7 @@ INTERNAL_NAMESPACE_BEGIN
 Clock::Clock() = default;
 Clock::~Clock() = default;
 
-void Clock::init(int queueSerial)
+void Clock::init(uint64_t queueSerial)
 {
     speed_.store(1.0, std::memory_order_release);
     paused_.store(false, std::memory_order_release);
@@ -47,7 +47,7 @@ double Clock::getClock() const
     return drift + currentTime - elapsed;
 }
 
-void Clock::setClock(double pts, int serial)
+void Clock::setClock(double pts, uint64_t serial)
 {
     const double currentTime = getCurrentSystemTime();
 
@@ -70,7 +70,7 @@ void Clock::setClockSpeed(double speed)
 
     // 线程安全的速度更新
     const double currentClock = getClock();
-    const int currentSerial = serial_.load(std::memory_order_acquire);
+    const auto currentSerial = serial_.load(std::memory_order_acquire);
 
     setClock(currentClock, currentSerial);
 }
@@ -133,7 +133,7 @@ double Clock::speed() const
     return speed_.load(std::memory_order_acquire);
 }
 
-int Clock::serial() const
+uint64_t Clock::serial() const
 {
     return serial_.load(std::memory_order_acquire);
 }

@@ -44,7 +44,7 @@ public:
      * @brief 初始化时钟
      * @param queueSerial 包队列数据包序号
      */
-    void init(int queueSerial);
+    void init(uint64_t queueSerial);
     void reset();
 
     /**
@@ -58,7 +58,7 @@ public:
      * @param pts 显示时间戳
      * @param serial 数据版本号
      */
-    void setClock(double pts, int serial);
+    void setClock(double pts, uint64_t serial);
 
     /**
      * @brief 设置当前时钟速度（线程安全）
@@ -101,7 +101,7 @@ public:
     /**
      * @brief 获取当前数据包序号
      */
-    int serial() const;
+    uint64_t serial() const;
     /**
      * @brief 获取当前时钟暂停状态
      */
@@ -120,7 +120,7 @@ public:
         double currentTime; // 当前系统时间（秒）
         double drift;       // 时间戳与系统时间的差值（秒）
         double speed;       // 时钟速度（倍速）
-        int serial;         // 当前数据包序号
+        uint64_t serial;    // 当前数据包序号
         bool paused;        // 当前时钟暂停状态
         ClockState state;   // 时钟状态
     };
@@ -146,7 +146,7 @@ private:
     // 时钟速度（倍速）
     std::atomic<double> speed_{1.0};
     // 当前数据包序号
-    std::atomic<int> serial_{0};
+    std::atomic<uint64_t> serial_{0};
     // 当前时钟暂停状态
     std::atomic<bool> paused_{false};
 

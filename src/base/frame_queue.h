@@ -114,12 +114,12 @@ public:
      * @brief 设置序号
      * @param serial 序号
      */
-    void setSerial(int serial);
+    void setSerial(uint64_t serial);
     /**
      * @brief 获取序号
      * @return 序号
      */
-    int serial() const;
+    uint64_t serial() const;
     /**
      * @brief 设置保留最后一帧
      * @param keepLast true - 保留；false - 不保留
@@ -199,7 +199,7 @@ private:
 
     int pendingWriteIndex_; // 待写入帧的索引
 
-    int serial_;                   // 当前版本序号
+    uint64_t serial_;                   // 当前版本序号
     std::atomic<bool> aborted_;    // 是否已中止
     mutable std::mutex mutex_;     // 互斥锁
     std::condition_variable cond_; // 条件变量

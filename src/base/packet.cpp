@@ -88,12 +88,12 @@ bool Packet::isEmpty() const
     return !packet_ || !packet_->data || packet_->size == 0;
 }
 
-void Packet::setSerial(int serial)
+void Packet::setSerial(uint64_t serial)
 {
     serial_ = serial;
 }
 
-int Packet::serial() const
+uint64_t Packet::serial() const
 {
     return serial_;
 }

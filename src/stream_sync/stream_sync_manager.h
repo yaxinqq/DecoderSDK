@@ -68,19 +68,19 @@ public:
      * @param pts 时间戳
      * @param serial 序列号
      */
-    void updateAudioClock(double pts, int serial = 0);
+    void updateAudioClock(double pts, uint64_t serial = 0);
     /**
      * @brief 更新视频时钟
      * @param pts 时间戳
      * @param serial 序列号
      */
-    void updateVideoClock(double pts, int serial = 0);
+    void updateVideoClock(double pts, uint64_t serial = 0);
     /**
      * @brief 更新外部时钟
      * @param pts 时间戳
      * @param serial 序列号
      */
-    void updateExternalClock(double pts, int serial = 0);
+    void updateExternalClock(double pts, uint64_t serial = 0);
     /**
      * @brief 重置所有时钟
      */

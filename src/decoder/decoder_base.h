@@ -245,7 +245,7 @@ protected:
      * @param packetQueue 数据包队列
      * @return true 序列号更新成功，false 序列号未更新
      */
-    bool checkAndUpdateSerial(int &currentSerial, PacketQueue *packetQueue);
+    bool checkAndUpdateSerial(uint64_t &currentSerial, PacketQueue *packetQueue);
 
     /**
      * @brief 检查是否应该继续解码

@@ -103,12 +103,12 @@ bool Frame::isValid() const
     return frame_ != nullptr;
 }
 
-int Frame::serial() const
+uint64_t Frame::serial() const
 {
     return serial_;
 }
 
-void Frame::setSerial(int serial)
+void Frame::setSerial(uint64_t serial)
 {
     serial_ = serial;
 }

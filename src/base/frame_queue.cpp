@@ -180,13 +180,13 @@ void FrameQueue::setAbortStatus(bool abort)
     }
 }
 
-void FrameQueue::setSerial(int serial)
+void FrameQueue::setSerial(uint64_t serial)
 {
     std::lock_guard<std::mutex> lock(mutex_);
     serial_ = serial;
 }
 
-int FrameQueue::serial() const
+uint64_t FrameQueue::serial() const
 {
     std::lock_guard<std::mutex> lock(mutex_);
     return serial_;

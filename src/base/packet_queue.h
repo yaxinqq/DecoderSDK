@@ -120,7 +120,7 @@ public:
      * @brief 获取队列序列号
      * @return 序列号
      */
-    int serial() const noexcept;
+    uint64_t serial() const noexcept;
 
     /**
      * @brief 检查队列是否已满
@@ -147,7 +147,7 @@ public:
         size_t count;
         size_t size;
         int64_t duration;
-        int serial;
+        uint64_t serial;
         bool aborted;
     };
 
@@ -183,7 +183,7 @@ private:
     // 是否终止
     std::atomic<bool> aborted_{false};
     // 序列号
-    std::atomic<int> serial_{0};
+    std::atomic<uint64_t> serial_{0};
     // 队列最大数量
     std::atomic<size_t> maxPacketCount_;
 

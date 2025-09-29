@@ -492,7 +492,7 @@ void VideoDecoder::decodeLoop()
         return;
     }
 
-    int serial = packetQueue->serial();
+    auto serial = packetQueue->serial();
     syncController_->updateVideoClock(0.0, serial);
 
     bool hasKeyFrame = false;

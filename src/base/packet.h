@@ -67,12 +67,12 @@ public:
      * @brief 设置Packet对象的序列号
      * @param serial 序列号
      */
-    void setSerial(int serial);
+    void setSerial(uint64_t serial);
     /**
      * @brief 获取Packet对象的序列号
      * @return 序列号
      */
-    int serial() const;
+    uint64_t serial() const;
 
     // 属性透传
     /**
@@ -153,7 +153,7 @@ private:
     // AVPcaket数据
     AVPacket *packet_ = nullptr;
     // 序列号
-    int serial_ = 0;
+    uint64_t serial_ = 0;
 };
 
 INTERNAL_NAMESPACE_END

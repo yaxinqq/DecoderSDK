@@ -99,17 +99,17 @@ void StreamSyncManager::setSpeed(double speed)
     externalClock_.setClockSpeed(speed);
 }
 
-void StreamSyncManager::updateAudioClock(double pts, int serial)
+void StreamSyncManager::updateAudioClock(double pts, uint64_t serial)
 {
     audioClock_.setClock(pts, serial);
 }
 
-void StreamSyncManager::updateVideoClock(double pts, int serial)
+void StreamSyncManager::updateVideoClock(double pts, uint64_t serial)
 {
     videoClock_.setClock(pts, serial);
 }
 
-void StreamSyncManager::updateExternalClock(double pts, int serial)
+void StreamSyncManager::updateExternalClock(double pts, uint64_t serial)
 {
     externalClock_.setClock(pts, serial);
 }

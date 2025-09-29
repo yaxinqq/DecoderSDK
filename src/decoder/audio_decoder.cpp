@@ -66,7 +66,7 @@ void AudioDecoder::decodeLoop()
         return;
     }
 
-    int serial = packetQueue->serial();
+    auto serial = packetQueue->serial();
     syncController_->updateAudioClock(0.0, serial);
 
     bool readFirstFrame = false;

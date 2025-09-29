@@ -167,7 +167,7 @@ size_t PacketQueue::maxPacketCount() const noexcept
     return maxPacketCount_.load(std::memory_order_acquire);
 }
 
-int PacketQueue::serial() const noexcept
+uint64_t PacketQueue::serial() const noexcept
 {
     return serial_.load(std::memory_order_acquire);
 }

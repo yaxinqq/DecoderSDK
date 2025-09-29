@@ -276,7 +276,7 @@ double DecoderBase::calculateFrameDisplayTime(
     return baseDelay;
 }
 
-bool DecoderBase::checkAndUpdateSerial(int &currentSerial, PacketQueue *packetQueue)
+bool DecoderBase::checkAndUpdateSerial(uint64_t &currentSerial, PacketQueue *packetQueue)
 {
     if (currentSerial != packetQueue->serial()) {
         avcodec_flush_buffers(codecCtx_);

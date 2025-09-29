@@ -69,12 +69,12 @@ public:
      * @brief 获得序列号
      * @return int 序列号
      */
-    int serial() const;
+    uint64_t serial() const;
     /**
      * @brief 设置序列号
      * @param serial 序列号
      */
-    void setSerial(int serial);
+    void setSerial(uint64_t serial);
 
     /**
      * @brief 获得帧时长
@@ -456,7 +456,7 @@ private:
     // 帧
     AVFrame *frame_ = nullptr;
     // 序列号
-    int serial_ = 0;
+    uint64_t serial_ = 0;
     // 帧的时长 单位s
     double duration_ = 0.0;
     // pts 单位s
