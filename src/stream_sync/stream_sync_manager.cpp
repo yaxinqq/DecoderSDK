@@ -137,6 +137,11 @@ void StreamSyncManager::externalClockSetPaused(bool paused)
 double StreamSyncManager::computeVideoDelay(double framePts, double frameDuration, double baseDelay,
                                             double speed)
 {
+    // 如果当前主时钟是视频时钟，直接返回默认延迟
+    if (master_.load() == ClockType::kVideo) {
+        return baseDelay;
+    }
+
     // 主时钟
     double master = getMasterClock();
     double diff = framePts - master; // PTS 与主时钟的差值 (秒)
