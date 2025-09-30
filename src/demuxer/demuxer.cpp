@@ -254,8 +254,6 @@ void Demuxer::demuxLoop()
         return;
     }
 
-    avformat_flush(formatContext_);
-
     // 根据流类型选择不同的处理策略
     if (isRealTime_) {
         realTimeStreamDemuxLoop(pkt);
@@ -412,6 +410,9 @@ void Demuxer::realTimeStreamDemuxLoop(AVPacket *pkt)
     bool streamStable = false;
     // 连续丢帧数
     int consecutiveFrameDrops = 0;
+
+    // 丢弃所有内部缓冲数据，确保从最新数据开始读取
+    avformat_flush(formatContext_);
 
     while (!requestInterruption_.load()) {
         // 实时流不支持seek，清除任何pending的seek请求
