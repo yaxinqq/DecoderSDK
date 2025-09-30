@@ -260,9 +260,12 @@ private:
      * @param videoTimeBase 视频流时间基
      * @param jitterDetector jitter探测器
      * @param streamStable 流是否稳定
+     * @param consecutiveFrameDrops 连续丢帧数
      * @return 是否可以放入到包队列中
      */
-    bool handleReadedVideoPacket(const AVPacket *const packet, const AVRational &videoTimeBase, JitterDetector &jitterDetector, bool &streamStable);
+    bool handleReadedVideoPacket(const AVPacket *const packet, const AVRational &videoTimeBase,
+                                 JitterDetector &jitterDetector, bool &streamStable,
+                                 int &consecutiveFrameDrops);
 
     /**
      * @brief 打开解复用器，内部调用，不加锁

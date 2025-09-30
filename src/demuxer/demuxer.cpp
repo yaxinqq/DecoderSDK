@@ -410,6 +410,8 @@ void Demuxer::realTimeStreamDemuxLoop(AVPacket *pkt)
     JitterDetector jitterDetector(url_, jitterConfig);
     // 流是否稳定
     bool streamStable = false;
+    // 连续丢帧数
+    int consecutiveFrameDrops = 0;
 
     while (!requestInterruption_.load()) {
         // 实时流不支持seek，清除任何pending的seek请求
@@ -421,7 +423,8 @@ void Demuxer::realTimeStreamDemuxLoop(AVPacket *pkt)
         // 读取并处理数据包
         const int result = readAndProcessPacket(pkt, readFirstPacket, readFailedCount);
         if (result == 0) {
-            if (!handleReadedVideoPacket(pkt, videoTimeBase, jitterDetector, streamStable)) {
+            if (!handleReadedVideoPacket(pkt, videoTimeBase, jitterDetector, streamStable,
+                                         consecutiveFrameDrops)) {
                 continue;
             }
 
@@ -673,7 +676,8 @@ bool Demuxer::handleSeekRequest()
 }
 
 bool Demuxer::handleReadedVideoPacket(const AVPacket *const packet, const AVRational &videoTimeBase,
-                                      JitterDetector &jitterDetector, bool &streamStable)
+                                      JitterDetector &jitterDetector, bool &streamStable,
+                                      int &consecutiveFrameDrops)
 {
     if (packet->stream_index != videoStreamIndex_) {
         return true;
@@ -708,8 +712,23 @@ bool Demuxer::handleReadedVideoPacket(const AVPacket *const packet, const AVRati
     if (decision.shouldDrop) {
         // 等待下一个关键帧
         streamStable = false;
+        
+        // 当连续丢GOP过多时，清空队列，追赶最新的数据
+        if (++consecutiveFrameDrops >= 3) {
+            LOG_WARN("Consecutive GOP drops reached {}, flushing packet queues to recover!",
+                     consecutiveFrameDrops);
+            if (videoPacketQueue_) {
+                videoPacketQueue_->flush();
+            }
+            if (audioPacketQueue_) {
+                audioPacketQueue_->flush();
+            }
+            consecutiveFrameDrops = 0;
+        }
+
         return false;
     }
+    consecutiveFrameDrops = 0;
 
     return true;
 }

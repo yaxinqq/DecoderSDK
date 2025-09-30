@@ -752,12 +752,13 @@ void VideoDecoder::decodeLoop()
                 handleDecodeRecovery(kVideoDecoderName, MediaType::kMediaTypeVideo);
             }
 
-            // 外部时钟和当前的视频帧pts进行比对，如果差值大于3帧，更新外部时钟
+            // 外部时钟和当前的视频帧pts进行比对，如果差值大于1帧，更新外部时钟
             const auto externalClock = syncController_->getClock(ClockType::kExternal);
             const auto diffClock = pts - externalClock;
-            if (utils::greaterAndEqual(diffClock, 3 * duration) || forceSyncExternalClock) {
+            if (utils::greater(diffClock, duration) || forceSyncExternalClock) {
                 LOG_DEBUG("Adjust external clock, diff: {}s, url: {}", diffClock, demuxer_->url());
                 syncController_->externalClockSeekTo(pts);
+                forceSyncExternalClock = false;
             }
 
             // 处理帧格式转换
