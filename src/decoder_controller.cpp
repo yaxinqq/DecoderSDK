@@ -824,9 +824,14 @@ bool DecoderController::startDecodeInternal()
         syncController_->setMaster(ClockType::kAudio);
         LOG_DEBUG("Master clock set to audio");
     } else if (demuxer_->hasVideo() && videoDecoder_) {
-        // 只有视频时，适用外部时钟
-        syncController_->setMaster(ClockType::kExternal);
-        LOG_DEBUG("Master clock set to external");
+        // 只有视频时，实时流使用外部时钟，文件流使用视频时钟
+        if (demuxer_->isRealTime()) {
+            syncController_->setMaster(ClockType::kExternal);
+            LOG_DEBUG("Master clock set to external");
+        } else {
+            syncController_->setMaster(ClockType::kVideo);
+            LOG_DEBUG("Master clock set to video");
+        }
     }
 
     // 如果启用了预缓冲，设置等待状态
