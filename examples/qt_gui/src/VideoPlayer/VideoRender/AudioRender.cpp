@@ -267,7 +267,7 @@ bool AudioRender::initAudioOutput(const QAudioDeviceInfo &deviceInfo)
     int bytesPerSecond =
         audioFormat_.sampleRate() * audioFormat_.channelCount() * (audioFormat_.sampleSize() / 8);
 
-    int targetBufferMs = 50; // 目标50ms缓冲，平衡延迟和稳定性
+    int targetBufferMs = 100; // 100ms缓冲，平衡延迟和稳定性
     int bufferSize = (bytesPerSecond * targetBufferMs) / 1000;
 
     // 确保缓冲区大小在合理范围内
