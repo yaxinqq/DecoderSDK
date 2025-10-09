@@ -26,7 +26,6 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Windows")
     set(QT_BIN_DIR "${Qt5_DIR}/../../../bin")
     set(THIRD_PARTY_LIB_DIRS
         "${FFMPEG_BIN_DIR}"
-        "${SPDLOG_BIN_DIR}"
     )
     string(JOIN ";" RUNTIME_PATHS ${QT_BIN_DIR} ${THIRD_PARTY_LIB_DIRS})
     set_target_properties(${EXAMPLE_TARGET} PROPERTIES

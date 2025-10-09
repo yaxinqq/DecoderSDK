@@ -7,7 +7,10 @@
 #include <cstring>
 
 AudioRender::AudioRender(QObject *parent)
-    : QObject(parent), initialized_(false), playing_(false), volume_(1.0)
+    : QObject(parent)
+    , initialized_(false)
+    , playing_(false)
+    , volume_(1.0)
 {
 }
 
@@ -28,7 +31,7 @@ void AudioRender::initialize(const std::shared_ptr<decoder_sdk::Frame> &frame,
     }
 
     if (!initAudioFormat(*frame)) {
-        qWarning() << "[AudioRender] Failed to initialize audio format";
+        qWarning() << QStringLiteral("[AudioRender] Failed to initialize audio format");
         return;
     }
 
@@ -36,14 +39,13 @@ void AudioRender::initialize(const std::shared_ptr<decoder_sdk::Frame> &frame,
         deviceInfo.isNull() ? QAudioDeviceInfo::defaultOutputDevice() : deviceInfo;
 
     if (!initAudioOutput(device)) {
-        qWarning() << "[AudioRender] Failed to initialize audio output";
+        qWarning() << QStringLiteral("[AudioRender] Failed to initialize audio output");
         return;
     }
 
     initialized_.store(true);
-    qDebug() << "[AudioRender] Initialized successfully"
-             << "SampleRate:" << sampleRate_ << "Channels:" << channels_
-             << "SampleSize:" << sampleSize_;
+    qDebug() << QStringLiteral("[AudioRender] Initialized successfully! SampleRate: %1, Channels: %2, SampleSize: %3")
+                    .arg(QString::number(sampleRate_), QString::number(channels_), QString::number(sampleSize_));
 }
 
 void AudioRender::render(const std::shared_ptr<decoder_sdk::Frame> &frame)
@@ -86,11 +88,11 @@ void AudioRender::start()
     if (audioOutput_) {
         audioDevice_ = audioOutput_->start();
         if (!audioDevice_) {
-            qWarning() << "[AudioRender] Failed to start audio output";
+            qWarning() << QStringLiteral("[AudioRender] Failed to start audio output");
             return;
         }
         playing_.store(true);
-        qDebug() << "[AudioRender] Started playing";
+        qDebug() << QStringLiteral("[AudioRender] Started playing");
     }
 }
 
@@ -107,7 +109,7 @@ void AudioRender::stop()
         audioDevice_ = nullptr;
     }
 
-    qDebug() << "[AudioRender] Stopped playing";
+    qDebug() << QStringLiteral("[AudioRender] Stopped playing");
 }
 
 void AudioRender::pause()
@@ -169,7 +171,7 @@ void AudioRender::handleStateChanged(QAudio::State newState)
 {
     if (newState == QAudio::StoppedState && audioOutput_ &&
         audioOutput_->error() != QAudio::NoError) {
-        qWarning() << "[AudioRender] Audio error:" << audioOutput_->error();
+        qWarning() << QStringLiteral("[AudioRender] Audio error: %1").arg(static_cast<int>(audioOutput_->error()));
     }
 
     // 处理IdleState：当音频设备进入空闲状态时，检查是否有更多数据
@@ -231,7 +233,7 @@ bool AudioRender::initAudioFormat(const decoder_sdk::Frame &frame)
             break;
 
         default:
-            qWarning() << "[AudioRender] Unsupported sample format!";
+            qWarning() << QStringLiteral("[AudioRender] Unsupported sample format!");
             // 默认使用16位有符号整数
             audioFormat_.setSampleSize(16);
             audioFormat_.setSampleType(QAudioFormat::SignedInt);
@@ -248,18 +250,16 @@ bool AudioRender::initAudioOutput(const QAudioDeviceInfo &deviceInfo)
 
     // 检查设备是否支持我们的音频格式
     if (!audioDeviceInfo_.isFormatSupported(audioFormat_)) {
-        qWarning() << "[AudioRender] Audio format not supported by device";
+        qWarning() << QStringLiteral("[AudioRender] Audio format not supported by device");
         // 尝试获取最接近的格式
         audioFormat_ = audioDeviceInfo_.nearestFormat(audioFormat_);
-        qDebug() << "[AudioRender] Using nearest format:"
-                 << "SampleRate:" << audioFormat_.sampleRate()
-                 << "Channels:" << audioFormat_.channelCount()
-                 << "SampleSize:" << audioFormat_.sampleSize();
+        qDebug() << QStringLiteral("[AudioRender] Using nearest format: SampleRate: %1, Channels: %2, SampleSize: %3")
+                        .arg(QString::number(audioFormat_.sampleRate()), QString::number(audioFormat_.channelCount()), QString::number(audioFormat_.sampleSize()));
     }
 
     audioOutput_.reset(new QAudioOutput(audioDeviceInfo_, audioFormat_));
     if (!audioOutput_) {
-        qWarning() << "[AudioRender] Failed to create QAudioOutput";
+        qWarning() << QStringLiteral("[AudioRender] Failed to create QAudioOutput");
         return false;
     }
 
@@ -281,16 +281,14 @@ bool AudioRender::initAudioOutput(const QAudioDeviceInfo &deviceInfo)
     int notifyInterval = qMax(10, targetBufferMs / 2);
     audioOutput_->setNotifyInterval(notifyInterval);
 
-    qDebug() << "[AudioRender] Audio output configured:"
-             << "BufferSize:" << bufferSize << "bytes (" << (bufferSize * 1000 / bytesPerSecond)
-             << "ms)"
-             << "NotifyInterval:" << notifyInterval << "ms";
+    qDebug() << QStringLiteral("[AudioRender] Audio output configured: BufferSize: %1 bytes (%2 ms), NotifyInterval: %3 ms")
+                    .arg(QString::number(bufferSize), QString::number(bufferSize * 1000 / bytesPerSecond), QString::number(notifyInterval));
 
     // 连接信号
     connect(audioOutput_.data(), &QAudioOutput::stateChanged, this,
             &AudioRender::handleStateChanged);
 
-    qDebug() << "[AudioRender] Audio output initialized";
+    qDebug() << QStringLiteral("[AudioRender] Audio output initialized");
     return true;
 }
 
@@ -371,8 +369,8 @@ void AudioRender::applyVolume(char *data, qint64 size, qreal volume)
             break;
         }
         default:
-            qWarning() << "[AudioRender] Unsupported sample size for volume control:"
-                       << sampleSize_;
+            qWarning() << QStringLiteral("[AudioRender] Unsupported sample size for volume control: %1")
+                              .arg(QString::number(sampleSize_));
             break;
     }
 }

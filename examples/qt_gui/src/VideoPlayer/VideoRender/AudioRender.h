@@ -163,9 +163,9 @@ private:
     int sampleSize_ = 16;
 
     // 统计信息
-    mutable std::atomic<qint64> totalFramesRendered_{0};
-    mutable std::atomic<qint64> totalBytesRendered_{0};
-    mutable std::atomic<qint64> droppedFrames_{0};
+    mutable std::atomic<qint64> totalFramesRendered_{ 0 };
+    mutable std::atomic<qint64> totalBytesRendered_{ 0 };
+    mutable std::atomic<qint64> droppedFrames_{ 0 };
 };
 
 #endif // AUDIORENDER_H
