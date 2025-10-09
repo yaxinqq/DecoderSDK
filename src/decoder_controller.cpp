@@ -68,7 +68,6 @@ DecoderController::~DecoderController()
     }
 
     avformat_network_deinit();
-    LOG_INFO("DecoderController destroyed");
 }
 
 bool DecoderController::open(const std::string &url, const Config &config)
