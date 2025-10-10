@@ -71,7 +71,7 @@ void AudioDecoder::decodeLoop()
 
     bool readFirstFrame = false;
     bool occuredError = false;
-    double lastSpeed = speed_;
+    uint16_t lastSpeed = speed_.load();
 
     resetStatistics();
 
@@ -156,7 +156,7 @@ void AudioDecoder::decodeLoop()
             // 检查是否需要重新初始化重采样
             if (needResampleUpdate(lastSpeed)) {
                 initResampleContext();
-                lastSpeed = speed_;
+                lastSpeed = speed_.load();
             }
 
             // 重采样处理
@@ -304,7 +304,7 @@ void AudioDecoder::decodeLoop()
             // 将解码后的帧复制到输出帧
             *outFrame = std::move(outputFrame);
             outFrame->setSerial(serial);
-            outFrame->setDurationByFps(duration);
+            outFrame->setDurationByFps(duration / speed());
             outFrame->setSecPts(pts);
             outFrame->setMediaType(AVMEDIA_TYPE_AUDIO);
 
@@ -465,14 +465,15 @@ Frame AudioDecoder::resampleFrame(const Frame &frame, int &errorCode)
         delay = 0;
     }
 
-    int64_t outSamples = av_rescale_rnd(delay + frame.get()->nb_samples, outputSampleRate,
+    // 8倍往上的采样率似乎就无法正常播放声音了
+    const int64_t outSamples = av_rescale_rnd(delay + frame.get()->nb_samples, outputSampleRate,
                                         inputSampleRate, AV_ROUND_UP);
 
-    // 添加合理的上限检查，防止异常大的缓冲区分配
-    const int64_t maxSamples = frame.get()->nb_samples * 4; // 最多4倍的输入采样数
-    if (outSamples > maxSamples) {
-        outSamples = maxSamples;
-    }
+    //// 添加合理的上限检查，防止异常大的缓冲区分配
+    //const int64_t maxSamples = frame.get()->nb_samples * 8; // 最多8倍的输入采样数（采样数过大，也会导致声音无法正常播放）
+    //if (outSamples > maxSamples) {
+    //    outSamples = maxSamples;
+    //}
 
     if (outSamples <= 0) {
         errorCode = AVERROR(EINVAL);
@@ -536,9 +537,9 @@ Frame AudioDecoder::resampleFrame(const Frame &frame, int &errorCode)
     return resampleFrame_;
 }
 
-bool AudioDecoder::needResampleUpdate(double lastSpeed)
+bool AudioDecoder::needResampleUpdate(uint16_t lastSpeed)
 {
-    return std::abs(speed_ - lastSpeed) > 0.01f;
+    return speed_.load() != lastSpeed;
 }
 
 bool AudioDecoder::initFormatConvertContext(AVSampleFormat srcFormat, AVSampleFormat dstFormat,

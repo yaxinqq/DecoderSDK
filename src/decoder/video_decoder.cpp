@@ -775,10 +775,13 @@ void VideoDecoder::decodeLoop()
                 break; // 队列满了，退出
             }
 
+            // 获得当前速度
+            const auto curSpeed = speed();
+
             // 将解码后的帧复制到输出帧
             *outFrame = std::move(outputFrame);
             outFrame->setSerial(serial);
-            outFrame->setDurationByFps(duration);
+            outFrame->setDurationByFps(duration / curSpeed);
             outFrame->setSecPts(pts);
             outFrame->setMediaType(AVMEDIA_TYPE_VIDEO);
             outFrame->setUserSEIDataList(
@@ -792,7 +795,7 @@ void VideoDecoder::decodeLoop()
                 const double baseDelay =
                     calculateFrameDisplayTime(pts, durationMs, currentTime, lastFrameTime_);
                 const double syncDelay =
-                    syncController_->computeVideoDelay(pts, duration, baseDelay, speed());
+                    syncController_->computeVideoDelay(pts, duration, baseDelay, curSpeed);
 
                 // 检查是否需要丢弃此帧
                 if (syncDelay < 0) {

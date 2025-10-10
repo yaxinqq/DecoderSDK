@@ -66,7 +66,7 @@ private:
      * @param lastSpeed 上一次解码速度
      * @return 是否需要重新初始化
      */
-    bool needResampleUpdate(double lastSpeed);
+    bool needResampleUpdate(uint16_t lastSpeed);
 
     /**
      * @brief 初始化格式转换上下文
