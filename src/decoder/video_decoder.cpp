@@ -781,7 +781,7 @@ void VideoDecoder::decodeLoop()
             // 将解码后的帧复制到输出帧
             *outFrame = std::move(outputFrame);
             outFrame->setSerial(serial);
-            outFrame->setDurationByFps(duration / curSpeed);
+            outFrame->setDurationByFps(duration);
             outFrame->setSecPts(pts);
             outFrame->setMediaType(AVMEDIA_TYPE_VIDEO);
             outFrame->setUserSEIDataList(
