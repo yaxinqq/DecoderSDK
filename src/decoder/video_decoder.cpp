@@ -16,6 +16,10 @@ extern "C" {
 #include "stream_sync/stream_sync_manager.h"
 #include "utils/common_utils.h"
 
+#ifdef VAAPI_AVAILABLE
+#include "vaapi/vaapi_utils.h"
+#endif
+
 DECODER_SDK_NAMESPACE_BEGIN
 INTERNAL_NAMESPACE_BEGIN
 
@@ -24,6 +28,8 @@ const std::string kVideoDecoderName = "Video Decoder";
 
 // 硬解出错，降级到软解的容忍时间
 constexpr int kDefaultFallbackToleranceTime = 2000; // 单位：毫秒
+// send packet持续出错最大次数
+constexpr int kSendPacketMaxErrorCount = 25;
 
 bool frameIsKey(const Frame &frame)
 {
@@ -428,6 +434,97 @@ std::vector<UserSEIData> parseSEIFromPacket(const Packet &packet, bool codecIsHe
 
     return results;
 }
+
+
+#ifdef VAAPI_AVAILABLE
+// VaapiSurfaceEGLExportData对应的AVBufferRef的清理回调
+static void vaapiSurfaceEGLExportDataFree(void *opaque, uint8_t *data)
+{
+    if (!data)
+        return;
+
+    auto* externalData = reinterpret_cast<VaapiSurfaceEGLExportData*>(data);
+
+    // 关闭所有有效 fd
+    for (uint32_t i = 0; i < externalData->numObjects; ++i) {
+        if (externalData->objects[i].fd >= 0) {
+            close(externalData->objects[i].fd);
+            externalData->objects[i].fd = -1;
+        }
+    }
+
+    // 清理内存
+    av_free(externalData);
+}
+
+// 创建VaapiSurfaceEGLExportData对应的AVBufferRef
+AVBufferRef* createVaapiSurfaceEGLExportDataBuffer(const VADRMPRIMESurfaceDescriptor &desc)
+{
+    // 分配 VaapiSurfaceEGLExportData
+    VaapiSurfaceEGLExportData* data =
+        reinterpret_cast<VaapiSurfaceEGLExportData*>(av_mallocz(sizeof(VaapiSurfaceEGLExportData)));
+    if (!data)
+        return nullptr;
+
+    // 复制基本信息
+    data->fourcc = desc.fourcc;
+    data->width = desc.width;
+    data->height = desc.height;
+
+    // 复制对象信息
+    data->numObjects = desc.num_objects;
+    for (uint32_t i = 0; i < desc.num_objects; ++i) {
+        data->objects[i].fd = desc.objects[i].fd;
+        data->objects[i].size = desc.objects[i].size;
+        data->objects[i].drmFormatModifier = desc.objects[i].drm_format_modifier;
+    }
+
+    // 复制 layer 信息
+    data->numLayers = desc.num_layers;
+    for (uint32_t l = 0; l < desc.num_layers; ++l) {
+        const auto& srcLayer = desc.layers[l];
+        auto& dstLayer = data->layers[l];
+
+        dstLayer.drmFormat = srcLayer.drm_format;
+        dstLayer.numPlanes = srcLayer.num_planes;
+
+        for (uint32_t p = 0; p < srcLayer.num_planes; ++p) {
+            dstLayer.objectIndex[p] = srcLayer.object_index[p];
+            dstLayer.offset[p] = srcLayer.offset[p];
+            dstLayer.pitch[p] = srcLayer.pitch[p];
+        }
+    }
+
+    // 创建 AVBufferRef
+    AVBufferRef* buf = av_buffer_create(
+        reinterpret_cast<uint8_t*>(data),
+        sizeof(VaapiSurfaceEGLExportData),
+        vaapiSurfaceEGLExportDataFree,
+        nullptr,
+        0
+    );
+
+    if (!buf) {
+        // 创建失败，释放内存
+        av_free(data);
+        return nullptr;
+    }
+
+    return buf;
+}
+
+void clearSurfaceCache(std::unordered_map<VASurfaceID, AVBufferRef*> &surfaceCache)
+{
+    // 清理surface缓存
+    for (auto &pair : surfaceCache) {
+        if (pair.second) {
+            av_buffer_unref(&pair.second);
+        }
+    }
+    surfaceCache.clear();
+}
+#endif
+
 } // namespace
 
 VideoDecoder::VideoDecoder(std::shared_ptr<Demuxer> demuxer,
@@ -508,6 +605,14 @@ void VideoDecoder::decodeLoop()
         return;
     }
 
+#ifdef VAAPI_AVAILABLE
+    // Surface缓存池
+    std::unordered_map<VASurfaceID, AVBufferRef*> surfaceCache;
+
+    // vadisplay
+    auto *vaDisplay = (hwAccel_ && hwAccel_->getType() == HWAccelType::kVaapi) ? hwAccel_->getVADisplay() : nullptr;
+#endif
+
     auto serial = packetQueue->serial();
     syncController_->updateVideoClock(0.0, serial);
 
@@ -516,7 +621,8 @@ void VideoDecoder::decodeLoop()
     bool occuredError = false;
     bool transToAVCC = false;
     std::optional<std::chrono::system_clock::time_point> errorStartTime;
-
+    int sendPacketErrorCount = 0;
+        
     std::vector<uint8_t> sps;
     std::vector<uint8_t> pps;
 
@@ -643,8 +749,24 @@ void VideoDecoder::decodeLoop()
             }
 
             // 判断是否需要退化到软解
-            if (readFirstFrame || !shouldFallbackToSoftware(ret))
+            if (readFirstFrame || !shouldFallbackToSoftware(ret)) {
+                // 不需要退化到软解时，需要累计出错次数，当出错次数达到限制时，flush
+                if (++sendPacketErrorCount >= kSendPacketMaxErrorCount) {
+                    sendPacketErrorCount = 0;
+                    
+                    // flush
+                    avcodec_flush_buffers(codecCtx_);
+                    // 重新等待关键帧
+                    hasKeyFrame = false;
+                    // 重置视频时钟
+                    syncController_->updateVideoClock(0.0, serial);
+                    // 重置最后帧时间
+                    lastFrameTime_ = std::nullopt;
+                }
+
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
                 continue;
+            }
 
             // 记录出错时间
             const auto currentTime = std::chrono::system_clock::now();
@@ -671,6 +793,7 @@ void VideoDecoder::decodeLoop()
             }
             continue;
         }
+        sendPacketErrorCount = 0;
 
         // 循环接收所有可能的解码帧
         while (true) {
@@ -786,6 +909,33 @@ void VideoDecoder::decodeLoop()
             outFrame->setMediaType(AVMEDIA_TYPE_VIDEO);
             outFrame->setUserSEIDataList(
                 seiDataList); // 这里不使用move是适配一个packet解出多个frame的情况
+
+#ifdef VAAPI_AVAILABLE
+            // 如果当前是vaapi, 则缓存surface
+            // 并将导出的surface赋值给Frame
+            if (outFrame->pixelFormat() == AV_PIX_FMT_VAAPI && vaDisplay) {
+                const VASurfaceID surfaceID = (VASurfaceID)(uintptr_t)frame.data(3);
+
+                // 同步surface
+                va_wrapper::syncVASurface(vaDisplay, surfaceID);
+
+                if (const auto iter = surfaceCache.find(surfaceID); iter == surfaceCache.end()) {
+                    // surface不在缓存中，创建引用
+                    // 导出surface
+                    const auto desc = va_wrapper::exportVASurfaceHandle(vaDisplay, surfaceID);
+                    // 创建VaapiSurfaceEGLExportData对应的AVBufferRef
+                    auto *bufref = createVaapiSurfaceEGLExportDataBuffer(desc);
+                    if (!bufref) {
+                        LOG_WARN("Failed to create VaapiSurfaceEGLExportData buffer for surface {}", surfaceID);
+                    } else {
+                        surfaceCache.insert({surfaceID, bufref});
+                        outFrame->attachVaapiSurfaceEGLExportData(bufref);
+                    }
+                } else {
+                    outFrame->attachVaapiSurfaceEGLExportData(iter->second);
+                }
+            }
+#endif
 
             // 如果启用了帧率控制，则根据帧率控制推送速度
             if (isFrameRateControlEnabled()) {

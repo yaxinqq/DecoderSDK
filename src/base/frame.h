@@ -1,5 +1,7 @@
 #ifndef DECODER_SDK_INTERNAL_FRAME_H
 #define DECODER_SDK_INTERNAL_FRAME_H
+#include <unistd.h> 
+
 #include <vector>
 
 extern "C" {
@@ -435,6 +437,18 @@ public:
      */
     int getAudioBufferSize() const;
     // ==================================================== //
+
+    /**
+     * @brief 获取VAAPI EGL导出数据，仅在像素格式为AV_PIX_FMT_VAAPI时有效
+     * @return VaapiSurfaceEGLExportData VAAPI EGL导出数据
+     */
+    const VaapiSurfaceEGLExportData *const vaapiSurfaceEGLExportData() const;
+
+    /**
+     * @brief 附加VAAPI EGL导出数据，仅在像素格式为AV_PIX_FMT_VAAPI时有效
+     * @param externalBuf VAAPI EGL导出数据所对应的AVBufferRef
+     */
+    void attachVaapiSurfaceEGLExportData(AVBufferRef* externalBuf);
 
     /**
      * @brief 确保帧已分配

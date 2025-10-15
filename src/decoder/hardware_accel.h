@@ -125,6 +125,14 @@ public:
         return isUserContext_;
     }
 
+#ifdef VAAPI_AVAILABLE
+    /**
+     * @brief 获取VAAPI的VADisplay
+     * @return VADisplay
+     */
+    void* getVADisplay() const;
+#endif
+
     /**
      * @brief 获取支持的硬件加速类型列表
      * @return 硬件加速类型列表

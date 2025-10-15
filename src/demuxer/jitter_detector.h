@@ -19,16 +19,28 @@ INTERNAL_NAMESPACE_BEGIN
 class JitterDetector {
 public:
     struct Config {
-        int64_t fallbackIntervalMs = 40;    // 当PTS不可用时的fallback间隔（毫秒），默认40ms（约25fps）
-        double stabilityThresholdMs = 20.0; // 稳定性判断阈值（毫秒），默认20ms
-        size_t stabilityWindowSize = 30;    // 稳定性判断窗口大小，默认30个包
-        int64_t stabilityTimeoutMs = 5000;  // 稳定性检测超时时间（毫秒），默认5秒
+        Config()
+            : fallbackIntervalMs(40),
+              stabilityThresholdMs(20.0),
+              stabilityWindowSize(30),
+              stabilityTimeoutMs(5000),
+              enableDropLatePacket(true),
+              dropJitterThreshold(200),
+              dropIntervalThreshold(5),
+              consecutiveAbnormalCount(4)
+        {
+        }
+
+        int64_t fallbackIntervalMs;  // 当PTS不可用时的fallback间隔（毫秒），默认40ms（约25fps）
+        double stabilityThresholdMs; // 稳定性判断阈值（毫秒），默认20ms
+        size_t stabilityWindowSize;  // 稳定性判断窗口大小，默认30个包
+        int64_t stabilityTimeoutMs;  // 稳定性检测超时时间（毫秒），默认5秒
 
         // 丢包策略相关参数
-        bool enableDropLatePacket = true;    // 是否启用延迟包丢弃策略
-        int64_t dropJitterThreshold = 200;   // 丢包抖动阈值（毫秒），默认200ms
-        int64_t dropIntervalThreshold = 5;   // 丢包间隔阈值（毫秒），默认5ms
-        size_t consecutiveAbnormalCount = 4; // 连续异常包数量阈值，默认4个
+        bool enableDropLatePacket;       // 是否启用延迟包丢弃策略
+        int64_t dropJitterThreshold;     // 丢包抖动阈值（毫秒），默认200ms
+        int64_t dropIntervalThreshold;   // 丢包间隔阈值（毫秒），默认5ms
+        size_t consecutiveAbnormalCount; // 连续异常包数量阈值，默认4个
     };
 
     /**
@@ -47,7 +59,7 @@ private:
      * @param url 流URL，用于日志记录
      * @param config 配置项
      */
-    explicit JitterDetector(const std::string &url, const Config config = Config());
+    explicit JitterDetector(const std::string &url, const Config &config = Config());
 
     /**
      * @brief 析构函数

@@ -479,6 +479,32 @@ int Frame::getAudioBufferSize() const
                   : 0;
 }
 
+const VaapiSurfaceEGLExportData *const Frame::vaapiSurfaceEGLExportData() const
+{
+    if (!frame_ || !frame_->opaque_ref || pixelFormat() != AV_PIX_FMT_VAAPI)
+        return nullptr;
+
+    return reinterpret_cast<const VaapiSurfaceEGLExportData *const>(frame_->opaque_ref->data);
+}
+
+void Frame::attachVaapiSurfaceEGLExportData(AVBufferRef* externalBuf)
+{
+    if (!frame_ || pixelFormat() != AV_PIX_FMT_VAAPI || !externalBuf)
+        return;
+
+    // 先增加引用计数，保证外部 Buf 不会被提前释放
+    AVBufferRef* bufRef = av_buffer_ref(externalBuf);
+    if (!bufRef)
+        return;
+
+    // 替换旧的 opaque_ref
+    if (frame_->opaque_ref) {
+        av_buffer_unref(&frame_->opaque_ref);
+    }
+
+    frame_->opaque_ref = bufRef;
+}
+
 void Frame::ensureAllocated()
 {
     if (!frame_) {

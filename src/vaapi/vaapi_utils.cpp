@@ -234,7 +234,7 @@ VADRMPRIMESurfaceDescriptor exportVASurfaceHandle(VADisplay vaDisplay, VASurface
 
     VAStatus va_status =
         vaExportSurfaceHandle(vaDisplay, vaSurfaceID, VA_SURFACE_ATTRIB_MEM_TYPE_DRM_PRIME_2,
-                              VA_EXPORT_SURFACE_READ_WRITE, &desc);
+                              VA_EXPORT_SURFACE_READ_ONLY, &desc);
 
     if (va_status != VA_STATUS_SUCCESS) {
         return {};

@@ -145,4 +145,9 @@ int Frame::getAudioBufferSize() const
 {
     return impl_ ? impl_->getAudioBufferSize() : 0;
 }
+
+const VaapiSurfaceEGLExportData *const Frame::vaapiSurfaceEGLExportData() const
+{
+    return impl_ ? impl_->vaapiSurfaceEGLExportData() : nullptr;
+}
 } // namespace decoder_sdk

@@ -9,7 +9,7 @@
 DECODER_SDK_NAMESPACE_BEGIN
 INTERNAL_NAMESPACE_BEGIN
 
-JitterDetector::JitterDetector(const std::string &url, const Config config)
+JitterDetector::JitterDetector(const std::string &url, const Config &config)
     : config_(config),
       lastPts_(AV_NOPTS_VALUE),
       hasFirstPacket_(false),

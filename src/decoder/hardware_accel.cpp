@@ -304,6 +304,23 @@ int HardwareAccel::getDeviceIndex() const
     return deviceIndex_;
 }
 
+#ifdef VAAPI_AVAILABLE
+void* HardwareAccel::getVADisplay() const
+{
+    if (type_ != HWAccelType::kVaapi || !hwDeviceCtx_) {
+        return nullptr;
+    }
+
+    AVHWDeviceContext *deviceContext = (AVHWDeviceContext *)hwDeviceCtx_->data;
+    AVVAAPIDeviceContext *vaapiContext = reinterpret_cast<AVVAAPIDeviceContext *>(deviceContext->hwctx);
+    if (!vaapiContext) {
+        return nullptr;
+    }
+    
+    return vaapiContext->display;
+}
+#endif
+
 const std::vector<HWAccelInfo> &HardwareAccel::getSupportedHWAccelTypes()
 {
     static std::vector<HWAccelInfo> result;

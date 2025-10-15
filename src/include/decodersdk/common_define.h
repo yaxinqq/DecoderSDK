@@ -377,6 +377,44 @@ struct UserSEIData {
         return std::string(payload.begin(), payload.end());
     }
 };
+
+// VAAPI Surface的导出数据，用于 drm + egl 零拷贝
+struct VaapiSurfaceEGLExportData {
+    /** Pixel format fourcc of the whole surface (VA_FOURCC_*). */
+    uint32_t fourcc;
+    /** Width of the surface in pixels. */
+    uint32_t width;
+    /** Height of the surface in pixels. */
+    uint32_t height;
+    /** Number of distinct DRM objects making up the surface. */
+    uint32_t numObjects;
+    /** Description of each object. */
+    struct {
+        /** DRM PRIME file descriptor for this object. */
+        int fd;
+        /** Total size of this object (may include regions which are
+         *  not part of the surface). */
+        uint32_t size;
+        /** Format modifier applied to this object. */
+        uint64_t drmFormatModifier;
+    } objects[4];
+    /** Number of layers making up the surface. */
+    uint32_t numLayers;
+    /** Description of each layer in the surface. */
+    struct {
+        /** DRM format fourcc of this layer (DRM_FOURCC_*). */
+        uint32_t drmFormat;
+        /** Number of planes in this layer. */
+        uint32_t numPlanes;
+        /** Index in the objects array of the object containing each
+         *  plane. */
+        uint32_t objectIndex[4];
+        /** Offset within the object of each plane. */
+        uint32_t offset[4];
+        /** Pitch of each plane. */
+        uint32_t pitch[4];
+    } layers[4];
+};
 #pragma endregion
 // ===================================================== //
 

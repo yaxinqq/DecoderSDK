@@ -164,6 +164,12 @@ public:
      */
     int getAudioBufferSize() const;
 
+    /**
+     * @brief 获取VAAPI EGL导出数据，仅在像素格式为AV_PIX_FMT_VAAPI时有效
+     * @return VaapiSurfaceEGLExportData VAAPI EGL导出数据
+     */
+    const VaapiSurfaceEGLExportData *const vaapiSurfaceEGLExportData() const;
+
 private:
     std::unique_ptr<internal::Frame> impl_;
 };
