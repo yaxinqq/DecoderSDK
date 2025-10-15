@@ -735,21 +735,26 @@ void VideoDecoder::decodeLoop()
             LOG_WARN("{} send packet error, error code: {}, error string: {}", demuxer_->url(), ret,
                      utils::avErr2Str(ret));
 
-            // 如果出错的是I帧，则等待下一个I帧恢复正常
-            if (isKeyFrame) {
+            // 是否需要退化到软解
+            const auto shouldFallback = !readFirstFrame && shouldFallbackToSoftware(ret);
+
+            // 如果出错的是I帧，且此时不需要退化到软解，则等待下一个I帧恢复正常
+            if (isKeyFrame && !shouldFallback) {
                 // 处理关键帧错误
                 handleKeyFrameError(hasKeyFrame,
                                     "Key frame decode failed, waiting for next key frame");
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
                 continue;
             }
 
             // 如果是EAGAIN或EOF错误，继续等待下一个包
             if (ret == AVERROR(EAGAIN) || ret == AVERROR(EOF)) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
                 continue; // 继续
             }
 
             // 判断是否需要退化到软解
-            if (readFirstFrame || !shouldFallbackToSoftware(ret)) {
+            if (!shouldFallback) {
                 // 不需要退化到软解时，需要累计出错次数，当出错次数达到限制时，flush
                 if (++sendPacketErrorCount >= kSendPacketMaxErrorCount) {
                     sendPacketErrorCount = 0;
@@ -1146,7 +1151,7 @@ bool VideoDecoder::shouldFallbackToSoftware(int errorCode) const
     // 4. 还未解码出过视频帧
     // 5. 硬件解码还未失败过（避免重复尝试）
     return enableHardwareFallback_ && codecCtx_ && codecCtx_->hw_device_ctx &&
-           errorCode == AVERROR_INVALIDDATA;
+           (errorCode == AVERROR_INVALIDDATA || errorCode == -1);
 }
 
 bool VideoDecoder::reinitializeWithSoftwareDecoder()
