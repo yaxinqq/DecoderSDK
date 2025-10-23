@@ -107,10 +107,25 @@ private:
      */
     Frame convertSoftwareFrame(const Frame &frame);
 
+    /**
+     * @brief 重新初始化软件解码器
+     * @return 是否成功初始化
+     */
+    bool reinitializeWithSoftwareDecoder();
+
+    /**
+     * @brief 检查是否应该退回到软件解码
+     * @param errorCode 错误码
+     * @param errorCode 错误码
+     * @return 是否应该退回到软件解码
+     */
+    bool shouldFallbackToSoftware(int errorCode) const;
+
 private:
     Config config_;
 
     // FFmpeg相关
+    AVCodecID codecId_ = AV_CODEC_ID_NONE;
     AVCodecContext *codecCtx_ = nullptr;
     AVFrame *frame_ = nullptr;
     AVPacket *packet_ = nullptr;
@@ -127,8 +142,12 @@ private:
     // 回调函数
     std::function<void(const decoder_sdk::Frame &frame)> frameCallback_;
 
-    // 状态
+    // 初始化状态
     bool initialized_ = false;
+    // 是否读到了第一帧
+    bool readFirstFrame_ = false;
+    // 首次出错时间
+    std::optional<std::chrono::system_clock::time_point> errorStartTime_ = std::nullopt;
 };
 
 INTERNAL_NAMESPACE_END

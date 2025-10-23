@@ -6,6 +6,11 @@
 DECODER_SDK_NAMESPACE_BEGIN
 INTERNAL_NAMESPACE_BEGIN
 
+namespace {
+// 硬解出错，降级到软解的容忍时间
+constexpr int kDefaultFallbackToleranceTime = 1000; // 单位：毫秒
+}
+
 ZoheWsDecoderController::ZoheWsDecoderController(const Config &config) : config_(config)
 {
 	// 查找当前可用的硬解码器类型
@@ -38,6 +43,8 @@ bool ZoheWsDecoderController::initDecoder(AVCodecID codecId, int width, int heig
         return false;
     }
 
+    // 记录codecId
+    codecId_ = codecId;
     // 设置基本参数
     codecCtx_->width = width;
     codecCtx_->height = height;
@@ -115,12 +122,47 @@ bool ZoheWsDecoderController::pushPacket(const uint8_t *data, int size, int64_t 
 
     // 发送数据包到解码器
     int ret = avcodec_send_packet(codecCtx_, packet_);
-    if (ret < 0) {
-        if (ret != AVERROR(EAGAIN) && ret != AVERROR_EOF) {
-            char errBuf[AV_ERROR_MAX_STRING_SIZE];
-            av_strerror(ret, errBuf, sizeof(errBuf));
-            LOG_ERROR("Failed to send packet to decoder: {}", errBuf);
+    if (ret != 0) {
+        // 如果是EAGAIN或EOF错误，继续等待下一个包
+        if (ret == AVERROR(EAGAIN) || ret == AVERROR(EOF)) {
+            return false;
         }
+
+        // 是否需要退化到软解
+        const auto shouldFallback = !readFirstFrame_ && shouldFallbackToSoftware(ret);
+
+        // 记录出错的信息
+        LOG_WARN("Failed to send packet to decoder, error code: {}, error string: {}", ret,
+                 utils::avErr2Str(ret));
+
+        // 记录出错时间
+        const auto currentTime = std::chrono::system_clock::now();
+        if (!errorStartTime_.has_value()) {
+            errorStartTime_ = currentTime; // 记录第一次错误时间
+        }
+
+        // 判断是否超过容忍时间
+        if (std::chrono::duration_cast<std::chrono::milliseconds>(currentTime -
+                                                                  errorStartTime_.value())
+                .count() < kDefaultFallbackToleranceTime) {
+            return false; // 未超过容忍时间，继续等待
+        }
+
+        // 如果超过容忍时间，尝试软解
+        if (reinitializeWithSoftwareDecoder()) {
+            LOG_INFO("Video Decoder: Fallback to software decoding.");
+            errorStartTime_.reset(); // 重置错误计时
+            readFirstFrame_ = false;
+
+            // 重新送包
+            return pushPacket(data, size, pts, dts, mediaType);
+        } else {
+            LOG_ERROR("Video Decoder: Failed to reinitialize with software decoder.");
+
+            errorStartTime_.reset(); // 重置错误计时
+            readFirstFrame_ = false;
+        }
+        // 等待下一个包
         return false;
     }
 
@@ -135,6 +177,9 @@ bool ZoheWsDecoderController::pushPacket(const uint8_t *data, int size, int64_t 
             LOG_ERROR("Failed to receive frame from decoder: {}", errBuf);
             break;
         }
+
+        readFirstFrame_ = true;
+        errorStartTime_.reset();
 
         // 处理解码后的帧
         processDecodedFrame(mediaType);
@@ -199,10 +244,14 @@ void ZoheWsDecoderController::cleanup()
         codecCtx_ = nullptr;
     }
 
+    codecId_ = AV_CODEC_ID_NONE;
     hwAccel_.reset();
     swFrame_ = internal::Frame();
     memoryFrame_ = internal::Frame();
     initialized_ = false;
+
+    readFirstFrame_ = false;
+    errorStartTime_.reset();
 }
 
 bool ZoheWsDecoderController::isInitialized() const
@@ -249,6 +298,7 @@ void ZoheWsDecoderController::processDecodedFrame(MediaType mediaType)
     if (isHardwareFrame) {
         if (config_.requireFrameInSystemMemory) {
             resultFrame = transferHardwareFrame();
+            resultFrame.setMediaType(utils::mediaType2AVMediaType(mediaType));
 
             needToConvert = resultFrame.pixelFormat() != swAVFormat;
         }
@@ -318,6 +368,7 @@ Frame ZoheWsDecoderController::convertSoftwareFrame(const Frame &frame)
     swFrame_.setWidth(frame.width());
     swFrame_.setHeight(frame.height());
     swFrame_.setAvPts(frame.avPts());
+    swFrame_.setMediaType(frame.mediaType());
 
     // 分配缓冲区
     int ret = av_frame_get_buffer(swFrame_.get(), 0);
@@ -342,6 +393,101 @@ Frame ZoheWsDecoderController::convertSoftwareFrame(const Frame &frame)
     internal::Frame result = std::move(swFrame_);
     swFrame_ = internal::Frame(); // 重置为空，下次会重新分配
     return result;
+}
+
+bool ZoheWsDecoderController::reinitializeWithSoftwareDecoder()
+{
+    LOG_INFO("Attempting to reinitialize decoder with software decoding");
+
+    // 重置初始化完成标志
+    initialized_ = false;
+
+    // 记录当前参数
+    const int width = codecCtx_->width;
+    const int height = codecCtx_->height;
+    const AVPixelFormat format =  codecCtx_->pix_fmt;
+
+    const int extraDataSize = codecCtx_->extradata_size;
+    uint8_t *extraData = static_cast<uint8_t *>(av_mallocz(extraDataSize + AV_INPUT_BUFFER_PADDING_SIZE));
+    memcpy(extraData, codecCtx_->extradata, extraDataSize);
+
+    // 关闭当前解码器
+    if (codecCtx_) {
+        avcodec_free_context(&codecCtx_);
+        codecCtx_ = nullptr;
+    }
+
+    // 重置硬件加速器
+    hwAccel_.reset();
+
+    // 查找解码器（强制使用软件解码器）
+    const AVCodec *codec = avcodec_find_decoder(codecId_);
+    if (!codec) {
+        LOG_ERROR("Software decoder not found for codec {}", static_cast<int>(codecId_));
+        av_freep(&extraData);
+        return false;
+    }
+
+    // 分配解码器上下文
+    codecCtx_ = avcodec_alloc_context3(codec);
+    if (!codecCtx_) {
+        LOG_ERROR("Failed to allocate software decoder context");
+        av_freep(&extraData);
+        return false;
+    }
+
+    // 设置基本参数
+    codecCtx_->width = width;
+    codecCtx_->height = height;
+    codecCtx_->pix_fmt = format;
+
+    // 设置extradata
+    if (extraData && extraDataSize > 0) {
+        codecCtx_->extradata =
+            static_cast<uint8_t *>(av_mallocz(extraDataSize + AV_INPUT_BUFFER_PADDING_SIZE));
+        if (!codecCtx_->extradata) {
+            LOG_ERROR("Failed to allocate extradata");
+            cleanup();
+            av_freep(&extraData);
+            return false;
+        }
+        memcpy(codecCtx_->extradata, extraData, extraDataSize);
+        codecCtx_->extradata_size = extraDataSize;
+    }
+    // 释放extraData
+    av_freep(&extraData);
+
+    // 打开软件解码器（不设置硬件加速）
+    const int ret = avcodec_open2(codecCtx_, codec, nullptr);
+    if (ret < 0) {
+        char errBuf[AV_ERROR_MAX_STRING_SIZE];
+        av_strerror(ret, errBuf, sizeof(errBuf));
+        LOG_ERROR("Failed to open software decoder: {}", errBuf);
+        cleanup();
+        return false;
+    }
+
+    LOG_INFO("Successfully switched to software decoding for codec: {}", codec->name);
+
+    // 刷新解码器缓冲区
+    avcodec_flush_buffers(codecCtx_);
+
+    // 初始化完成
+    initialized_ = true;
+
+    return true;
+}
+
+bool ZoheWsDecoderController::shouldFallbackToSoftware(int errorCode) const
+{
+    // 检查退化条件：
+    // 1. 启用了硬件解码退化功能
+    // 2. 当前使用硬件解码（有硬件设备上下文）
+    // 3. 错误码是 AVERROR_INVALIDDATA
+    // 4. 还未解码出过视频帧
+    // 5. 硬件解码还未失败过（避免重复尝试）
+    return config_.enableHardwareFallback && codecCtx_ && codecCtx_->hw_device_ctx &&
+           (errorCode == AVERROR_INVALIDDATA || errorCode == -1);
 }
 
 INTERNAL_NAMESPACE_END
