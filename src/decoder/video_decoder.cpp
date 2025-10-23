@@ -743,13 +743,11 @@ void VideoDecoder::decodeLoop()
                 // 处理关键帧错误
                 handleKeyFrameError(hasKeyFrame,
                                     "Key frame decode failed, waiting for next key frame");
-                std::this_thread::sleep_for(std::chrono::milliseconds(1));
                 continue;
             }
 
             // 如果是EAGAIN或EOF错误，继续等待下一个包
             if (ret == AVERROR(EAGAIN) || ret == AVERROR(EOF)) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(1));
                 continue; // 继续
             }
 
@@ -1114,6 +1112,7 @@ Frame VideoDecoder::convertSoftwareFrame(const Frame &frame)
     swsFrame_.setWidth(frame.width());
     swsFrame_.setHeight(frame.height());
     swsFrame_.setAvPts(frame.avPts());
+    swsFrame_.setMediaType(frame.mediaType());
 
     // 分配缓冲区
     int ret = av_frame_get_buffer(swsFrame_.get(), 0);
