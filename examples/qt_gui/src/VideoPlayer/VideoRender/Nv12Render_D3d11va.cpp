@@ -1,6 +1,8 @@
 ﻿#ifdef D3D11VA_AVAILABLE
 #include "Nv12Render_D3d11va.h"
 
+#include <thread>
+
 #ifdef _WIN32
 #include <Windows.h>
 #include <d3d11_3.h>
@@ -44,6 +46,32 @@ Nv12Render_D3d11va::Nv12Render_D3d11va()
 {
     if (d3d11Device_) {
         d3d11Device_->GetImmediateContext(&d3d11Context_);
+
+        // 检测是否为Intel集显，如果是则启用同步解决方案
+        ComPtr<IDXGIDevice> dxgiDevice;
+        if (SUCCEEDED(d3d11Device_->QueryInterface(__uuidof(IDXGIDevice), (void **)&dxgiDevice))) {
+            ComPtr<IDXGIAdapter> adapter;
+            if (SUCCEEDED(dxgiDevice->GetAdapter(&adapter))) {
+                DXGI_ADAPTER_DESC desc;
+                if (SUCCEEDED(adapter->GetDesc(&desc))) {
+                    const QString adapterDesc = QString::fromWCharArray(desc.Description);
+                    // Intel集显通常包含"Intel"字样
+                    enableSyncWorkaround_ = adapterDesc.contains("Intel", Qt::CaseInsensitive);
+                    qInfo() << QStringLiteral(
+                                   "[Nv12Render_D3d11va] Adapter: %1, Enable sync workaround: %2")
+                                   .arg(adapterDesc)
+                                   .arg(enableSyncWorkaround_);
+
+                    if (enableSyncWorkaround_) {
+                        // 创建D3D11查询对象用于同步
+                        D3D11_QUERY_DESC queryDesc = {};
+                        queryDesc.Query = D3D11_QUERY_EVENT;
+                        queryDesc.MiscFlags = 0;
+                        d3d11Device_->CreateQuery(&queryDesc, &eventQuery_);
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -52,6 +80,11 @@ Nv12Render_D3d11va::~Nv12Render_D3d11va()
     cleanup();
 
     vbo_.destroy();
+
+    // 清理同步资源
+    if (eventQuery_) {
+        eventQuery_.Reset();
+    }
 
     if (d3d11Context_) {
         d3d11Context_->ClearState();
@@ -366,6 +399,17 @@ bool Nv12Render_D3d11va::processNV12ToRGB(const decoder_sdk::Frame &frame)
     wglD3DDevice_.wglDXUnlockObjectsNV(1, &wglTextureHandle_);
     HRESULT hr =
         videoContext_->VideoProcessorBlt(videoProcessor_.Get(), outputView_.Get(), 0, 1, &stream);
+
+    // 添加同步机制以确保D3D11操作完成
+    if (enableSyncWorkaround_) {
+        // 等待GPU操作完成
+        if (!waitForGPUCompletion()) {
+            // 暂不输出
+            // qWarning() << QStringLiteral("[Nv12Render_D3d11va] Failed to wait for GPU
+            // completion!");
+        }
+    }
+
     wglD3DDevice_.wglDXLockObjectsNV(1, &wglTextureHandle_);
 
     if (FAILED(hr)) {
@@ -450,8 +494,54 @@ bool Nv12Render_D3d11va::registerTextureWithOpenGL(int width, int height)
                    << error;
         return false;
     }
+    wglD3DDevice_.wglDXLockObjectsNV(1, &wglTextureHandle_);
 
     return true;
+}
+
+bool Nv12Render_D3d11va::waitForGPUCompletion()
+{
+    if (!enableSyncWorkaround_ || !eventQuery_ || !d3d11Context_) {
+        return true; // 如果不需要同步或资源无效，直接返回成功
+    }
+
+    // 插入事件查询
+    d3d11Context_->End(eventQuery_.Get());
+
+    // 等待GPU操作完成
+    BOOL queryData = FALSE;
+    UINT queryDataSize = sizeof(BOOL);
+
+    // 轮询查询结果
+    const int maxWaitTime = 12; // 毫秒
+    const int pollInterval = 6; // 毫秒
+    const auto startTime = std::chrono::steady_clock::now();
+
+    while (std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() -
+                                                                 startTime)
+               .count() < maxWaitTime) {
+        HRESULT queryResult = d3d11Context_->GetData(eventQuery_.Get(), &queryData, queryDataSize,
+                                                     D3D11_ASYNC_GETDATA_DONOTFLUSH);
+
+        if (queryResult == S_OK && queryData == TRUE) {
+            // GPU操作已完成
+            return true;
+        } else if (queryResult == S_FALSE) {
+            // 操作尚未完成，继续等待
+            std::this_thread::sleep_for(std::chrono::milliseconds(pollInterval));
+        } else {
+            // 查询失败
+            qWarning() << QStringLiteral("[Nv12Render_D3d11va] GPU sync query failed, HRESULT:")
+                       << Qt::hex << queryResult;
+            return false;
+        }
+    }
+
+    // 超时警告 -
+    // 暂不输出，目前在集显上总是超时，但是休眠确实有助于GPU和CPU之间的同步，故使用上面的代码进行等待
+    // qWarning() << QStringLiteral("[Nv12Render_D3d11va] GPU sync timeout after
+    // %1ms").arg(maxWaitTime);
+    return false;
 }
 
 bool Nv12Render_D3d11va::drawFrame(GLuint id)

@@ -8,10 +8,32 @@ QString getCurrentGLRenderer();
 #ifdef CUDA_AVAILABLE
 #include <cuda.h>
 namespace cuda_utils {
+// 公共接口
 CUcontext getCudaContext();
 void releaseContext();
 CUdevice getCudaDevice();
 bool isCudaAvailable();
+
+// 导出CUDA函数供其他类使用
+CUresult cuInit(unsigned int Flags);
+CUresult cuCtxSetCurrent(CUcontext ctx);
+CUresult cuCtxGetCurrent(CUcontext *pctx);
+CUresult cuStreamCreate(CUstream *phStream, unsigned int Flags);
+CUresult cuStreamDestroy(CUstream hStream);
+CUresult cuStreamAddCallback(CUstream hStream, CUstreamCallback callback, void *userData,
+                             unsigned int flags);
+CUresult cuGraphicsGLRegisterImage(CUgraphicsResource *pCudaResource, unsigned int image,
+                                   unsigned int target, unsigned int Flags);
+CUresult cuGraphicsUnregisterResource(CUgraphicsResource resource);
+CUresult cuGraphicsMapResources(unsigned int count, CUgraphicsResource *resources,
+                                CUstream hStream);
+CUresult cuGraphicsUnmapResources(unsigned int count, CUgraphicsResource *resources,
+                                  CUstream hStream);
+CUresult cuGraphicsSubResourceGetMappedArray(CUarray *pArray, CUgraphicsResource resource,
+                                             unsigned int arrayIndex, unsigned int mipLevel);
+CUresult cuMemcpy2DAsync(const CUDA_MEMCPY2D *pCopy, CUstream hStream);
+CUresult cuDevicePrimaryCtxRelease(CUdevice dev);
+CUresult cuGetErrorString(CUresult error, const char **pStr);
 } // namespace cuda_utils
 #endif
 

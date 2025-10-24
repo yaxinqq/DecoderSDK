@@ -1,6 +1,7 @@
 ﻿#include "CommonUtils.h"
 #include "StreamManager.h"
 
+#include "decodersdk/decoder_sdk_def.h"
 #include "decodersdk/frame.h"
 
 #include <QDebug>
@@ -8,9 +9,14 @@
 #include <QOpenGLContext>
 #include <QOpenGLFunctions>
 #include <QVariant>
+#include <QtGlobal>
 
-#if defined(WIN32)
+#ifdef Q_OS_WINDOWS
 #include <Windows.h>
+#else
+#include <dlfcn.h>
+#define GetProcAddress dlsym
+#define FreeLibrary dlclose
 #endif
 
 namespace {
@@ -42,6 +48,35 @@ QString getGLRenderer()
     }
 
     return glRenderer;
+}
+
+#ifdef Q_OS_WINDOWS
+HMODULE loadLibrary(const char *const dllName)
+#else
+void *loadLibrary(const char *const dllName)
+#endif
+{
+#ifdef _WIN32
+    // 首先尝试系统目录的 nvcuda.dll，避免目录搜索带来的 DLL 劫持
+    HMODULE handle = nullptr;
+    char sysPath[MAX_PATH] = {0};
+    if (GetSystemDirectoryA(sysPath, MAX_PATH)) {
+        const std::string fullPath = std::string(sysPath) + "\\" + dllName;
+        handle = LoadLibraryA(fullPath.c_str());
+    }
+    if (!handle) {
+        // 退回到默认加载（PATH）
+        handle = LoadLibraryA(dllName);
+    }
+#else
+    void *handle = nullptr;
+    handle = dlopen(dllName, RTLD_LAZY);
+    if (!handle) {
+        qWarning() << QStringLiteral("Load error: %1").arg(dlerror());
+    }
+#endif
+
+    return handle;
 }
 } // namespace
 
@@ -78,23 +113,161 @@ void clearGPUResource()
 #ifdef CUDA_AVAILABLE
 #include <mutex>
 
-namespace {
-inline bool check(int e, int iLine, const char *szFile)
+namespace cuda_utils {
+// CUDA 函数指针类型定义
+typedef CUresult(CUDAAPI *PFN_cuInit)(unsigned int Flags);
+typedef CUresult(CUDAAPI *PFN_cuCtxSetCurrent)(CUcontext ctx);
+typedef CUresult(CUDAAPI *PFN_cuCtxGetCurrent)(CUcontext *pctx);
+typedef CUresult(CUDAAPI *PFN_cuDeviceGetCount)(int *count);
+typedef CUresult(CUDAAPI *PFN_cuDeviceGet)(CUdevice *device, int ordinal);
+typedef CUresult(CUDAAPI *PFN_cuDeviceGetName)(char *name, int len, CUdevice dev);
+typedef CUresult(CUDAAPI *PFN_cuDevicePrimaryCtxGetState)(CUdevice dev, unsigned int *flags,
+                                                          int *active);
+typedef CUresult(CUDAAPI *PFN_cuDevicePrimaryCtxSetFlags)(CUdevice dev, unsigned int flags);
+typedef CUresult(CUDAAPI *PFN_cuDevicePrimaryCtxRetain)(CUcontext *pctx, CUdevice dev);
+typedef CUresult(CUDAAPI *PFN_cuDevicePrimaryCtxRelease)(CUdevice dev);
+typedef CUresult(CUDAAPI *PFN_cuStreamCreate)(CUstream *phStream, unsigned int Flags);
+typedef CUresult(CUDAAPI *PFN_cuStreamDestroy)(CUstream hStream);
+typedef CUresult(CUDAAPI *PFN_cuStreamAddCallback)(CUstream hStream, CUstreamCallback callback,
+                                                   void *userData, unsigned int flags);
+typedef CUresult(CUDAAPI *PFN_cuGraphicsGLRegisterImage)(CUgraphicsResource *pCudaResource,
+                                                         unsigned int image, unsigned int target,
+                                                         unsigned int Flags);
+typedef CUresult(CUDAAPI *PFN_cuGraphicsUnregisterResource)(CUgraphicsResource resource);
+typedef CUresult(CUDAAPI *PFN_cuGraphicsMapResources)(unsigned int count,
+                                                      CUgraphicsResource *resources,
+                                                      CUstream hStream);
+typedef CUresult(CUDAAPI *PFN_cuGraphicsUnmapResources)(unsigned int count,
+                                                        CUgraphicsResource *resources,
+                                                        CUstream hStream);
+typedef CUresult(CUDAAPI *PFN_cuGraphicsSubResourceGetMappedArray)(CUarray *pArray,
+                                                                   CUgraphicsResource resource,
+                                                                   unsigned int arrayIndex,
+                                                                   unsigned int mipLevel);
+typedef CUresult(CUDAAPI *PFN_cuMemcpy2DAsync)(const CUDA_MEMCPY2D *pCopy, CUstream hStream);
+typedef CUresult(CUDAAPI *PFN_cuGetErrorString)(CUresult error, const char **pStr);
+
+// CUDA 函数表
+struct CudaFuncTable {
+    PFN_cuInit cuInit = nullptr;
+    PFN_cuCtxSetCurrent cuCtxSetCurrent = nullptr;
+    PFN_cuCtxGetCurrent cuCtxGetCurrent = nullptr;
+    PFN_cuDeviceGetCount cuDeviceGetCount = nullptr;
+    PFN_cuDeviceGet cuDeviceGet = nullptr;
+    PFN_cuDeviceGetName cuDeviceGetName = nullptr;
+    PFN_cuDevicePrimaryCtxGetState cuDevicePrimaryCtxGetState = nullptr;
+    PFN_cuDevicePrimaryCtxSetFlags cuDevicePrimaryCtxSetFlags = nullptr;
+    PFN_cuDevicePrimaryCtxRetain cuDevicePrimaryCtxRetain = nullptr;
+    PFN_cuDevicePrimaryCtxRelease cuDevicePrimaryCtxRelease = nullptr;
+    PFN_cuStreamCreate cuStreamCreate = nullptr;
+    PFN_cuStreamDestroy cuStreamDestroy = nullptr;
+    PFN_cuStreamAddCallback cuStreamAddCallback = nullptr;
+    PFN_cuGraphicsGLRegisterImage cuGraphicsGLRegisterImage = nullptr;
+    PFN_cuGraphicsUnregisterResource cuGraphicsUnregisterResource = nullptr;
+    PFN_cuGraphicsMapResources cuGraphicsMapResources = nullptr;
+    PFN_cuGraphicsUnmapResources cuGraphicsUnmapResources = nullptr;
+    PFN_cuGraphicsSubResourceGetMappedArray cuGraphicsSubResourceGetMappedArray = nullptr;
+    PFN_cuMemcpy2DAsync cuMemcpy2DAsync = nullptr;
+    PFN_cuGetErrorString cuGetErrorString = nullptr;
+};
+
+static CudaFuncTable g_cudaFuncs;
+static bool g_cudaLibLoaded = false;
+static std::mutex g_cudaLoadMutex;
+
+#ifdef Q_OS_WINDOWS
+static HMODULE g_cudaLib = nullptr;
+#else
+static void *g_cudaLib = nullptr;
+#endif
+
+static bool loadCudaLibrary()
 {
-    if (e != 0) {
-        const char *errstr = NULL;
-        cuGetErrorString(static_cast<CUresult>(e), &errstr);
-        qDebug() << "General error " << e << " error string: " << errstr << " at line " << iLine
-                 << " in file " << szFile;
+    std::lock_guard<std::mutex> lock(g_cudaLoadMutex);
+
+    if (g_cudaLibLoaded) {
+        return true;
+    }
+#ifdef Q_OS_WINDOWS
+    const char dllName[] = "nvcuda.dll";
+#else
+    const char dllName[] = "libcuda.so";
+#endif
+    g_cudaLib = loadLibrary(dllName);
+    if (g_cudaLib == nullptr) {
+        qWarning() << QStringLiteral("Failed to load CUDA library: %1").arg(dllName);
+        return false;
+    }
+
+// 定义函数加载宏
+#define LOAD_CUDA_FUNC(funcName, dllFuncName)                                                  \
+    do {                                                                                       \
+        g_cudaFuncs.funcName = (PFN_##funcName)GetProcAddress(g_cudaLib, dllFuncName);         \
+        if (!g_cudaFuncs.funcName) {                                                           \
+            qWarning() << QStringLiteral("Failed to load CUDA function: %1").arg(dllFuncName); \
+            failedFunctions.append(dllFuncName);                                               \
+        }                                                                                      \
+    } while (0)
+
+    QStringList failedFunctions;
+
+    // 加载函数
+    LOAD_CUDA_FUNC(cuInit, "cuInit");
+    LOAD_CUDA_FUNC(cuCtxSetCurrent, "cuCtxSetCurrent");
+    LOAD_CUDA_FUNC(cuCtxGetCurrent, "cuCtxGetCurrent");
+    LOAD_CUDA_FUNC(cuDeviceGetCount, "cuDeviceGetCount");
+    LOAD_CUDA_FUNC(cuDeviceGet, "cuDeviceGet");
+    LOAD_CUDA_FUNC(cuDeviceGetName, "cuDeviceGetName");
+    LOAD_CUDA_FUNC(cuDevicePrimaryCtxGetState, "cuDevicePrimaryCtxGetState");
+    LOAD_CUDA_FUNC(cuDevicePrimaryCtxSetFlags, "cuDevicePrimaryCtxSetFlags");
+    LOAD_CUDA_FUNC(cuDevicePrimaryCtxRetain, "cuDevicePrimaryCtxRetain");
+    LOAD_CUDA_FUNC(cuDevicePrimaryCtxRelease, "cuDevicePrimaryCtxRelease");
+    LOAD_CUDA_FUNC(cuStreamCreate, "cuStreamCreate");
+    LOAD_CUDA_FUNC(cuStreamDestroy, "cuStreamDestroy");
+    LOAD_CUDA_FUNC(cuStreamAddCallback, "cuStreamAddCallback");
+    LOAD_CUDA_FUNC(cuGraphicsGLRegisterImage, "cuGraphicsGLRegisterImage");
+    LOAD_CUDA_FUNC(cuGraphicsUnregisterResource, "cuGraphicsUnregisterResource");
+    LOAD_CUDA_FUNC(cuGraphicsMapResources, "cuGraphicsMapResources");
+    LOAD_CUDA_FUNC(cuGraphicsUnmapResources, "cuGraphicsUnmapResources");
+    LOAD_CUDA_FUNC(cuGraphicsSubResourceGetMappedArray, "cuGraphicsSubResourceGetMappedArray");
+    LOAD_CUDA_FUNC(cuMemcpy2DAsync, "cuMemcpy2DAsync_v2");
+    LOAD_CUDA_FUNC(cuGetErrorString, "cuGetErrorString");
+
+#undef LOAD_CUDA_FUNC
+
+    // 统计加载结果
+    if (!failedFunctions.isEmpty()) {
+        FreeLibrary(g_cudaLib);
+        g_cudaLib = nullptr;
+        qWarning() << QStringLiteral("CUDA library loaded failed!");
+        return false;
+    }
+
+    g_cudaLibLoaded = true;
+    qDebug() << QStringLiteral("CUDA library loaded successfully");
+    return true;
+}
+
+// 检查函数
+static bool check(CUresult e, int iLine, const char *szFile)
+{
+    if (e != CUDA_SUCCESS) {
+        const char *errstr = nullptr;
+        if (g_cudaFuncs.cuGetErrorString) {
+            g_cudaFuncs.cuGetErrorString(e, &errstr);
+        }
+        qDebug() << QStringLiteral("CUDA error %1 error string: %2 at line %3 in file %4")
+                        .arg(e)
+                        .arg(errstr ? errstr : "unknown")
+                        .arg(iLine)
+                        .arg(szFile);
         return false;
     }
     return true;
 }
 
 #define ck(call) check(call, __LINE__, __FILE__)
-} // namespace
 
-namespace cuda_utils {
 class CudaManager {
 public:
     static CudaManager &getInstance()
@@ -105,11 +278,16 @@ public:
 
     CUcontext getContext()
     {
+        if (!isInitialized()) {
+            qWarning() << QStringLiteral("CUDA not initialized!");
+            return nullptr;
+        }
+
         int deviceActived = 0;
         unsigned int deviceFlags = 0;
         const unsigned int desiredFlags = CU_CTX_SCHED_BLOCKING_SYNC;
 
-        if (!ck(cuDevicePrimaryCtxGetState(device_, &deviceFlags, &deviceActived))) {
+        if (!ck(g_cudaFuncs.cuDevicePrimaryCtxGetState(device_, &deviceFlags, &deviceActived))) {
             qWarning() << QStringLiteral("Failed to get CUDA device state!");
             return nullptr;
         }
@@ -118,22 +296,22 @@ public:
             qWarning() << QStringLiteral(
                 "CUDA Primary context already active with incompatible flags!");
         } else if (deviceFlags != desiredFlags) {
-            if (!ck(cuDevicePrimaryCtxSetFlags(device_, desiredFlags))) {
+            if (!ck(g_cudaFuncs.cuDevicePrimaryCtxSetFlags(device_, desiredFlags))) {
                 qWarning() << QStringLiteral("Failed to set CUDA device primary context flags!");
             }
         }
 
         CUcontext context = nullptr;
-        cuDevicePrimaryCtxRetain(&context, device_);
+        g_cudaFuncs.cuDevicePrimaryCtxRetain(&context, device_);
         return context;
     }
 
     void releaseContext()
     {
-        if (!device_)
+        if (!device_ || !g_cudaLibLoaded)
             return;
 
-        cuDevicePrimaryCtxRelease(device_);
+        g_cudaFuncs.cuDevicePrimaryCtxRelease(device_);
     }
 
     CUdevice getDevice()
@@ -143,7 +321,7 @@ public:
 
     bool isInitialized() const
     {
-        return isInitialized_.load();
+        return isInitialized_.load() && g_cudaLibLoaded;
     }
 
     // 禁止拷贝和赋值
@@ -165,13 +343,19 @@ private:
         if (isInitialized_.load())
             return;
 
-        if (cuInit(0) != CUDA_SUCCESS) {
+        // 首先尝试加载CUDA库
+        if (!loadCudaLibrary()) {
+            qWarning() << QStringLiteral("CUDA library not available");
+            return;
+        }
+
+        if (g_cudaFuncs.cuInit(0) != CUDA_SUCCESS) {
             qWarning() << QStringLiteral("CUDA initialized failed!");
             return;
         }
 
         int deviceCount = 0;
-        if (cuDeviceGetCount(&deviceCount) != CUDA_SUCCESS) {
+        if (g_cudaFuncs.cuDeviceGetCount(&deviceCount) != CUDA_SUCCESS) {
             qWarning() << QStringLiteral("CUDA get device count failed!");
             return;
         }
@@ -180,11 +364,11 @@ private:
         int deviceIndex = -1;
         for (int i = 0; i < deviceCount; ++i) {
             CUdevice dev;
-            if (cuDeviceGet(&dev, i) != CUDA_SUCCESS)
+            if (g_cudaFuncs.cuDeviceGet(&dev, i) != CUDA_SUCCESS)
                 continue;
 
             char name[256];
-            cuDeviceGetName(name, 256, dev);
+            g_cudaFuncs.cuDeviceGetName(name, 256, dev);
             if (glRenderer.contains(QString::fromStdString(name), Qt::CaseInsensitive)) {
                 deviceIndex = i;
                 break;
@@ -192,13 +376,12 @@ private:
         }
 
         if (deviceIndex < 0 || deviceIndex >= deviceCount) {
-            // 非法的设备索引
             qInfo()
                 << QStringLiteral("Invalid CUDA device index: %1, use 0 instead!").arg(deviceIndex);
             deviceIndex = 0;
         }
 
-        isInitialized_.store(cuDeviceGet(&device_, deviceIndex) == CUDA_SUCCESS);
+        isInitialized_.store(g_cudaFuncs.cuDeviceGet(&device_, deviceIndex) == CUDA_SUCCESS);
         if (isInitialized_.load()) {
             qDebug() << QStringLiteral("CUDA initialized successfully!");
         } else {
@@ -229,6 +412,89 @@ CUdevice getCudaDevice()
 bool isCudaAvailable()
 {
     return CudaManager::getInstance().isInitialized();
+}
+
+// 导出CUDA函数供其他模块使用
+CUresult cuInit(unsigned int Flags)
+{
+    return g_cudaLibLoaded ? g_cudaFuncs.cuInit(Flags) : CUDA_ERROR_UNKNOWN;
+}
+
+CUresult cuCtxSetCurrent(CUcontext ctx)
+{
+    return g_cudaLibLoaded ? g_cudaFuncs.cuCtxSetCurrent(ctx) : CUDA_ERROR_UNKNOWN;
+}
+
+CUresult cuCtxGetCurrent(CUcontext *pctx)
+{
+    return g_cudaLibLoaded ? g_cudaFuncs.cuCtxGetCurrent(pctx) : CUDA_ERROR_UNKNOWN;
+}
+
+CUresult cuStreamCreate(CUstream *phStream, unsigned int Flags)
+{
+    return g_cudaLibLoaded ? g_cudaFuncs.cuStreamCreate(phStream, Flags) : CUDA_ERROR_UNKNOWN;
+}
+
+CUresult cuStreamDestroy(CUstream hStream)
+{
+    return g_cudaLibLoaded ? g_cudaFuncs.cuStreamDestroy(hStream) : CUDA_ERROR_UNKNOWN;
+}
+
+CUresult cuStreamAddCallback(CUstream hStream, CUstreamCallback callback, void *userData,
+                             unsigned int flags)
+{
+    return g_cudaLibLoaded ? g_cudaFuncs.cuStreamAddCallback(hStream, callback, userData, flags)
+                           : CUDA_ERROR_UNKNOWN;
+}
+
+CUresult cuGraphicsGLRegisterImage(CUgraphicsResource *pCudaResource, unsigned int image,
+                                   unsigned int target, unsigned int Flags)
+{
+    return g_cudaLibLoaded
+               ? g_cudaFuncs.cuGraphicsGLRegisterImage(pCudaResource, image, target, Flags)
+               : CUDA_ERROR_UNKNOWN;
+}
+
+CUresult cuGraphicsUnregisterResource(CUgraphicsResource resource)
+{
+    return g_cudaLibLoaded ? g_cudaFuncs.cuGraphicsUnregisterResource(resource)
+                           : CUDA_ERROR_UNKNOWN;
+}
+
+CUresult cuGraphicsMapResources(unsigned int count, CUgraphicsResource *resources, CUstream hStream)
+{
+    return g_cudaLibLoaded ? g_cudaFuncs.cuGraphicsMapResources(count, resources, hStream)
+                           : CUDA_ERROR_UNKNOWN;
+}
+
+CUresult cuGraphicsUnmapResources(unsigned int count, CUgraphicsResource *resources,
+                                  CUstream hStream)
+{
+    return g_cudaLibLoaded ? g_cudaFuncs.cuGraphicsUnmapResources(count, resources, hStream)
+                           : CUDA_ERROR_UNKNOWN;
+}
+
+CUresult cuGraphicsSubResourceGetMappedArray(CUarray *pArray, CUgraphicsResource resource,
+                                             unsigned int arrayIndex, unsigned int mipLevel)
+{
+    return g_cudaLibLoaded ? g_cudaFuncs.cuGraphicsSubResourceGetMappedArray(pArray, resource,
+                                                                             arrayIndex, mipLevel)
+                           : CUDA_ERROR_UNKNOWN;
+}
+
+CUresult cuMemcpy2DAsync(const CUDA_MEMCPY2D *pCopy, CUstream hStream)
+{
+    return g_cudaLibLoaded ? g_cudaFuncs.cuMemcpy2DAsync(pCopy, hStream) : CUDA_ERROR_UNKNOWN;
+}
+
+CUresult cuDevicePrimaryCtxRelease(CUdevice dev)
+{
+    return g_cudaLibLoaded ? g_cudaFuncs.cuDevicePrimaryCtxRelease(dev) : CUDA_ERROR_UNKNOWN;
+}
+
+CUresult cuGetErrorString(CUresult error, const char **pStr)
+{
+    return g_cudaLibLoaded ? g_cudaFuncs.cuGetErrorString(error, pStr) : CUDA_ERROR_UNKNOWN;
 }
 } // namespace cuda_utils
 #endif
@@ -650,7 +916,9 @@ private:
             DXGI_ADAPTER_DESC desc;
             adapter->GetDesc(&desc);
             const auto adapterDesc = QString::fromWCharArray(desc.Description);
+            qInfo() << QStringLiteral("D3D11 AdapterDesc: %1").arg(adapterDesc);
             if (glRenderer.contains(adapterDesc, Qt::CaseInsensitive)) {
+                qInfo() << QStringLiteral("Find adapter index: %1").arg(QString::number(i));
                 break; // 使用OpenGL Context对应的设备
             }
 
@@ -812,8 +1080,11 @@ private:
             }
 
             const auto adapterDesc = QString::fromStdString(desc.Description);
+            qInfo() << QStringLiteral("D3D9 AdapterDesc: %1").arg(adapterDesc);
             if (glRenderer.contains(adapterDesc, Qt::CaseInsensitive)) {
                 adapterIndex = i;
+                qInfo()
+                    << QStringLiteral("Find adapter index: %1").arg(QString::number(adapterIndex));
                 break; // 使用OpenGL Context对应的设备
             }
         }
@@ -946,23 +1217,27 @@ struct FuncTable {
     PFNGLEGLIMAGETARGETTEXTURE2DOESPROC gl_egl_image_target_texture2d_oes;
 };
 static struct FuncTable g_funcTable;
+static std::once_flag g_init_flag_;
 
 bool loadFuncTable()
 {
-    g_funcTable.egl_create_image_KHR =
-        (PFNEGLCREATEIMAGEKHRPROC)eglGetProcAddress("eglCreateImageKHR");
+    std::call_once(g_init_flag_, []() {
+        g_funcTable.egl_create_image_KHR =
+            (PFNEGLCREATEIMAGEKHRPROC)eglGetProcAddress("eglCreateImageKHR");
+        g_funcTable.egl_destroy_image_KHR =
+            (PFNEGLDESTROYIMAGEKHRPROC)eglGetProcAddress("eglDestroyImageKHR");
+        g_funcTable.gl_egl_image_target_texture2d_oes =
+            (PFNGLEGLIMAGETARGETTEXTURE2DOESPROC)eglGetProcAddress("glEGLImageTargetTexture2DOES");
+    });
+
     if (!g_funcTable.egl_create_image_KHR) {
         qCritical() << QStringLiteral("Can not get eglCreateImageKHR proc address!");
         return false;
     }
-    g_funcTable.egl_destroy_image_KHR =
-        (PFNEGLDESTROYIMAGEKHRPROC)eglGetProcAddress("eglDestroyImageKHR");
     if (!g_funcTable.egl_destroy_image_KHR) {
         qCritical() << QStringLiteral("Can not get eglDestroyImageKHR proc address!");
         return false;
     }
-    g_funcTable.gl_egl_image_target_texture2d_oes =
-        (PFNGLEGLIMAGETARGETTEXTURE2DOESPROC)eglGetProcAddress("glEGLImageTargetTexture2DOES");
     if (!g_funcTable.gl_egl_image_target_texture2d_oes) {
         qCritical() << QStringLiteral("Can not get glEGLImageTargetTexture2DOES proc address!");
         return false;
@@ -1040,8 +1315,7 @@ private:
     {
         egl::loadFuncTable();
 
-        const auto gpuId = StreamManager::instance()->defaultDecoderConfig().hwDeviceIndex;
-        vaDisplay_ = decoder_sdk::createDrmVADisplay(fd_, gpuId);
+        vaDisplay_ = decoder_sdk::createDrmVADisplay(fd_);
         if (vaDisplay_ == nullptr) {
             qWarning() << QStringLiteral("VADisplay initialize failed!");
         } else {

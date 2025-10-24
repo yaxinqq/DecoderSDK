@@ -54,13 +54,16 @@ const char *fsrc = R"(
 )";
 } // namespace
 
-inline bool check(int e, int iLine, const char *szFile)
+inline bool check(CUresult e, int iLine, const char *szFile)
 {
-    if (e != 0) {
-        const char *errstr = NULL;
-        cuGetErrorString(static_cast<CUresult>(e), &errstr);
-        qDebug() << "General error " << e << " error string: " << errstr << " at line " << iLine
-                 << " in file " << szFile;
+    if (e != CUDA_SUCCESS) {
+        const char *errstr = nullptr;
+        cuda_utils::cuGetErrorString(e, &errstr);
+        qDebug() << QStringLiteral("General error %1 error string: %2 at line %3 in file %4")
+                        .arg(e)
+                        .arg(errstr ? errstr : "unknown")
+                        .arg(iLine)
+                        .arg(szFile);
         return false;
     }
     return true;
@@ -70,26 +73,27 @@ inline bool check(int e, int iLine, const char *szFile)
 
 Nv12Render_Cuda::Nv12Render_Cuda() : VideoRender(), context_(cuda_utils::getCudaContext())
 {
+    cuda_utils::cuCtxSetCurrent(context_);
 }
 
 Nv12Render_Cuda::~Nv12Render_Cuda()
 {
     if (!resourceYRegisteredFailed_) {
-        ck(cuGraphicsUnmapResources(1, &resourceY_, copyYStream_));
-        ck(cuGraphicsUnregisterResource(resourceY_));
+        ck(cuda_utils::cuGraphicsUnmapResources(1, &resourceY_, copyYStream_));
+        ck(cuda_utils::cuGraphicsUnregisterResource(resourceY_));
     }
     if (!resourceUVRegisteredFailed_) {
-        ck(cuGraphicsUnmapResources(1, &resourceUV_, copyUVStream_));
-        ck(cuGraphicsUnregisterResource(resourceUV_));
+        ck(cuda_utils::cuGraphicsUnmapResources(1, &resourceUV_, copyUVStream_));
+        ck(cuda_utils::cuGraphicsUnregisterResource(resourceUV_));
     }
 
     if (copyYStream_)
-        ck(cuStreamDestroy(copyYStream_));
+        ck(cuda_utils::cuStreamDestroy(copyYStream_));
     if (copyUVStream_)
-        ck(cuStreamDestroy(copyUVStream_));
+        ck(cuda_utils::cuStreamDestroy(copyUVStream_));
 
     if (context_) {
-        ck(cuDevicePrimaryCtxRelease(cuda_utils::getCudaDevice()));
+        ck(cuda_utils::cuDevicePrimaryCtxRelease(cuda_utils::getCudaDevice()));
     }
 
     vbo_.destroy();
@@ -150,28 +154,26 @@ bool Nv12Render_Cuda::initRenderTexture(const decoder_sdk::Frame &frame)
 
 bool Nv12Render_Cuda::initInteropsResource(const decoder_sdk::Frame &frame)
 {
-    cuCtxSetCurrent(context_);
-
-    if (!ck(cuGraphicsGLRegisterImage(&resourceY_, idY_, GL_TEXTURE_2D,
-                                      CU_GRAPHICS_REGISTER_FLAGS_WRITE_DISCARD))) {
+    if (!ck(cuda_utils::cuGraphicsGLRegisterImage(&resourceY_, idY_, GL_TEXTURE_2D,
+                                                  CU_GRAPHICS_REGISTER_FLAGS_WRITE_DISCARD))) {
         resourceYRegisteredFailed_ = true;
         return false;
     }
-    if (!ck(cuGraphicsGLRegisterImage(&resourceUV_, idUV_, GL_TEXTURE_2D,
-                                      CU_GRAPHICS_REGISTER_FLAGS_WRITE_DISCARD))) {
+    if (!ck(cuda_utils::cuGraphicsGLRegisterImage(&resourceUV_, idUV_, GL_TEXTURE_2D,
+                                                  CU_GRAPHICS_REGISTER_FLAGS_WRITE_DISCARD))) {
         resourceUVRegisteredFailed_ = true;
         return false;
     }
 
-    ck(cuStreamCreate(&copyYStream_, CU_STREAM_NON_BLOCKING));
-    ck(cuStreamCreate(&copyUVStream_, CU_STREAM_NON_BLOCKING));
+    ck(cuda_utils::cuStreamCreate(&copyYStream_, 1));
+    ck(cuda_utils::cuStreamCreate(&copyUVStream_, 1));
 
     // 资源映射，只映射一次，不再重复映射
-    ck(cuGraphicsMapResources(1, &resourceY_, 0));
-    ck(cuGraphicsSubResourceGetMappedArray(&cudaArrayY_, resourceY_, 0, 0));
+    ck(cuda_utils::cuGraphicsMapResources(1, &resourceY_, 0));
+    ck(cuda_utils::cuGraphicsSubResourceGetMappedArray(&cudaArrayY_, resourceY_, 0, 0));
 
-    ck(cuGraphicsMapResources(1, &resourceUV_, 0));
-    ck(cuGraphicsSubResourceGetMappedArray(&cudaArrayUV_, resourceUV_, 0, 0));
+    ck(cuda_utils::cuGraphicsMapResources(1, &resourceUV_, 0));
+    ck(cuda_utils::cuGraphicsSubResourceGetMappedArray(&cudaArrayUV_, resourceUV_, 0, 0));
 
     return true;
 }
@@ -195,7 +197,7 @@ bool Nv12Render_Cuda::renderFrame(const decoder_sdk::Frame &frame)
     mY.dstArray = cudaArrayY_;
     mY.WidthInBytes = frame.width();
     mY.Height = frame.height();
-    ck(cuMemcpy2DAsync(&mY, copyYStream_));
+    ck(cuda_utils::cuMemcpy2DAsync(&mY, copyYStream_));
 
     // UV 通道处理
     CUDA_MEMCPY2D mUV = {0};
@@ -206,10 +208,10 @@ bool Nv12Render_Cuda::renderFrame(const decoder_sdk::Frame &frame)
     mUV.dstArray = cudaArrayUV_;
     mUV.WidthInBytes = frame.width();
     mUV.Height = frame.height() >> 1;
-    ck(cuMemcpy2DAsync(&mUV, copyUVStream_));
+    ck(cuda_utils::cuMemcpy2DAsync(&mUV, copyUVStream_));
 
     // 添加回调，等异步任务结束后，解除条件变量的等待
-    ck(cuStreamAddCallback(
+    ck(cuda_utils::cuStreamAddCallback(
         copyYStream_,
         [](CUstream stream, CUresult result, void *userData) {
             Nv12Render_Cuda *self = static_cast<Nv12Render_Cuda *>(userData);
@@ -224,7 +226,7 @@ bool Nv12Render_Cuda::renderFrame(const decoder_sdk::Frame &frame)
             }
         },
         this, 0));
-    ck(cuStreamAddCallback(
+    ck(cuda_utils::cuStreamAddCallback(
         copyUVStream_,
         [](CUstream stream, CUresult result, void *userData) {
             Nv12Render_Cuda *self = static_cast<Nv12Render_Cuda *>(userData);

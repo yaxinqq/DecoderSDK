@@ -325,11 +325,6 @@ void *StreamManager::createHwContextCallback(decoder_sdk::HWAccelType type)
             return cuda_utils::getCudaContext();
 #endif
 
-#ifdef VAAPI_AVAILABLE
-        case decoder_sdk::HWAccelType::kVaapi:
-            return vaapi_utils::getVADisplayDRM();
-#endif
-
         default:
             break;
     }

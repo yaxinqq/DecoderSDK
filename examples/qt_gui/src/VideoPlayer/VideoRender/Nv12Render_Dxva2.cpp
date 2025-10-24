@@ -263,6 +263,7 @@ bool Nv12Render_Dxva2::registerTextureWithOpenGL(int width, int height)
 
         return false;
     }
+    wglD3DDevice_.wglDXLockObjectsNV(1, &wglTextureHandle_);
 
     return true;
 }

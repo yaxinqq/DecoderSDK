@@ -68,10 +68,9 @@ private:
     void cleanupEGLTextures();
 
 private:
-    // EGL图像相关资源。fd在不使用后一定要关掉
+    // EGL图像相关资源
     struct EGLImage {
         void *imageKHR = nullptr;
-        int fd = -1;
     };
 
     QMutex mtx_;
@@ -81,9 +80,6 @@ private:
 
     EGLImage yImage_;
     EGLImage uvImage_;
-
-    // 生命周期归外部管理
-    VADisplay vaDisplay_;
 
     // EGL上下文相关
     QVariant nativeEglHandle_;

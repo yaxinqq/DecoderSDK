@@ -271,6 +271,9 @@ bool VideoRender::initializeFboDrawResources(const QSize &size)
     fboDrawProgram_.addCacheableShaderFromSourceCode(QOpenGLShader::Vertex, vsrc);
     fboDrawProgram_.addCacheableShaderFromSourceCode(QOpenGLShader::Fragment, fsrc);
     fboDrawProgram_.link();
+    fboDrawProgram_.bind();
+    fboDrawProgram_.setUniformValue("texture", 0);
+    fboDrawProgram_.release();
 
     // 全屏quad的顶点数据（交错式布局）
     const GLfloat vertices[] = {// 位置坐标               // 纹理坐标
@@ -302,7 +305,6 @@ void VideoRender::drawFbo(QSharedPointer<QOpenGLFramebufferObject> fbo)
 
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, fbo->texture());
-    fboDrawProgram_.setUniformValue("texture", 0);
 
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 

@@ -1,6 +1,7 @@
 ﻿#pragma once
 #ifdef CUDA_AVAILABLE
 
+#include "../CommonUtils.h"
 #include "VideoRender.h"
 
 #include <QMutex>
@@ -8,9 +9,6 @@
 #include <QOpenGLFramebufferObject>
 #include <QOpenGLFunctions>
 #include <QOpenGLShaderProgram>
-
-#include <cuda.h>
-#include <cudaGL.h>
 
 #include <condition_variable>
 

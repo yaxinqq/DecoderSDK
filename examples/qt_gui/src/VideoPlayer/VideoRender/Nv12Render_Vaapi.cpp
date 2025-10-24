@@ -68,8 +68,7 @@ inline bool checkError(const char *msg, int iLine, const char *szFile)
 }
 #define ck(call) checkError(call, __LINE__, __FILE__)
 
-Nv12Render_Vaapi::Nv12Render_Vaapi(QOpenGLContext *ctx)
-    : VideoRender(), vaDisplay_(vaapi_utils::getVADisplayDRM())
+Nv12Render_Vaapi::Nv12Render_Vaapi(QOpenGLContext *ctx) : VideoRender()
 {
     if (ctx && ctx->isValid()) {
         nativeEglHandle_ = ctx->nativeHandle();
@@ -77,6 +76,8 @@ Nv12Render_Vaapi::Nv12Render_Vaapi(QOpenGLContext *ctx)
             qWarning() << QStringLiteral("[Nv12Render_Vaapi] Can not get eglContext!");
         }
     }
+
+    egl::loadFuncTable();
 }
 
 Nv12Render_Vaapi::~Nv12Render_Vaapi()
@@ -149,31 +150,33 @@ bool Nv12Render_Vaapi::renderFrame(const decoder_sdk::Frame &frame)
 {
     QEGLNativeContext eglContext = nativeEglHandle_.value<QEGLNativeContext>();
 
-    if (!frame.isValid() || !vaDisplay_ || !eglContext.context()) {
+    if (!frame.isValid() || !eglContext.context()) {
         clearGL();
         return false;
     }
 
     cleanupEGLTextures();
 
-    const VASurfaceID surfaceID = (VASurfaceID)(uintptr_t)frame.data(3);
-    decoder_sdk::syncVASurface(vaDisplay_, surfaceID);
+    const auto *exportData = frame.vaapiSurfaceEGLExportData();
+    if (!exportData) {
+        qWarning() << QStringLiteral(
+            "[Nv12Render_Vaapi] vaapiSurfaceEGLExportData is nullptr, can not render!");
+        return false;
+    }
 
     // zero copy
-    const auto desc = decoder_sdk::exportVASurfaceHandle(vaDisplay_, surfaceID);
-
     EGLint yAttrs[] = {EGL_LINUX_DRM_FOURCC_EXT,
-                       static_cast<EGLint>(desc.layers[0].drm_format),
+                       static_cast<EGLint>(exportData->layers[0].drmFormat),
                        EGL_WIDTH,
                        frame.width(),
                        EGL_HEIGHT,
                        frame.height(),
                        EGL_DMA_BUF_PLANE0_FD_EXT,
-                       desc.objects[0].fd,
+                       exportData->objects[0].fd,
                        EGL_DMA_BUF_PLANE0_OFFSET_EXT,
-                       desc.layers[0].offset[0],
+                       static_cast<EGLint>(exportData->layers[0].offset[0]),
                        EGL_DMA_BUF_PLANE0_PITCH_EXT,
-                       desc.layers[0].pitch[0],
+                       static_cast<EGLint>(exportData->layers[0].pitch[0]),
                        EGL_NONE};
     yImage_.imageKHR = egl::egl_create_image_KHR(
         eglContext.display(), EGL_NO_CONTEXT, EGL_LINUX_DMA_BUF_EXT, (EGLClientBuffer)NULL, yAttrs);
@@ -181,20 +184,19 @@ bool Nv12Render_Vaapi::renderFrame(const decoder_sdk::Frame &frame)
         qWarning() << QStringLiteral(
             "[Nv12Render_Vaapi] egl_create_image_KHR to create yImageKHR failed!");
     }
-    yImage_.fd = desc.objects[0].fd;
 
     EGLint uvAttrs[] = {EGL_LINUX_DRM_FOURCC_EXT,
-                        static_cast<EGLint>(desc.layers[1].drm_format),
+                        static_cast<EGLint>(exportData->layers[1].drmFormat),
                         EGL_WIDTH,
                         frame.width() / 2,
                         EGL_HEIGHT,
                         frame.height() / 2,
                         EGL_DMA_BUF_PLANE0_FD_EXT,
-                        desc.objects[0].fd,
+                        exportData->objects[0].fd,
                         EGL_DMA_BUF_PLANE0_OFFSET_EXT,
-                        desc.layers[1].offset[0],
+                        static_cast<EGLint>(exportData->layers[1].offset[0]),
                         EGL_DMA_BUF_PLANE0_PITCH_EXT,
-                        desc.layers[1].pitch[0],
+                        static_cast<EGLint>(exportData->layers[1].pitch[0]),
                         EGL_NONE};
     uvImage_.imageKHR =
         egl::egl_create_image_KHR(eglContext.display(), EGL_NO_CONTEXT, EGL_LINUX_DMA_BUF_EXT,
@@ -203,7 +205,6 @@ bool Nv12Render_Vaapi::renderFrame(const decoder_sdk::Frame &frame)
         qWarning() << QStringLiteral(
             "[Nv12Render_Vaapi] egl_create_image_KHR to create uvImageKHR failed!");
     }
-    uvImage_.fd = desc.objects[0].fd;
 
     glBindTexture(GL_TEXTURE_2D, idY_);
     egl::gl_egl_image_target_texture2d_oes(GL_TEXTURE_2D, yImage_.imageKHR);
@@ -252,11 +253,7 @@ void Nv12Render_Vaapi::cleanupEGLTextures()
         if (image.imageKHR && eglContext.display()) {
             egl::egl_destroy_image_KHR(eglContext.display(), image.imageKHR);
         }
-        if (image.fd >= 0) {
-            ::close(image.fd);
-        }
         image.imageKHR = nullptr;
-        image.fd = -1;
     };
 
     clearFunction(yImage_, eglContext);

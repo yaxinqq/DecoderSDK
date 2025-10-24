@@ -89,6 +89,11 @@ private:
     bool registerTextureWithOpenGL(int width, int height);
 
     /*
+     * @brief 等待D3D11 GPU操作完成的同步函数
+     */
+    bool waitForGPUCompletion();
+
+    /*
      * @brief 绘制视频帧
      *
      * @prarm id RGB纹理
@@ -133,6 +138,10 @@ private:
     };
 
     std::map<std::pair<uintptr_t, UINT>, ResourceCacheEntry> resourceCache_;
+
+    // 同步机制相关
+    ComPtr<ID3D11Query> eventQuery_ = nullptr; // D3D11事件查询对象
+    bool enableSyncWorkaround_ = true;         // 是否启用同步解决方案
 };
 
 #endif
