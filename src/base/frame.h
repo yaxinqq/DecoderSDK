@@ -1,7 +1,5 @@
 #ifndef DECODER_SDK_INTERNAL_FRAME_H
 #define DECODER_SDK_INTERNAL_FRAME_H
-#include <unistd.h> 
-
 #include <vector>
 
 extern "C" {
