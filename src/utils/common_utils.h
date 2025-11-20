@@ -4,7 +4,7 @@
 #include <string>
 
 extern "C" {
-#include <libavcodec/packet.h>
+#include <libavcodec/avcodec.h>
 #include <libavutil/avutil.h>
 #include <libavutil/pixfmt.h>
 #include <libavutil/samplefmt.h>
