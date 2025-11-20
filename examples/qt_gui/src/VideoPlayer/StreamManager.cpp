@@ -300,6 +300,7 @@ void StreamManager::initDefaultDecoderConfig()
     defaultDecoderConfig_.reconnectIntervalMs = 3000;
     defaultDecoderConfig_.preBufferConfig.enablePreBuffer = false;
     defaultDecoderConfig_.audioInterleaved = true;
+    defaultDecoderConfig_.enableJitterDetector = false;
 
     defaultDecoderConfig_.createHwContextCallback =
         std::bind(&StreamManager::createHwContextCallback, this, std::placeholders::_1);
@@ -323,6 +324,11 @@ void *StreamManager::createHwContextCallback(decoder_sdk::HWAccelType type)
 #ifdef CUDA_AVAILABLE
         case decoder_sdk::HWAccelType::kCuda:
             return cuda_utils::getCudaContext();
+#endif
+
+#ifdef VULKAN_AVAILABLE
+        case decoder_sdk::HWAccelType::kVulkan:
+            return vulkan::getDeviceContext();
 #endif
 
         default:

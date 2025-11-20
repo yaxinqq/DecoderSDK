@@ -150,4 +150,22 @@ const VaapiSurfaceEGLExportData *const Frame::vaapiSurfaceEGLExportData() const
 {
     return impl_ ? impl_->vaapiSurfaceEGLExportData() : nullptr;
 }
+
+std::shared_ptr<VulkanFrame> Frame::lockVulkanFrame() const
+{
+    if (!impl_) {
+        return {};
+    }
+
+    return impl_ ? impl_->lockVulkanFrame() : std::shared_ptr<VulkanFrame>();
+}
+
+void Frame::unlockVulkanFrame(const std::shared_ptr<VulkanFrame> &vulkanFrame) const
+{
+    if (!impl_) {
+        return;
+    }
+
+    impl_->unlockVulkanFrame(vulkanFrame);
+}
 } // namespace decoder_sdk

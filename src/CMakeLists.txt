@@ -161,6 +161,11 @@ if(VDPAU_FOUND)
     target_include_directories(${PROJECT_NAME} PRIVATE ${VDPAU_INCLUDE_DIR})
 endif()
 
+# 如果VULKAN可用，添加VULKAN包含目录
+if(VULKAN_FOUND)
+    target_include_directories(${PROJECT_NAME} PRIVATE ${VULKAN_INCLUDE_DIR})
+endif()
+
 
 # 添加库文件路径
 target_link_directories(${PROJECT_NAME}

@@ -1,5 +1,6 @@
 #ifndef DECODER_SDK_INTERNAL_FRAME_H
 #define DECODER_SDK_INTERNAL_FRAME_H
+#include <memory>
 #include <vector>
 
 extern "C" {
@@ -9,6 +10,7 @@ extern "C" {
 
 #include "base_define.h"
 #include "include/decodersdk/common_define.h"
+#include "include/decodersdk/vulkan_wrapper_define.h"
 
 DECODER_SDK_NAMESPACE_BEGIN
 INTERNAL_NAMESPACE_BEGIN
@@ -446,7 +448,18 @@ public:
      * @brief 附加VAAPI EGL导出数据，仅在像素格式为AV_PIX_FMT_VAAPI时有效
      * @param externalBuf VAAPI EGL导出数据所对应的AVBufferRef
      */
-    void attachVaapiSurfaceEGLExportData(AVBufferRef* externalBuf);
+    void attachVaapiSurfaceEGLExportData(AVBufferRef *externalBuf);
+
+    /**
+     * @brief 锁定vulkan类型的帧，仅在Vulkan硬解码的环境下有效，会返回可用的VulkanFrame
+     */
+    std::shared_ptr<VulkanFrame> lockVulkanFrame() const;
+    /**
+     * @brief 解锁vulkan类型的帧，仅在Vulkan硬解码的环境下有效，会将vulkanFrame中的数据回传给AVVKFrame，完成同步
+     *        此函数会进行校验，只有vulkanFrmae里的avvkframePtr是当前avframe对应的那一帧，才会回传。
+     *        注意：在使用unlock后，对应的vulkanFrame就不应该使用了，否则会出问题
+     */
+    void unlockVulkanFrame(const std::shared_ptr<VulkanFrame> &vulkanFrame) const;
 
     /**
      * @brief 确保帧已分配

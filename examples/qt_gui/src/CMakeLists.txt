@@ -18,6 +18,12 @@ file(GLOB_RECURSE UI_FILES
 add_executable(${EXAMPLE_TARGET}
     ${MAIN_SOURCES}
     ${UI_FILES}
+
+    ${CMAKE_CURRENT_SOURCE_DIR}/../external/vk_bootstrap/include/VkBootstrap.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../external/vk_bootstrap/include/VkBootstrap.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../external/vk_bootstrap/include/VkBootstrapDispatch.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../external/vk_bootstrap/include/VkBootstrapFeatureChain.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../external/vk_bootstrap/include/VkBootstrapFeatureChain.inl
 )
 
 # Windows 特定配置

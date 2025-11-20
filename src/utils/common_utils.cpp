@@ -179,12 +179,8 @@ AVPixelFormat imageFormat2AVPixelFormat(ImageFormat format)
             return AV_PIX_FMT_CUDA;
         case ImageFormat::kVaapi:
             return AV_PIX_FMT_VAAPI;
-        case ImageFormat::kVdpau:
-            return AV_PIX_FMT_VDPAU;
-        case ImageFormat::kQsv:
-            return AV_PIX_FMT_QSV;
-        case ImageFormat::kVideoToolBox:
-            return AV_PIX_FMT_VIDEOTOOLBOX;
+        case ImageFormat::kVulkan:
+            return AV_PIX_FMT_VULKAN;
         default:
             break;
     }
@@ -220,12 +216,8 @@ ImageFormat avPixelFormat2ImageFormat(AVPixelFormat format)
             return ImageFormat::kCuda;
         case AV_PIX_FMT_VAAPI:
             return ImageFormat::kVaapi;
-        case AV_PIX_FMT_VDPAU:
-            return ImageFormat::kVdpau;
-        case AV_PIX_FMT_QSV:
-            return ImageFormat::kQsv;
-        case AV_PIX_FMT_VIDEOTOOLBOX:
-            return ImageFormat::kVideoToolBox;
+        case AV_PIX_FMT_VULKAN:
+            return ImageFormat::kVulkan;
         default:
             break;
     }

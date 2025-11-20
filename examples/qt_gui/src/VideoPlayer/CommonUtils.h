@@ -1,5 +1,6 @@
 ﻿#pragma once
 #include <QString>
+#include <QtGui/qopengl.h>
 
 void registerVideoMetaType();
 void clearGPUResource();
@@ -40,7 +41,6 @@ CUresult cuGetErrorString(CUresult error, const char **pStr);
 #if defined(D3D11VA_AVAILABLE) || defined(DXVA2_AVAILABLE)
 #include <Windows.h>
 #include <wrl/client.h>
-#include <GL/gl.h>
 #include <atomic>
 namespace wgl {
 // WGL-DX interop definitions
@@ -124,10 +124,6 @@ void shutdown();
 #endif
 
 #ifdef VAAPI_AVAILABLE
-#ifdef __unix
-#include <GL/gl.h>
-#endif
-
 #include "decodersdk/vaapi_utils.h"
 
 namespace egl {
@@ -151,4 +147,25 @@ namespace vaapi_utils {
 VADisplay getVADisplayDRM();
 bool isVAAPIAvailable();
 } // namespace vaapi_utils
+#endif
+
+#ifdef VULKAN_AVAILABLE
+#ifdef Q_OS_WIN
+#define VK_USE_PLATFORM_WIN32_KHR
+#elif Q_OS_LINUX
+#define VK_USE_PLATFORM_XCB_KHR
+#endif
+#include <VkBootstrap.h>
+
+#include "decodersdk/vulkan_wrapper_define.h"
+
+namespace vulkan {
+const vkb::InstanceDispatchTable &getInstanceDispatchTable();
+const vkb::DispatchTable &getDispatchTable();
+const vkb::Instance &getVkInstance();
+const vkb::PhysicalDevice &getVkPhysicalDevice();
+const vkb::Device &getVkDevice();
+bool isVulkanAvaliable();
+decoder_sdk::VulkanDeviceContext *getDeviceContext();
+} // namespace vulkan
 #endif

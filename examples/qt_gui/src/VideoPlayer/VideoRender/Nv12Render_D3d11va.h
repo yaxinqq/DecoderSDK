@@ -9,7 +9,6 @@
 #include <QOpenGLShaderProgram>
 
 #ifdef _WIN32
-#include <GL/gl.h>
 #include <Windows.h>
 #define D3D11_INTERFACE_DEFINED
 #define D3D11_1_INTERFACE_DEFINED

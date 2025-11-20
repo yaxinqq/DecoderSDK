@@ -41,7 +41,7 @@ DecoderSDK是一个基于FFmpeg的现代化音视频解码库，提供了简洁�
 - aarch64 (ARM 64位，Linux平台)
 
 ### 硬件加速支持
-- **Windows**: CUDA、D3D11VA、DXVA2
+- **Windows**: CUDA、D3D11VA、DXVA2、Vulkan
 - **Linux**: CUDA、VAAPI
 
 ## 系统要求
@@ -365,4 +365,8 @@ if (checkVersion(1, 0, 0)) {
 ### v1.1.0 (2025-09-29)
 - 优化在弱网环境下的表现
 - 非标H264流的兼容性
+- 一些其它已知问题
+
+### v1.2.0（2025-11-20）
+- Windows下，允许使用Vulkan解码
 - 一些其它已知问题

@@ -24,15 +24,13 @@ enum class MediaType : uint8_t {
 
 // 硬件加速类型
 enum class HWAccelType : uint8_t {
-    kNone,        // 不使用硬件加速
-    kAuto,        // 自动选择最佳硬件加速
-    kDxva2,       // DirectX Video Acceleration 2.0
-    kD3d11va,     // Direct3D 11 Video Acceleration
-    kCuda,        // NVIDIA CUDA
-    kVaapi,       // Video Acceleration API (Linux)
-    kVdpau,       // Video Decode and Presentation API for Unix (Linux)
-    kQsv,         // Intel Quick Sync Video
-    kVideoToolBox // Apple VideoToolbox (macOS/iOS)
+    kNone,         // 不使用硬件加速
+    kAuto,         // 自动选择最佳硬件加速
+    kDxva2,        // DirectX Video Acceleration 2.0
+    kD3d11va,      // Direct3D 11 Video Acceleration
+    kCuda,         // NVIDIA CUDA
+    kVaapi,        // Video Acceleration API (Linux)
+    kVulkan,       // Vulkan
 };
 
 // 图像格式枚举（部分）
@@ -53,9 +51,7 @@ enum class ImageFormat : uint8_t {
     kD3d11va,      // Direct3D 11 纹理指针
     kCuda,         // CUDA内存句柄
     kVaapi,        // VA表明，使用DRM/VA display
-    kVdpau,        // VDPAU表面格式
-    kQsv,          // Intel QSV surface
-    kVideoToolBox, // Apple平台Surface句柄
+    kVulkan,       // Vulkan
 
     kUnknown, // 未知
 };
@@ -483,12 +479,6 @@ struct Config {
         kUdpMulticast, // udp多播
     };
 
-    // 实时流模式
-    enum class RealTimeStreamMode : uint8_t {
-        kRealTimePriority, // 实时优先
-        kQualityPriority,  // 质量优先
-    };
-
     // 是否开启帧率控制
     bool enableFrameRateControl = true;
     // 播放速度
@@ -547,8 +537,8 @@ struct Config {
     // 是否解析用户自定义的SEI数据
     bool enableParseUserSEIData = true;
 
-    // 实时流模式
-    RealTimeStreamMode realTimeStreamMode = RealTimeStreamMode::kRealTimePriority;
+    // 是否开启jitter检测
+    bool enableJitterDetector = true;
 };
 
 // 预缓冲状态

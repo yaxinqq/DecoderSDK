@@ -31,4 +31,23 @@
 
 #endif
 
+#if defined(_WIN32) || defined(_WIN64)
+#define OS_WINDOWS
+#elif defined(__linux__)
+#define OS_LINUX
+#elif defined(__APPLE__) && defined(__MACH__)
+#include <TargetConditionals.h>
+#if TARGET_OS_IPHONE || TARGET_OS_SIMULATOR
+#define OS_IOS
+#else
+#define OS_MACOS
+#endif
+#elif defined(__ANDROID__)
+#define OS_ANDROID
+#elif defined(__unix__)
+#define OS_UNIX
+#else
+#define OS_UNKNOWN
+#endif
+
 #endif // DECODER_SDK_INTERNAL_BASE_DEFINE_H

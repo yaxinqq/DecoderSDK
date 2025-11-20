@@ -4,6 +4,7 @@
 #include "decodersdk/decoder_sdk_def.h"
 #include "decodersdk/frame.h"
 
+#include <QApplication>
 #include <QDebug>
 #include <QOffscreenSurface>
 #include <QOpenGLContext>
@@ -36,7 +37,8 @@ QString getGLRenderer()
     glContext.makeCurrent(&glOffscreenSurface);
     QString glRenderer;
     if (glContext.isValid()) {
-        glRenderer = QString(reinterpret_cast<const char *>(glGetString(GL_RENDERER)));
+        glRenderer = QString(
+            reinterpret_cast<const char *>(glContext.functions()->glGetString(GL_RENDERER)));
     }
     glContext.doneCurrent();
 
@@ -1339,4 +1341,679 @@ bool isVAAPIAvailable()
     return VADisplayManager::getInstance().isInitialized();
 }
 } // namespace vaapi_utils
+#endif
+
+#ifdef VULKAN_AVAILABLE
+
+namespace vulkan {
+#include <vulkan/vulkan.h>
+
+#if defined(_MSC_VER)
+#define FORCE_INLINE __forceinline
+#elif defined(__GNUC__) || defined(__clang__)
+#define FORCE_INLINE inline __attribute__((always_inline))
+#else
+#define FORCE_INLINE inline
+#endif
+
+/**
+ * Count number of bits set to one in x
+ * @param x value to count bits of
+ * @return the number of bits set to one in x
+ */
+static FORCE_INLINE int popCount(uint32_t x)
+{
+    x -= (x >> 1) & 0x55555555;
+    x = (x & 0x33333333) + ((x >> 2) & 0x33333333);
+    x = (x + (x >> 4)) & 0x0F0F0F0F;
+    x += x >> 8;
+    return (x + (x >> 16)) & 0x3F;
+}
+
+#undef FORCE_INLINE
+
+static inline int pickQueueFamily(VkQueueFamilyProperties2 *qf, uint32_t num_qf,
+                                  VkQueueFlagBits flags)
+{
+    int index = -1;
+    uint32_t min_score = UINT32_MAX;
+
+    for (uint32_t i = 0; i < num_qf; i++) {
+        VkQueueFlagBits qflags =
+            static_cast<VkQueueFlagBits>(qf[i].queueFamilyProperties.queueFlags);
+
+        /* Per the spec, reporting transfer caps is optional for these 2 types */
+        if ((flags & VK_QUEUE_TRANSFER_BIT) &&
+            (qflags & (VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT)))
+            qflags =
+                static_cast<VkQueueFlagBits>(static_cast<uint32_t>(qflags) | VK_QUEUE_TRANSFER_BIT);
+
+        if (qflags & flags) {
+            uint32_t score = popCount(qflags) + qf[i].queueFamilyProperties.timestampValidBits;
+            if (score < min_score) {
+                index = i;
+                min_score = score;
+            }
+        }
+    }
+
+    if (index > -1)
+        qf[index].queueFamilyProperties.timestampValidBits++;
+
+    return index;
+}
+
+static inline int pickVideoQueueFamily(VkQueueFamilyProperties2 *qf,
+                                       VkQueueFamilyVideoPropertiesKHR *qf_vid, uint32_t num_qf,
+                                       VkVideoCodecOperationFlagBitsKHR flags)
+{
+    int index = -1;
+    uint32_t min_score = UINT32_MAX;
+
+    for (uint32_t i = 0; i < num_qf; i++) {
+        const VkQueueFlagBits qflags =
+            static_cast<VkQueueFlagBits>(qf[i].queueFamilyProperties.queueFlags);
+        const VkQueueFlagBits vflags = static_cast<VkQueueFlagBits>(qf_vid[i].videoCodecOperations);
+
+        if (!(qflags & (VK_QUEUE_VIDEO_ENCODE_BIT_KHR | VK_QUEUE_VIDEO_DECODE_BIT_KHR)))
+            continue;
+
+        if (vflags & flags) {
+            uint32_t score = popCount(vflags) + qf[i].queueFamilyProperties.timestampValidBits;
+            if (score < min_score) {
+                index = i;
+                min_score = score;
+            }
+        }
+    }
+
+    if (index > -1)
+        qf[index].queueFamilyProperties.timestampValidBits++;
+
+    return index;
+}
+
+static int addQueueFamily(std::vector<VkDeviceQueueCreateInfo> &queueCreateInfos,
+                          std::vector<std::vector<float>> &priorityStorage,
+                          uint32_t queueFamilyIndex, uint32_t queueCount)
+{
+    if (queueCount == 0) {
+        return 0;
+    }
+
+    // 已经存在该 queueFamily ?
+    for (auto &info : queueCreateInfos) {
+        if (info.queueFamilyIndex == queueFamilyIndex) {
+            return 0;
+        }
+    }
+
+    // 为本 queueFamily 创建优先级数组
+    priorityStorage.emplace_back(queueCount);
+    auto &priorities = priorityStorage.back();
+
+    for (uint32_t i = 0; i < queueCount; ++i) {
+        priorities[i] = 1.0f / queueCount;
+    }
+
+    // 新建一个 VkDeviceQueueCreateInfo
+    VkDeviceQueueCreateInfo info{};
+    info.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+    info.queueFamilyIndex = queueFamilyIndex;
+    info.queueCount = queueCount;
+    info.pQueuePriorities = priorities.data(); // 绑定 vector 内的数据
+
+    queueCreateInfos.push_back(info);
+    return 0;
+}
+
+const char *toStringMessageSeverity(VkDebugUtilsMessageSeverityFlagBitsEXT s)
+{
+    switch (s) {
+        case VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT:
+            return "VERBOSE";
+        case VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT:
+            return "ERROR";
+        case VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT:
+            return "WARNING";
+        case VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT:
+            return "INFO";
+        default:
+            return "UNKNOWN";
+    }
+}
+const char *toStringMessageType(VkDebugUtilsMessageTypeFlagsEXT s)
+{
+    if (s == 7)
+        return "General | Validation | Performance";
+    if (s == 6)
+        return "Validation | Performance";
+    if (s == 5)
+        return "General | Performance";
+    if (s == 4 /*VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT*/)
+        return "Performance";
+    if (s == 3)
+        return "General | Validation";
+    if (s == 2 /*VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT*/)
+        return "Validation";
+    if (s == 1 /*VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT*/)
+        return "General";
+    return "Unknown";
+}
+
+// Default debug messenger
+// Feel free to copy-paste it into your own code, change it as needed, then call
+// `set_debug_callback()` to use that instead
+static VkBool32 customDebugCallback(VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
+                                    VkDebugUtilsMessageTypeFlagsEXT messageType,
+                                    const VkDebugUtilsMessengerCallbackDataEXT *pCallbackData,
+                                    void *)
+{
+    /* Ignore false positives */
+    switch (pCallbackData->messageIdNumber) {
+        case 0x086974c1: /* BestPractices-vkCreateCommandPool-command-buffer-reset */
+        case 0xfd92477a: /* BestPractices-vkAllocateMemory-small-allocation */
+        case 0x618ab1e7: /* VUID-VkImageViewCreateInfo-usage-02275 */
+        case 0x30f4ac70: /* VUID-VkImageCreateInfo-pNext-06811 */
+            return VK_FALSE;
+        default:
+            break;
+    }
+
+    auto ms = toStringMessageSeverity(messageSeverity);
+    auto mt = toStringMessageType(messageType);
+    if (messageType & VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT) {
+        qDebug().noquote() << QStringLiteral("[%1: %2] - %3\n%4\n")
+                        .arg(ms, mt, pCallbackData->pMessageIdName, pCallbackData->pMessage);
+    } else {
+        qDebug().noquote() << QStringLiteral("[%1: %2]\n%3\n").arg(ms, mt, pCallbackData->pMessage);
+    }
+
+    return VK_FALSE; // Applications must return false here (Except Validation, if return true, will
+                     // skip calling to driver)
+}
+
+class VulkanManager {
+#include <vulkan/vulkan.h>
+
+public:
+    static VulkanManager &getInstance()
+    {
+        static VulkanManager instance;
+        return instance;
+    }
+
+    const vkb::InstanceDispatchTable &instanceDispatchTable()
+    {
+        std::call_once(initFlag_, [this]() { initialize(); });
+        return vkInstanceDispatchTable_;
+    }
+
+    const vkb::DispatchTable &dispatchTable()
+    {
+        std::call_once(initFlag_, [this]() { initialize(); });
+        return vkDispatchTable_;
+    }
+
+    const vkb::Instance &instance()
+    {
+        std::call_once(initFlag_, [this]() { initialize(); });
+        return vkInstance_;
+    }
+
+    const vkb::PhysicalDevice &physicalDevice()
+    {
+        std::call_once(initFlag_, [this]() { initialize(); });
+        return vkPhysicalDevice_;
+    }
+
+    const vkb::Device &device()
+    {
+        std::call_once(initFlag_, [this]() { initialize(); });
+        return vkDevice_;
+    }
+
+    decoder_sdk::VulkanDeviceContext *deviceContext()
+    {
+        std::call_once(initFlag_, [this]() { initialize(); });
+        if (!deviceContext_) {
+            setupDeviceContext();
+        }
+
+        return deviceContext_.get();
+    }
+
+    bool isInitialized() const
+    {
+        return initialized_;
+    }
+
+    void cleanup()
+    {
+        if (!initialized_)
+            return;
+
+        if (vkDispatchTable_.fp_vkDeviceWaitIdle) {
+            vkDispatchTable_.fp_vkDeviceWaitIdle(vkDevice_.device);
+        }
+
+        vkb::destroy_device(vkDevice_);
+        vkb::destroy_instance(vkInstance_);
+
+        initialized_ = false;
+    }
+
+    // 禁止拷贝和赋值
+    VulkanManager(const VulkanManager &) = delete;
+    VulkanManager &operator=(const VulkanManager &) = delete;
+
+private:
+    VulkanManager() = default;
+    ~VulkanManager()
+    {
+        cleanup();
+    }
+
+    void initialize();
+
+    bool createInstance();
+    bool selectPhysicalDevice();
+    bool createDevice();
+
+    void setupDeviceContext();
+
+private:
+    std::once_flag initFlag_;
+    bool initialized_ = false;
+
+    vkb::Instance vkInstance_;
+    vkb::PhysicalDevice vkPhysicalDevice_;
+    vkb::Device vkDevice_;
+
+    vkb::InstanceDispatchTable vkInstanceDispatchTable_;
+    vkb::DispatchTable vkDispatchTable_;
+
+    std::vector<const char *> vkDeviceExtensions_;
+    std::vector<const char *> vkInstanceExtensions_;
+
+    int nbqf_ = 0;
+    decoder_sdk::VulkanDeviceQueueFamily queueFamily_[64];
+    std::shared_ptr<decoder_sdk::VulkanDeviceContext> deviceContext_;
+};
+
+void VulkanManager::initialize()
+{
+    try {
+        qInfo() << QStringLiteral("Initializing Vulkan Resources...");
+
+        if (!createInstance()) {
+            return;
+        }
+        qInfo() << QStringLiteral("Vulkan instance created");
+
+        if (!selectPhysicalDevice()) {
+            return;
+        }
+        qInfo() << QStringLiteral("Physical device selected");
+
+        if (!createDevice()) {
+            vkb::destroy_instance(vkInstance_);
+            return;
+        }
+        qInfo() << QStringLiteral("Logical device created");
+
+        initialized_ = true;
+    } catch (const std::exception &e) {
+        vkb::destroy_device(vkDevice_);
+        vkb::destroy_instance(vkInstance_);
+        qWarning() << QStringLiteral("Failed to initialize Vulkan: %1").arg(e.what());
+    }
+}
+
+bool VulkanManager::createInstance()
+{
+    vkb::InstanceBuilder builder;
+
+    auto ret = builder.set_app_name(qApp->applicationName().toStdString().c_str())
+                   .request_validation_layers(true)
+                   .use_default_debug_messenger()
+                   .require_api_version(1, 3, 0)
+                   .enable_extension(VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME)
+                   .enable_extension(VK_EXT_LAYER_SETTINGS_EXTENSION_NAME)
+                   .enable_extension(VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME)
+                   .set_debug_callback(customDebugCallback)
+                   .set_headless()
+                   .build();
+
+    vkInstanceExtensions_.push_back(VK_EXT_LAYER_SETTINGS_EXTENSION_NAME);
+    vkInstanceExtensions_.push_back(VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME);
+    vkInstanceExtensions_.push_back(VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME);
+
+    if (!ret) {
+        qWarning() << QStringLiteral("Failed to create Vulkan instance: %1")
+                          .arg(QString::fromStdString(ret.error().message()));
+        return false;
+    }
+
+    vkInstance_ = ret.value();
+    vkInstanceDispatchTable_ = vkInstance_.make_table();
+    return true;
+}
+
+bool VulkanManager::selectPhysicalDevice()
+{
+    vkb::PhysicalDeviceSelector selector{vkInstance_};
+    auto ret = selector.set_minimum_version(1, 3)
+                   .add_required_extension(VK_KHR_SAMPLER_YCBCR_CONVERSION_EXTENSION_NAME)
+                   .add_required_extension(VK_KHR_MAINTENANCE1_EXTENSION_NAME)
+                   .add_required_extension(VK_KHR_BIND_MEMORY_2_EXTENSION_NAME)
+                   .add_required_extension(VK_KHR_GET_MEMORY_REQUIREMENTS_2_EXTENSION_NAME)
+                   .add_required_extension(VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME)
+                   .add_required_extension(VK_KHR_IMAGE_FORMAT_LIST_EXTENSION_NAME)
+                   .add_required_extension(VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME)
+#ifdef _WIN32
+                   .add_required_extension(VK_KHR_EXTERNAL_MEMORY_WIN32_EXTENSION_NAME)
+                   .add_required_extension(VK_KHR_EXTERNAL_SEMAPHORE_WIN32_EXTENSION_NAME)
+#elif
+                   .add_required_extension(VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME)
+                   .add_required_extension(VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME)
+#endif
+                   .add_required_extension(VK_KHR_VIDEO_QUEUE_EXTENSION_NAME)
+                   .add_required_extension(VK_KHR_VIDEO_DECODE_QUEUE_EXTENSION_NAME)
+                   .add_required_extension(VK_KHR_VIDEO_DECODE_H264_EXTENSION_NAME)
+                   .add_required_extension(VK_KHR_VIDEO_DECODE_H265_EXTENSION_NAME)
+                   .add_required_extension(VK_KHR_VIDEO_DECODE_AV1_EXTENSION_NAME)
+                   // for openGL interop
+                   .add_required_extension(VK_KHR_EXTERNAL_MEMORY_EXTENSION_NAME)
+                   .add_required_extension(VK_KHR_EXTERNAL_SEMAPHORE_EXTENSION_NAME)
+                   .select();
+
+    if (!ret) {
+        qWarning() << QStringLiteral("Failed to select Vulkan Physical Device: %1")
+                          .arg(QString::fromStdString(ret.error().message()));
+        return false;
+    }
+
+    vkPhysicalDevice_ = ret.value();
+    return true;
+}
+
+bool VulkanManager::createDevice()
+{
+    vkb::DeviceBuilder device_builder{vkPhysicalDevice_};
+
+    // ================================
+    // 开始配置 VkPhysicalDeviceFeatures2 链
+    // ================================
+
+    VkPhysicalDeviceFeatures2 features2;
+    features2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+
+    VkPhysicalDeviceVulkan11Features features11;
+    features11.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES;
+
+    VkPhysicalDeviceVulkan12Features features12;
+    features12.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
+
+    VkPhysicalDeviceVulkan13Features features13;
+    features13.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES;
+
+    VkPhysicalDeviceVideoMaintenance1FeaturesKHR videoMaintenance1;
+    videoMaintenance1.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VIDEO_MAINTENANCE_1_FEATURES_KHR;
+
+#ifdef VK_KHR_video_maintenance2
+    VkPhysicalDeviceVideoMaintenance2FeaturesKHR videoMaintenance2;
+    videoMaintenance2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VIDEO_MAINTENANCE_2_FEATURES_KHR;
+#endif
+
+    VkPhysicalDeviceDescriptorBufferFeaturesEXT descriptorBuffer;
+    descriptorBuffer.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_BUFFER_FEATURES_EXT;
+
+    VkPhysicalDeviceShaderAtomicFloatFeaturesEXT atomicFloat;
+    atomicFloat.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_ATOMIC_FLOAT_FEATURES_EXT;
+    VkPhysicalDeviceCooperativeMatrixFeaturesKHR cooperativeMatrix;
+    cooperativeMatrix.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_COOPERATIVE_MATRIX_FEATURES_KHR;
+
+    // 手动链 pNext
+    features2.pNext = &features11;
+    features11.pNext = &features12;
+    features12.pNext = &features13;
+    features13.pNext = &videoMaintenance1;
+    videoMaintenance1.pNext =
+#ifdef VK_KHR_video_maintenance2
+        &videoMaintenance2;
+    videoMaintenance2.pNext =
+#endif
+        &descriptorBuffer;
+    descriptorBuffer.pNext = &atomicFloat;
+    atomicFloat.pNext = &cooperativeMatrix;
+    cooperativeMatrix.pNext = nullptr;
+
+    // 调用 Vulkan 原生接口获取所有支持的特性
+    if (!vkInstanceDispatchTable_.fp_vkGetPhysicalDeviceFeatures2) {
+        qWarning() << QStringLiteral("vkGetPhysicalDeviceFeatures2 not supported!");
+        return false;
+    }
+    vkInstanceDispatchTable_.fp_vkGetPhysicalDeviceFeatures2(vkPhysicalDevice_.physical_device,
+                                                             &features2);
+
+    // 手动链 pNext
+    features2.pNext = nullptr;
+    features11.pNext = nullptr;
+    features12.pNext = nullptr;
+    features13.pNext = nullptr;
+    videoMaintenance1.pNext =
+#ifdef VK_KHR_video_maintenance2
+        nullptr;
+    videoMaintenance2.pNext =
+#endif
+        nullptr;
+    descriptorBuffer.pNext = nullptr;
+    atomicFloat.pNext = nullptr;
+    cooperativeMatrix.pNext = nullptr;
+
+    // ================================
+    // 开始配置 队列
+    // ================================
+    // Advanced: Get the VkQueueFamilyProperties of the device if special queue setup is needed
+    std::vector<VkQueueFamilyProperties2> qf;
+    std::vector<VkQueueFamilyVideoPropertiesKHR> qfProp;
+    uint32_t num = 0;
+
+    /* First get the number of queue families */
+    // 调用 Vulkan 原生接口获取所有支持的特性
+    if (!vkInstanceDispatchTable_.fp_vkGetPhysicalDeviceQueueFamilyProperties) {
+        qWarning() << QStringLiteral("vkGetPhysicalDeviceQueueFamilyProperties not supported!");
+        return false;
+    }
+    vkInstanceDispatchTable_.fp_vkGetPhysicalDeviceQueueFamilyProperties(
+        vkPhysicalDevice_.physical_device, &num, NULL);
+    if (!num) {
+        qWarning() << QStringLiteral("Failed to get queue family properties!");
+        return false;
+    }
+
+    /* Then allocate memory */
+    qf.resize(num);
+    qfProp.resize(num);
+
+    for (uint32_t i = 0; i < num; i++) {
+        qfProp[i] = VkQueueFamilyVideoPropertiesKHR();
+        qfProp[i].sType = VK_STRUCTURE_TYPE_QUEUE_FAMILY_VIDEO_PROPERTIES_KHR;
+
+        qf[i] = VkQueueFamilyProperties2();
+        qf[i].sType = VK_STRUCTURE_TYPE_QUEUE_FAMILY_PROPERTIES_2;
+        qf[i].pNext = &qfProp[i];
+    }
+
+    /* Finally retrieve the queue families */
+    if (!vkInstanceDispatchTable_.fp_vkGetPhysicalDeviceQueueFamilyProperties2) {
+        qWarning() << QStringLiteral("vkGetPhysicalDeviceQueueFamilyProperties2 not supported!");
+        return false;
+    }
+    vkInstanceDispatchTable_.fp_vkGetPhysicalDeviceQueueFamilyProperties2(
+        vkPhysicalDevice_.physical_device, &num, qf.data());
+    for (auto &q : qf) {
+        //// debug info
+        //qDebug() << QStringLiteral("Queue family ") << q.queueFamilyProperties.queueCount
+        //         << QStringLiteral(" flags: ") << q.queueFamilyProperties.queueFlags;
+
+        q.queueFamilyProperties.timestampValidBits = 0;
+    }
+
+    /* Pick each queue family to use */
+#define PICK_QF(type, vidOp)                                                                \
+    do {                                                                                    \
+        int i;                                                                              \
+        int idx;                                                                            \
+                                                                                            \
+        if (vidOp)                                                                          \
+            idx = pickVideoQueueFamily(qf.data(), qfProp.data(), num, vidOp);               \
+        else                                                                                \
+            idx = pickQueueFamily(qf.data(), num, type);                                    \
+                                                                                            \
+        if (idx == -1)                                                                      \
+            continue;                                                                       \
+                                                                                            \
+        for (i = 0; i < nbqf_; i++) {                                                       \
+            if (queueFamily_[i].idx == idx) {                                               \
+                queueFamily_[i].flags = static_cast<VkQueueFlagBits>(                       \
+                    static_cast<uint32_t>(queueFamily_[i].flags) | type);                   \
+                queueFamily_[i].video_caps = static_cast<VkVideoCodecOperationFlagBitsKHR>( \
+                    static_cast<uint32_t>(queueFamily_[i].video_caps) | vidOp);             \
+                break;                                                                      \
+            }                                                                               \
+        }                                                                                   \
+        if (i == nbqf_) {                                                                   \
+            queueFamily_[i].idx = idx;                                                      \
+            queueFamily_[i].num = qf[idx].queueFamilyProperties.queueCount;                 \
+            queueFamily_[i].flags = type;                                                   \
+            queueFamily_[i].video_caps = vidOp;                                             \
+            nbqf_++;                                                                        \
+        }                                                                                   \
+    } while (0)
+
+    PICK_QF(VK_QUEUE_GRAPHICS_BIT, VK_VIDEO_CODEC_OPERATION_NONE_KHR);
+    PICK_QF(VK_QUEUE_COMPUTE_BIT, VK_VIDEO_CODEC_OPERATION_NONE_KHR);
+    PICK_QF(VK_QUEUE_TRANSFER_BIT, VK_VIDEO_CODEC_OPERATION_NONE_KHR);
+
+    PICK_QF(VK_QUEUE_VIDEO_DECODE_BIT_KHR, VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR);
+    PICK_QF(VK_QUEUE_VIDEO_DECODE_BIT_KHR, VK_VIDEO_CODEC_OPERATION_DECODE_H265_BIT_KHR);
+    PICK_QF(VK_QUEUE_VIDEO_DECODE_BIT_KHR, VK_VIDEO_CODEC_OPERATION_DECODE_AV1_BIT_KHR);
+
+#undef PICK_QF
+
+    std::vector<vkb::CustomQueueDescription> queue_descriptions;
+    for (uint32_t i = 0; i < num; ++i) {
+        if (queueFamily_[i].num <= 0 || queueFamily_[i].idx < 0)
+            continue;
+
+        queue_descriptions.push_back(vkb::CustomQueueDescription{
+            static_cast<uint32_t>(queueFamily_[i].idx),
+            std::vector<float>(queueFamily_[i].num, 1.0f / queueFamily_[i].num)});
+    }
+
+    auto ret = device_builder.add_pNext(&features2)
+                   .add_pNext(&features11)
+                   .add_pNext(&features12)
+                   .add_pNext(&features13)
+                   .add_pNext(&descriptorBuffer)
+                   .add_pNext(&atomicFloat)
+                   .add_pNext(&cooperativeMatrix)
+                   .custom_queue_setup(queue_descriptions)
+                   .build();
+
+    if (!ret) {
+        qWarning() << QStringLiteral("Failed to create Vulkan device: ")
+                          .arg(QString::fromStdString(ret.error().message()));
+        return false;
+    }
+
+    vkDevice_ = ret.value();
+    vkDispatchTable_ = vkDevice_.make_table();
+    return true;
+}
+
+void VulkanManager::setupDeviceContext()
+{
+    if (deviceContext_)
+        return;
+
+    deviceContext_ = std::make_shared<decoder_sdk::VulkanDeviceContext>();
+    deviceContext_->get_proc_addr = vkInstance_.fp_vkGetInstanceProcAddr;
+
+    // 设置基本的Vulkan对象
+    deviceContext_->inst = vkInstance_.instance;
+    deviceContext_->phys_dev = vkPhysicalDevice_.physical_device;
+    deviceContext_->act_dev = vkDevice_.device;
+
+    // 初始化设备特性结构体
+    deviceContext_->device_features = {};
+    deviceContext_->device_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+    deviceContext_->device_features.pNext = nullptr;
+
+    // 获取物理设备特性
+    if (!vkInstanceDispatchTable_.fp_vkGetPhysicalDeviceFeatures2) {
+        qWarning() << QStringLiteral("vkGetPhysicalDeviceFeatures2 not supported!");
+        return;
+    }
+    vkInstanceDispatchTable_.fp_vkGetPhysicalDeviceFeatures2(vkPhysicalDevice_.physical_device,
+                                                             &deviceContext_->device_features);
+
+    // 获取实例扩展信息
+    deviceContext_->enabled_inst_extensions = vkInstanceExtensions_.data();
+    deviceContext_->nb_enabled_inst_extensions = static_cast<int>(vkInstanceExtensions_.size());
+
+    // 获取设备扩展信息
+    static auto deviceExts = vkPhysicalDevice_.get_extensions();
+    vkDeviceExtensions_.clear();
+    vkDeviceExtensions_.reserve(deviceExts.size());
+    for (const auto &ext : deviceExts) {
+        vkDeviceExtensions_.push_back(ext.c_str());
+    }
+    deviceContext_->enabled_dev_extensions =
+        vkDeviceExtensions_.empty() ? nullptr : vkDeviceExtensions_.data();
+    deviceContext_->nb_enabled_dev_extensions = static_cast<int>(vkDeviceExtensions_.size());
+
+    deviceContext_->nb_qf = nbqf_;
+    for (int i = 0; i < nbqf_; ++i) {
+        deviceContext_->qf[i] = queueFamily_[i];
+    }
+}
+
+const vkb::InstanceDispatchTable &getInstanceDispatchTable()
+{
+    return VulkanManager::getInstance().instanceDispatchTable();
+}
+
+const vkb::DispatchTable &getDispatchTable()
+{
+    return VulkanManager::getInstance().dispatchTable();
+}
+
+const vkb::Instance &getVkInstance()
+{
+    return VulkanManager::getInstance().instance();
+}
+
+const vkb::PhysicalDevice &getVkPhysicalDevice()
+{
+    return VulkanManager::getInstance().physicalDevice();
+}
+
+const vkb::Device &getVkDevice()
+{
+    return VulkanManager::getInstance().device();
+}
+
+bool isVulkanAvaliable()
+{
+    return VulkanManager::getInstance().isInitialized();
+}
+
+decoder_sdk::VulkanDeviceContext *getDeviceContext()
+{
+    return VulkanManager::getInstance().deviceContext();
+}
+} // namespace vulkan
 #endif

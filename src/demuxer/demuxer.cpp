@@ -359,6 +359,9 @@ void Demuxer::fileStreamDemuxLoop(AVPacket *pkt)
                     av_packet_unref(pkt);
                 }
                 isEof.reset();
+            } else {
+                av_packet_unref(pkt);
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
             }
             continue;
         } else if (result == -1) {
@@ -501,14 +504,14 @@ int Demuxer::readAndProcessPacket(AVPacket *pkt, bool &readFirstPacket, int &rea
         return 0;
     }
 
-    // 记录出现的错误
-    LOG_WARN("{} has read error, error code: {}, error string: {}", url_, ret,
-             utils::avErr2Str(ret));
-
     // 处理文件流的EOF
     if (!isRealTime_ && (ret == AVERROR_EOF || avio_feof(formatContext_->pb))) {
         return 1; // 非实时流的正常EOF
     }
+
+    // 记录出现的错误
+    LOG_WARN("{} has read error, error code: {}, error string: {}", url_, ret,
+             utils::avErr2Str(ret));
 
     readFailedCount++;
     // 处理EAGAIN（需要重试）
@@ -680,7 +683,7 @@ bool Demuxer::handleReadedVideoPacket(const AVPacket *const packet, const AVRati
                                       JitterDetector &jitterDetector, bool &streamStable,
                                       int &consecutiveFrameDrops)
 {
-    if (packet->stream_index != videoStreamIndex_) {
+    if (packet->stream_index != videoStreamIndex_ || !enableJitterDetector_) {
         return true;
     }
 
@@ -713,7 +716,7 @@ bool Demuxer::handleReadedVideoPacket(const AVPacket *const packet, const AVRati
     if (decision.shouldDrop) {
         // 等待下一个关键帧
         streamStable = false;
-        
+
         // 当连续丢GOP过多时，清空队列，追赶最新的数据
         if (++consecutiveFrameDrops >= 3) {
             LOG_WARN("Consecutive GOP drops reached {}, flushing packet queues to recover!",
@@ -791,8 +794,7 @@ bool Demuxer::openInternal(const std::string &url, const Config &config,
     if (formatContext_->pb && formatContext_->pb->seekable) {
         const int64_t ret = avio_seek(formatContext_->pb, 0, SEEK_SET);
         if (ret < 0) {
-            LOG_ERROR("{} Seek to start failed: {}", url_, utils::avErr2Str(static_cast<int>(ret)));
-            return false;
+            LOG_WARN("{} Seek to start failed: {}", url_, utils::avErr2Str(static_cast<int>(ret)));
         }
     }
 
@@ -821,7 +823,7 @@ bool Demuxer::openInternal(const std::string &url, const Config &config,
     }
 
     // 设置实时流模式
-    realTimeStreamMode_ = config.realTimeStreamMode;
+    enableJitterDetector_ = config.enableJitterDetector;
 
     // 启动解复用器
     start();

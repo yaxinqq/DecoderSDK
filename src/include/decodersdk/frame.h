@@ -3,6 +3,7 @@
 #include <memory>
 
 #include "common_define.h"
+#include "vulkan_wrapper_define.h"
 #include "sdk_global.h"
 
 namespace decoder_sdk {
@@ -169,6 +170,18 @@ public:
      * @return VaapiSurfaceEGLExportData VAAPI EGL导出数据
      */
     const VaapiSurfaceEGLExportData *const vaapiSurfaceEGLExportData() const;
+
+    /**
+     * @brief 锁定vulkan类型的帧，仅在Vulkan硬解码的环境下有效，会返回可用的VulkanFrame
+     */
+    std::shared_ptr<VulkanFrame> lockVulkanFrame() const;
+    /**
+     * @brief
+     * 解锁vulkan类型的帧，仅在Vulkan硬解码的环境下有效，会将vulkanFrame中的数据回传给AVVKFrame，完成同步
+     *        此函数会进行校验，只有vulkanFrmae里的avvkframePtr是当前avframe对应的那一帧，才会回传。
+     *        注意：在使用unlock后，对应的vulkanFrame就不应该使用了，否则会出问题
+     */
+    void unlockVulkanFrame(const std::shared_ptr<VulkanFrame> &vulkanFrame) const;
 
 private:
     std::unique_ptr<internal::Frame> impl_;

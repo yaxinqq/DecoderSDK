@@ -3,7 +3,6 @@
 #ifdef VAAPI_AVAILABLE
 #include <unistd.h>
 
-#include <EGL/egl.h>
 #include <EGL/eglext.h>
 #include <QtPlatformHeaders/QEGLNativeContext>
 

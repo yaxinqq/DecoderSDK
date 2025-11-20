@@ -45,6 +45,9 @@ set(GLOBAL_INCLUDE_DIRS
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CMAKE_CURRENT_SOURCE_DIR}/src/VideoPlayer
     ${CMAKE_CURRENT_SOURCE_DIR}/src/VideoPlayer/VideoRender
+    ${CMAKE_CURRENT_SOURCE_DIR}/external/vk_bootstrap/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/external/vma/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/external/vulkan/include
 )
 
 # 如果找到CUDA，添加CUDA包含目录

@@ -20,7 +20,7 @@ endif ()
 
 # 在项目开始处定义版本信息
 set(DECODER_SDK_VERSION_MAJOR 1)
-set(DECODER_SDK_VERSION_MINOR 1)
+set(DECODER_SDK_VERSION_MINOR 2)
 set(DECODER_SDK_VERSION_PATCH 0)
 set(DECODER_SDK_VERSION_BUILD 0)
 
@@ -236,6 +236,10 @@ set(VDPAU_FOUND FALSE)
 set(OPENMAX_FOUND FALSE)
 set(VIDEOTOOLBOX_FOUND FALSE)
 set(QSV_FOUND FALSE)
+
+set(VULKAN_FOUND TRUE)
+add_definitions(-DVULKAN_AVAILABLE)
+
 if(WIN32)
     # Windows平台硬件解码支持
     
@@ -420,6 +424,13 @@ elseif(APPLE)
         message(STATUS "  - Metal: Disabled")
     endif()
 endif()
+
+if(VULKAN_FOUND)
+    message(STATUS "  - Vulkan: Enabled")
+else()
+    message(STATUS "  - Vulkan: Disabled")
+endif()
+set(VULKAN_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/external/vulkan/include)
 
 # 添加子项目
 # src

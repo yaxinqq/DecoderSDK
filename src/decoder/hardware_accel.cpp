@@ -35,6 +35,10 @@ extern "C" {
 }
 #endif
 
+#ifdef VULKAN_AVAILABLE
+#include "hardware_accel_vulkan_helper.h"
+#endif
+
 namespace {
 struct FreeHWContext {
     decoder_sdk::HWAccelType type;
@@ -62,7 +66,6 @@ void freeHWContextCallback(struct AVHWDeviceContext *ctx)
 }
 
 } // namespace
-
 
 DECODER_SDK_NAMESPACE_BEGIN
 INTERNAL_NAMESPACE_BEGIN
@@ -305,18 +308,19 @@ int HardwareAccel::getDeviceIndex() const
 }
 
 #ifdef VAAPI_AVAILABLE
-void* HardwareAccel::getVADisplay() const
+void *HardwareAccel::getVADisplay() const
 {
     if (type_ != HWAccelType::kVaapi || !hwDeviceCtx_) {
         return nullptr;
     }
 
     AVHWDeviceContext *deviceContext = (AVHWDeviceContext *)hwDeviceCtx_->data;
-    AVVAAPIDeviceContext *vaapiContext = reinterpret_cast<AVVAAPIDeviceContext *>(deviceContext->hwctx);
+    AVVAAPIDeviceContext *vaapiContext =
+        reinterpret_cast<AVVAAPIDeviceContext *>(deviceContext->hwctx);
     if (!vaapiContext) {
         return nullptr;
     }
-    
+
     return vaapiContext->display;
 }
 #endif
@@ -407,12 +411,8 @@ std::string HardwareAccel::getHWAccelTypeName(HWAccelType type)
             return "CUDA";
         case HWAccelType::kVaapi:
             return "VAAPI";
-        case HWAccelType::kVdpau:
-            return "VDPAU";
-        case HWAccelType::kQsv:
-            return "QSV";
-        case HWAccelType::kVideoToolBox:
-            return "VideoToolbox";
+        case HWAccelType::kVulkan:
+            return "Vulkan";
         default:
             return "Unknown";
     }
@@ -433,12 +433,8 @@ std::string HardwareAccel::getHWAccelTypeDescription(HWAccelType type)
             return "NVIDIA CUDA";
         case HWAccelType::kVaapi:
             return "Video Acceleration API (Linux)";
-        case HWAccelType::kVdpau:
-            return "Video Decode and Presentation API for Unix (Linux)";
-        case HWAccelType::kQsv:
-            return "Intel Quick Sync Video";
-        case HWAccelType::kVideoToolBox:
-            return "Apple VideoToolbox (macOS/iOS)";
+        case HWAccelType::kVulkan:
+            return "Vulkan";
         default:
             return "Unknown hardware acceleration";
     }
@@ -457,12 +453,8 @@ HWAccelType HardwareAccel::fromAVHWDeviceType(AVHWDeviceType avType)
             return HWAccelType::kCuda;
         case AV_HWDEVICE_TYPE_VAAPI:
             return HWAccelType::kVaapi;
-        case AV_HWDEVICE_TYPE_VDPAU:
-            return HWAccelType::kVdpau;
-        case AV_HWDEVICE_TYPE_QSV:
-            return HWAccelType::kQsv;
-        case AV_HWDEVICE_TYPE_VIDEOTOOLBOX:
-            return HWAccelType::kVideoToolBox;
+        case AV_HWDEVICE_TYPE_VULKAN:
+            return HWAccelType::kVulkan;
         default:
             return HWAccelType::kNone;
     }
@@ -481,12 +473,8 @@ AVHWDeviceType HardwareAccel::toAVHWDeviceType(HWAccelType type)
             return AV_HWDEVICE_TYPE_CUDA;
         case HWAccelType::kVaapi:
             return AV_HWDEVICE_TYPE_VAAPI;
-        case HWAccelType::kVdpau:
-            return AV_HWDEVICE_TYPE_VDPAU;
-        case HWAccelType::kQsv:
-            return AV_HWDEVICE_TYPE_QSV;
-        case HWAccelType::kVideoToolBox:
-            return AV_HWDEVICE_TYPE_VIDEOTOOLBOX;
+        case HWAccelType::kVulkan:
+            return AV_HWDEVICE_TYPE_VULKAN;
         case HWAccelType::kAuto:
         default:
             return AV_HWDEVICE_TYPE_NONE;
@@ -539,6 +527,9 @@ AVPixelFormat HardwareAccel::getHWPixelFormat(AVCodecContext *codecCtx,
                 }
             }
 #endif
+            if (hwPixFmt == AV_PIX_FMT_VULKAN) {
+                return vulkan_helper::getPixelFormat(codecCtx, pix_fmts);
+            }
 
             return hwPixFmt;
         }
@@ -617,11 +608,21 @@ bool HardwareAccel::initHWDevice(AVHWDeviceType deviceType, int deviceIndex,
 
 AVHWDeviceType HardwareAccel::findBestHWAccelType()
 {
-    // 优先级顺序：CUDA > D3D11VA > DXVA2 > QSV > VAAPI > VDPAU > VIDEOTOOLBOX
-    std::vector<AVHWDeviceType> priorityList = {
-        AV_HWDEVICE_TYPE_CUDA,        AV_HWDEVICE_TYPE_D3D11VA, AV_HWDEVICE_TYPE_DXVA2,
-        AV_HWDEVICE_TYPE_QSV,         AV_HWDEVICE_TYPE_VAAPI,   AV_HWDEVICE_TYPE_VDPAU,
-        AV_HWDEVICE_TYPE_VIDEOTOOLBOX};
+    // 优先级顺序：
+    // Windows: CUDA > D3D11VA > DXVA2 > Vulkan
+    // Linux: CUDA > VAAPI
+#ifdef OS_WINDOWS
+    const std::vector<AVHWDeviceType> priorityList = {
+        AV_HWDEVICE_TYPE_CUDA, AV_HWDEVICE_TYPE_D3D11VA, AV_HWDEVICE_TYPE_DXVA2,
+        AV_HWDEVICE_TYPE_VULKAN};
+#elif OS_LINUX
+    const std::vector<AVHWDeviceType> priorityList = {
+        AV_HWDEVICE_TYPE_CUDA,
+        AV_HWDEVICE_TYPE_VAAPI,
+    };
+#else
+    const std::vector<AVHWDeviceType> priorityList;
+#endif
 
     for (const AVHWDeviceType &type : priorityList) {
         if (isAvailableHWAccelType(fromAVHWDeviceType(type))) {
@@ -699,6 +700,11 @@ bool HardwareAccel::validateUserHWContext(void *userContext, AVHWDeviceType expe
             return vaDisplay != nullptr;
         }
 #endif
+#ifdef VULKAN_AVAILABLE
+        case AV_HWDEVICE_TYPE_VULKAN: {
+            return vulkan_helper::vulkanDeviceContextIsValid(userContext);
+        }
+#endif
         default:
             // 对于其他类型，进行基本的非空检查
             return userContext != nullptr;
@@ -771,6 +777,12 @@ int HardwareAccel::createHWDeviceFromUserContext(void *userContext, AVHWDeviceTy
             break;
         }
 #endif
+#ifdef VULKAN_AVAILABLE
+        case AV_HWDEVICE_TYPE_VULKAN: {
+            vulkan_helper::transToAVVulkanDeviceContext(deviceContext, userContext);
+            break;
+        }
+#endif
         default:
             av_buffer_unref(&hwDeviceCtx_);
             return AVERROR(ENOSYS);
@@ -810,6 +822,8 @@ AVPixelFormat HardwareAccel::getHWPixelFormatForDevice(AVHWDeviceType deviceType
             return AV_PIX_FMT_QSV;
         case AV_HWDEVICE_TYPE_VIDEOTOOLBOX:
             return AV_PIX_FMT_VIDEOTOOLBOX;
+        case AV_HWDEVICE_TYPE_VULKAN:
+            return AV_PIX_FMT_VULKAN;
         default:
             return AV_PIX_FMT_NONE;
     }

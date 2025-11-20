@@ -341,8 +341,8 @@ private:
     bool preBufferReady_{false};
     std::function<void()> preBufferReadyCallback_;
 
-    // 实时流的模式
-    Config::RealTimeStreamMode realTimeStreamMode_ = Config::RealTimeStreamMode::kRealTimePriority;
+    // 是否开启Jitter检测
+    bool enableJitterDetector_ = true;
 
     // 循环播放相关成员变量
     std::atomic<LoopMode> loopMode_{LoopMode::kNone};
