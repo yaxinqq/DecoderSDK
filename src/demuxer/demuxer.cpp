@@ -429,6 +429,7 @@ void Demuxer::realTimeStreamDemuxLoop(AVPacket *pkt)
         if (result == 0) {
             if (!handleReadedVideoPacket(pkt, videoTimeBase, jitterDetector, streamStable,
                                          consecutiveFrameDrops)) {
+                av_packet_unref(pkt);
                 continue;
             }
 
@@ -477,6 +478,8 @@ int Demuxer::readAndProcessPacket(AVPacket *pkt, bool &readFirstPacket, int &rea
                                   bool isEof)
 {
     // 读取数据包
+    // 读数据包之前，先unref
+    av_packet_unref(pkt);
     const int ret = av_read_frame(formatContext_, pkt);
 
     // 成功读取数据包

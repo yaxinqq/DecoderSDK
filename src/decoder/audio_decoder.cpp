@@ -136,6 +136,7 @@ void AudioDecoder::decodeLoop()
 
         // 循环接收所有可能的解码帧
         while (true) {
+            frame.unref();
             ret = avcodec_receive_frame(codecCtx_, frame.get());
             if (ret < 0) {
                 if (ret == AVERROR(EAGAIN)) {
@@ -467,13 +468,13 @@ Frame AudioDecoder::resampleFrame(const Frame &frame, int &errorCode)
 
     // 8倍往上的采样率似乎就无法正常播放声音了
     const int64_t outSamples = av_rescale_rnd(delay + frame.get()->nb_samples, outputSampleRate,
-                                        inputSampleRate, AV_ROUND_UP);
+                                              inputSampleRate, AV_ROUND_UP);
 
     //// 添加合理的上限检查，防止异常大的缓冲区分配
-    //const int64_t maxSamples = frame.get()->nb_samples * 8; // 最多8倍的输入采样数（采样数过大，也会导致声音无法正常播放）
-    //if (outSamples > maxSamples) {
-    //    outSamples = maxSamples;
-    //}
+    // const int64_t maxSamples = frame.get()->nb_samples * 8; //
+    // 最多8倍的输入采样数（采样数过大，也会导致声音无法正常播放） if (outSamples > maxSamples) {
+    //     outSamples = maxSamples;
+    // }
 
     if (outSamples <= 0) {
         errorCode = AVERROR(EINVAL);

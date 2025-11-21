@@ -809,6 +809,7 @@ void VideoDecoder::decodeLoop()
 
         // 循环接收所有可能的解码帧
         while (true) {
+            frame.unref();
             ret = avcodec_receive_frame(codecCtx_, frame.get());
             if (ret != 0) {
                 if (ret == AVERROR(EAGAIN) || ret == AVERROR(EOF)) {
