@@ -462,6 +462,15 @@ public:
     void unlockVulkanFrame(const std::shared_ptr<VulkanFrame> &vulkanFrame) const;
 
     /**
+     * @brief 锁定vulkan队列，仅在Vulkan硬解码的环境下有效
+     */
+    void lockVulkanQueue(uint32_t queue_family, uint32_t index) const;
+    /**
+     * @brief 解锁vulkan队列，仅在Vulkan硬解码的环境下有效
+     */
+    void unlockVulkanQueue(uint32_t queue_family, uint32_t index) const;
+
+    /**
      * @brief 确保帧已分配
      */
     void ensureAllocated();

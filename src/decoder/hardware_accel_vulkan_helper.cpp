@@ -5,10 +5,14 @@ extern "C" {
 #include <libavutil/hwcontext_vulkan.h>
 }
 
+#include <mutex>
+
 DECODER_SDK_NAMESPACE_BEGIN
 INTERNAL_NAMESPACE_BEGIN
 
 namespace vulkan_helper {
+static std::mutex mtx;
+
 bool vulkanDeviceContextIsValid(void *userContext)
 {
     VulkanDeviceContext *context = static_cast<VulkanDeviceContext *>(userContext);
@@ -73,6 +77,12 @@ void transToAVVulkanDeviceContext(AVHWDeviceContext *deviceContext, void *userCo
 #endif
     }
     vulkanContext->nb_qf = context->nb_qf;
+
+    vulkanContext->lock_queue = [](struct AVHWDeviceContext *ctx, uint32_t queue_family,
+                                   uint32_t index) { mtx.lock();
+    };
+    vulkanContext->unlock_queue = [](struct AVHWDeviceContext *ctx, uint32_t queue_family,
+                                   uint32_t index) { mtx.unlock(); };
 
     //// debug info
     //for (int i = 0; i < vulkanContext->nb_enabled_inst_extensions; ++i) {

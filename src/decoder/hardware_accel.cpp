@@ -344,6 +344,10 @@ const std::vector<HWAccelInfo> &HardwareAccel::getSupportedHWAccelTypes()
             info.type = sdkHwType;
             info.name = av_hwdevice_get_type_name(type);
             info.description = getHWAccelTypeDescription(fromAVHWDeviceType(type));
+            if (sdkHwType == HWAccelType::kVulkan) {
+                result.push_back(info);
+                continue;
+            }
 
             // 检查是否可用
             AVBufferRef *hwDeviceCtx = nullptr;

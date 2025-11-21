@@ -624,6 +624,34 @@ void Frame::unlockVulkanFrame(const std::shared_ptr<VulkanFrame> &frame) const
 #endif
 }
 
+void Frame::lockVulkanQueue(uint32_t queue_family, uint32_t index) const
+{
+    if (pixelFormat() != AV_PIX_FMT_VULKAN)
+        return;
+
+#ifdef VULKAN_AVAILABLE
+    AVHWFramesContext *frames = (AVHWFramesContext *)(frame_->hw_frames_ctx->data);
+    AVHWDeviceContext *deviceCtx = frames->device_ctx;
+    AVVulkanDeviceContext *vulkanContext = (AVVulkanDeviceContext *)deviceCtx->hwctx;
+
+    vulkanContext->lock_queue(deviceCtx, queue_family, index);
+#endif
+}
+
+void Frame::unlockVulkanQueue(uint32_t queue_family, uint32_t index) const
+{
+    if (pixelFormat() != AV_PIX_FMT_VULKAN)
+        return;
+
+#ifdef VULKAN_AVAILABLE
+    AVHWFramesContext *frames = (AVHWFramesContext *)(frame_->hw_frames_ctx->data);
+    AVHWDeviceContext *deviceCtx = frames->device_ctx;
+    AVVulkanDeviceContext *vulkanContext = (AVVulkanDeviceContext *)deviceCtx->hwctx;
+
+    vulkanContext->unlock_queue(deviceCtx, queue_family, index);
+#endif
+}
+
 void Frame::ensureAllocated()
 {
     if (!frame_) {

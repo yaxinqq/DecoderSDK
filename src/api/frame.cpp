@@ -168,4 +168,22 @@ void Frame::unlockVulkanFrame(const std::shared_ptr<VulkanFrame> &vulkanFrame) c
 
     impl_->unlockVulkanFrame(vulkanFrame);
 }
+
+void Frame::lockVulkanQueue(uint32_t queue_family, uint32_t index) const
+{
+    if (!impl_) {
+        return;
+    }
+
+    impl_->lockVulkanQueue(queue_family, index);
+}
+
+void Frame::unlockVulkanQueue(uint32_t queue_family, uint32_t index) const
+{
+    if (!impl_) {
+        return;
+    }
+
+    impl_->unlockVulkanQueue(queue_family, index);
+}
 } // namespace decoder_sdk
