@@ -78,7 +78,7 @@ private:
      * 
      * @return 是否成功
      */
-    bool initExternalSemaphores();
+    bool initExternalSemaphores(const decoder_sdk::Frame &frame);
 
     /**
      * @brief semReady_的handle
@@ -107,12 +107,13 @@ private:
     /**
      * @brief 拷贝图像
      * 
+     * @param frame 视频帧
      * @param vulkanFrame vulkan帧
      * @param w 宽度
      * @param h 高度
      * @return 是否成功
      */
-    bool copyImageToExternalBuffer(const std::shared_ptr<decoder_sdk::VulkanFrame> &vulkanFrame, int w, int h);
+    bool copyImageToExternalBuffer(const decoder_sdk::Frame &frame, const std::shared_ptr<decoder_sdk::VulkanFrame> &vulkanFrame, int w, int h);
 
     /**
      * @brief 创建命令池
@@ -142,7 +143,7 @@ private:
     bool semInitialized_ = false;
 
     uint32_t graphicsQueueIndex_ = 0;
-    VkQueue graphocsQueue_ = VK_NULL_HANDLE;
+    VkQueue graphicsQueue_ = VK_NULL_HANDLE;
 
 
     // OpenGL的相关对象

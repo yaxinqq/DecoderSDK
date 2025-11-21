@@ -1524,7 +1524,8 @@ static VkBool32 customDebugCallback(VkDebugUtilsMessageSeverityFlagBitsEXT messa
     auto mt = toStringMessageType(messageType);
     if (messageType & VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT) {
         qDebug().noquote() << QStringLiteral("[%1: %2] - %3\n%4\n")
-                        .arg(ms, mt, pCallbackData->pMessageIdName, pCallbackData->pMessage);
+                                  .arg(ms, mt, pCallbackData->pMessageIdName,
+                                       pCallbackData->pMessage);
     } else {
         qDebug().noquote() << QStringLiteral("[%1: %2]\n%3\n").arg(ms, mt, pCallbackData->pMessage);
     }
@@ -1593,12 +1594,13 @@ public:
         if (!initialized_)
             return;
 
-        if (vkDispatchTable_.fp_vkDeviceWaitIdle) {
-            vkDispatchTable_.fp_vkDeviceWaitIdle(vkDevice_.device);
+        if (vkDevice_.device != VK_NULL_HANDLE) {
+            vkb::destroy_device(vkDevice_);
         }
 
-        vkb::destroy_device(vkDevice_);
-        vkb::destroy_instance(vkInstance_);
+        if (vkInstance_.instance != VK_NULL_HANDLE) {
+            vkb::destroy_instance(vkInstance_);
+        }
 
         initialized_ = false;
     }
@@ -1855,8 +1857,8 @@ bool VulkanManager::createDevice()
         vkPhysicalDevice_.physical_device, &num, qf.data());
     for (auto &q : qf) {
         //// debug info
-        //qDebug() << QStringLiteral("Queue family ") << q.queueFamilyProperties.queueCount
-        //         << QStringLiteral(" flags: ") << q.queueFamilyProperties.queueFlags;
+        // qDebug() << QStringLiteral("Queue family ") << q.queueFamilyProperties.queueCount
+        //          << QStringLiteral(" flags: ") << q.queueFamilyProperties.queueFlags;
 
         q.queueFamilyProperties.timestampValidBits = 0;
     }

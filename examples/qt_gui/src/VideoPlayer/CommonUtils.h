@@ -1,6 +1,6 @@
 ﻿#pragma once
-#include <QString>
 #include <QtGui/qopengl.h>
+#include <QString>
 
 void registerVideoMetaType();
 void clearGPUResource();
@@ -156,7 +156,6 @@ bool isVAAPIAvailable();
 #define VK_USE_PLATFORM_XCB_KHR
 #endif
 #include <VkBootstrap.h>
-
 #include "decodersdk/vulkan_wrapper_define.h"
 
 namespace vulkan {

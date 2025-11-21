@@ -75,6 +75,7 @@ typedef void(APIENTRYP PFNGLSIGNALSEMAPHOREEXTPROC)(GLuint semaphore, GLuint num
                                                     const GLuint *textures,
                                                     const GLenum *srcLayouts);
 typedef void(APIENTRYP PFNGLCREATETEXTURESPROC)(GLenum target, GLsizei n, GLuint *textures);
+typedef void(APIENTRYP PFNGLDELETESEMAPHORESEXTPROC)(GLsizei n, const GLuint *semaphores);
 
 // 全局或类内静态存储
 static bool g_extLoaded = false;
@@ -93,6 +94,7 @@ static PFNGLTEXTURESUBIMAGE2DPROC glTextureSubImage2D = nullptr;
 static PFNGLTEXTUREPARAMETERIPROC glTextureParameteri = nullptr;
 static PFNGLSIGNALSEMAPHOREEXTPROC glSignalSemaphoreEXT = nullptr;
 static PFNGLCREATETEXTURESPROC glCreateTextures = nullptr;
+static PFNGLDELETESEMAPHORESEXTPROC glDeleteSemaphoresEXT = nullptr;
 
 bool loadExtFunctions(QOpenGLContext *ctx)
 {
@@ -144,10 +146,28 @@ bool loadExtFunctions(QOpenGLContext *ctx)
     ok &= loadFunc(glTextureParameteri, "glTextureParameteri");
     ok &= loadFunc(glSignalSemaphoreEXT, "glSignalSemaphoreEXT");
     ok &= loadFunc(glCreateTextures, "glCreateTextures");
+    ok &= loadFunc(glDeleteSemaphoresEXT, "glDeleteSemaphoresEXT");
 
     g_extLoaded = ok;
     return ok;
 }
+
+struct QueueGuard {
+    const decoder_sdk::Frame &f;
+    uint32_t queueFamily;
+    uint32_t queueIndex;
+    QueueGuard(const decoder_sdk::Frame &f, uint32_t queueFamily, uint32_t queueIndex)
+        : f(f)
+        , queueFamily(queueFamily)
+        , queueIndex(queueIndex)
+    {
+        f.lockVulkanQueue(queueFamily, queueIndex);
+    }
+    ~QueueGuard()
+    {
+        f.unlockVulkanQueue(queueFamily, queueIndex);
+    }
+};
 } // namespace
 
 Nv12Render_Vulkan::Nv12Render_Vulkan()
@@ -224,19 +244,6 @@ bool Nv12Render_Vulkan::initInteropsResource(const decoder_sdk::Frame &frame)
         return false;
     }
 
-    if (!glReadySem_ || !glCompleteSem_) {
-        if (!initExternalSemaphores()) {
-            qWarning() << QStringLiteral("initExternalSemaphores failed");
-            return false;
-        }
-        glGenSemaphoresEXT(1, &glReadySem_);
-        glGenSemaphoresEXT(1, &glCompleteSem_);
-
-        void *hReady = readySemaphoreHandle();
-        void *hComplete = completeSemaphoreHandle();
-        glImportSemaphoreWin32HandleEXT(glReadySem_, GL_HANDLE_TYPE_OPAQUE_WIN32_EXT, hReady);
-        glImportSemaphoreWin32HandleEXT(glCompleteSem_, GL_HANDLE_TYPE_OPAQUE_WIN32_EXT, hComplete);
-    }
     void *hmem = externalBufferHandle();
     size_t total = (size_t)extBufferSize_;
     if (!memObj_ || memSize_ != total) {
@@ -274,6 +281,20 @@ bool Nv12Render_Vulkan::renderFrame(const decoder_sdk::Frame &frame)
         }
     } guard(frame); 
 
+    if (!glReadySem_ || !glCompleteSem_) {
+        if (!initExternalSemaphores(frame)) {
+            qWarning() << QStringLiteral("initExternalSemaphores failed");
+            return false;
+        }
+        glGenSemaphoresEXT(1, &glReadySem_);
+        glGenSemaphoresEXT(1, &glCompleteSem_);
+
+        void *hReady = readySemaphoreHandle();
+        void *hComplete = completeSemaphoreHandle();
+        glImportSemaphoreWin32HandleEXT(glReadySem_, GL_HANDLE_TYPE_OPAQUE_WIN32_EXT, hReady);
+        glImportSemaphoreWin32HandleEXT(glCompleteSem_, GL_HANDLE_TYPE_OPAQUE_WIN32_EXT, hComplete);
+    }
+
     const auto &vkFrmae = guard.vkFrame;
     if (!vkFrmae || !semInitialized_) {
         return false;
@@ -290,7 +311,7 @@ bool Nv12Render_Vulkan::renderFrame(const decoder_sdk::Frame &frame)
 
     const int w = frame.width();
     const int h = frame.height();
-    if (!copyImageToExternalBuffer(vkFrmae, w, h)) {
+    if (!copyImageToExternalBuffer(frame, vkFrmae, w, h)) {
         qWarning() << QStringLiteral("copyImageToExternalBuffer failed");
     }
 
@@ -437,7 +458,7 @@ uint32_t Nv12Render_Vulkan::findMemoryTypeLocal(uint32_t typeBits, VkMemoryPrope
     return UINT32_MAX;
 }
 
-bool Nv12Render_Vulkan::initExternalSemaphores()
+bool Nv12Render_Vulkan::initExternalSemaphores(const decoder_sdk::Frame &frame)
 {
     if (semInitialized_) {
         return true;
@@ -472,9 +493,12 @@ bool Nv12Render_Vulkan::initExternalSemaphores()
     submit.pSignalSemaphoreInfos = &sig;
 
     // 通过空提交信号量，让信号量进入“已信号”状态, 等待信号量的操作能立即通过，不阻塞
-    if (vkDispatchTable_.fp_vkQueueSubmit2(graphocsQueue_, 1, &submit, VK_NULL_HANDLE) !=
-        VK_SUCCESS) {
-        return false;
+    {
+        QueueGuard queueGuard(frame, graphicsQueueIndex_, 0);
+        if (vkDispatchTable_.fp_vkQueueSubmit2(graphicsQueue_, 1, &submit, VK_NULL_HANDLE) !=
+            VK_SUCCESS) {
+            return false;
+        }
     }
 
     semInitialized_ = true;
@@ -539,6 +563,16 @@ void *Nv12Render_Vulkan::externalBufferHandle() const
 
 void Nv12Render_Vulkan::shutdownExternalSemaphores()
 {
+    if (glReadySem_ > 0) {
+        glDeleteSemaphoresEXT(1, &glReadySem_);
+        glReadySem_ = 0;
+    }
+
+    if (glCompleteSem_ > 0) {
+        glDeleteSemaphoresEXT(1, &glCompleteSem_);
+        glCompleteSem_ = 0;
+    }
+
     if (semReady_) {
         vkDispatchTable_.fp_vkDestroySemaphore(vkDevice_.device, semReady_, nullptr);
         semReady_ = VK_NULL_HANDLE;
@@ -553,7 +587,7 @@ void Nv12Render_Vulkan::shutdownExternalSemaphores()
 }
 
 bool Nv12Render_Vulkan::copyImageToExternalBuffer(
-    const std::shared_ptr<decoder_sdk::VulkanFrame> &vulkanFrame, int w, int h)
+    const decoder_sdk::Frame &frame, const std::shared_ptr<decoder_sdk::VulkanFrame> &vulkanFrame, int w, int h)
 {
     if (!vulkanFrame || !extBuffer_)
         return false;
@@ -636,7 +670,7 @@ bool Nv12Render_Vulkan::copyImageToExternalBuffer(
         return false;
 
     if (!semInitialized_)
-        initExternalSemaphores();
+        initExternalSemaphores(frame);
 
     VkSemaphoreSubmitInfo waits{};
     waits.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO;
@@ -666,7 +700,10 @@ bool Nv12Render_Vulkan::copyImageToExternalBuffer(
     fi.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
     VkFence f{};
     vkDispatchTable_.fp_vkCreateFence(vkDevice_.device, &fi, nullptr, &f);
-    vkDispatchTable_.fp_vkQueueSubmit2(graphocsQueue_, 1, &submit2, f);
+    {
+        QueueGuard queueGuard(frame, graphicsQueueIndex_, 0);
+        vkDispatchTable_.fp_vkQueueSubmit2(graphicsQueue_, 1, &submit2, f);
+    }
     vkDispatchTable_.fp_vkWaitForFences(vkDevice_.device, 1, &f, VK_TRUE, UINT64_MAX);
     vkDispatchTable_.fp_vkDestroyFence(vkDevice_.device, f, nullptr);
     vkDispatchTable_.fp_vkFreeCommandBuffers(vkDevice_.device, commandPool_, 1, &cmd);
@@ -681,7 +718,7 @@ bool Nv12Render_Vulkan::createCommandPool()
         return false;
     }
     graphicsQueueIndex_ = graphicsQueueIndex.value();
-    graphocsQueue_ = vkDevice_.get_queue(vkb::QueueType::graphics).value();
+    graphicsQueue_ = vkDevice_.get_queue(vkb::QueueType::graphics).value();
 
     VkCommandPoolCreateInfo poolInfo{};
     poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
