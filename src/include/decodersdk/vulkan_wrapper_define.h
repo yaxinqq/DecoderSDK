@@ -3,6 +3,9 @@
 
 #include <vulkan/vulkan_core.h>
 
+// 前向声明，避免直接依赖FFmpeg头文件
+struct AVHWDeviceContext;
+
 namespace decoder_sdk {
 
 // FFMpeg AVVulkanDeviceQueueFamily
@@ -87,6 +90,19 @@ typedef struct VulkanDeviceContext {
      */
     VulkanDeviceQueueFamily qf[64];
     int nb_qf;
+
+    /**
+     * Locks a queue, preventing other threads from submitting any command
+     * buffers to this queue.
+     * If set to NULL, will be set to lavu-internal functions that utilize a
+     * mutex.
+     */
+    void (*lock_queue)(struct AVHWDeviceContext *ctx, uint32_t queue_family, uint32_t index);
+
+    /**
+     * Similar to lock_queue(), unlocks a queue. Must only be called after locking.
+     */
+    void (*unlock_queue)(struct AVHWDeviceContext *ctx, uint32_t queue_family, uint32_t index);
 } VulkanDeviceContext;
 
 // FFMpeg AVVkFrame的定义

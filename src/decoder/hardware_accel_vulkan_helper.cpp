@@ -78,19 +78,27 @@ void transToAVVulkanDeviceContext(AVHWDeviceContext *deviceContext, void *userCo
     }
     vulkanContext->nb_qf = context->nb_qf;
 
-    vulkanContext->lock_queue = [](struct AVHWDeviceContext *ctx, uint32_t queue_family,
-                                   uint32_t index) { mtx.lock();
-    };
-    vulkanContext->unlock_queue = [](struct AVHWDeviceContext *ctx, uint32_t queue_family,
-                                   uint32_t index) { mtx.unlock(); };
+    if (context->lock_queue) {
+        vulkanContext->lock_queue = context->lock_queue;
+    } else {
+        vulkanContext->lock_queue = [](struct AVHWDeviceContext *ctx, uint32_t queue_family,
+                                       uint32_t index) { mtx.lock(); };
+    }
+    if (context->unlock_queue) {
+        vulkanContext->unlock_queue = context->unlock_queue;
+    } else {
+        vulkanContext->unlock_queue = [](struct AVHWDeviceContext *ctx, uint32_t queue_family,
+                                         uint32_t index) { mtx.unlock(); };
+    }
 
     //// debug info
-    //for (int i = 0; i < vulkanContext->nb_enabled_inst_extensions; ++i) {
-    //    printf("enabled_inst_extensions[%d]: %s\n", i, vulkanContext->enabled_inst_extensions[i]);
-    //}
-    //for (int i = 0; i < context->nb_enabled_dev_extensions; ++i) {
-    //    printf("enabled_dev_extensions[%d]: %s\n", i, context->enabled_dev_extensions[i]);
-    //}
+    // for (int i = 0; i < vulkanContext->nb_enabled_inst_extensions; ++i) {
+    //     printf("enabled_inst_extensions[%d]: %s\n", i,
+    //     vulkanContext->enabled_inst_extensions[i]);
+    // }
+    // for (int i = 0; i < context->nb_enabled_dev_extensions; ++i) {
+    //     printf("enabled_dev_extensions[%d]: %s\n", i, context->enabled_dev_extensions[i]);
+    // }
 }
 
 AVPixelFormat getPixelFormat(AVCodecContext *codecCtx, const enum AVPixelFormat *pix_fmts)

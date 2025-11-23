@@ -1344,6 +1344,7 @@ bool isVAAPIAvailable()
 #endif
 
 #ifdef VULKAN_AVAILABLE
+#include <memory>
 
 namespace vulkan {
 #include <vulkan/vulkan.h>
@@ -1576,7 +1577,11 @@ public:
 
     decoder_sdk::VulkanDeviceContext *deviceContext()
     {
+        std::lock_guard<std::mutex> l(mtx);
         std::call_once(initFlag_, [this]() { initialize(); });
+        if (!isInitialized())
+            return nullptr;
+
         if (!deviceContext_) {
             setupDeviceContext();
         }
@@ -1604,6 +1609,9 @@ public:
 
         initialized_ = false;
     }
+
+    void lockQueue(uint32_t queue_family, uint32_t index);
+    void unlockQueue(uint32_t queue_family, uint32_t index);
 
     // 禁止拷贝和赋值
     VulkanManager(const VulkanManager &) = delete;
@@ -1641,6 +1649,10 @@ private:
     int nbqf_ = 0;
     decoder_sdk::VulkanDeviceQueueFamily queueFamily_[64];
     std::shared_ptr<decoder_sdk::VulkanDeviceContext> deviceContext_;
+
+    std::vector<std::vector<std::unique_ptr<std::mutex>>> queueMtxes_;
+
+    std::mutex mtx;
 };
 
 void VulkanManager::initialize()
@@ -1710,9 +1722,7 @@ bool VulkanManager::selectPhysicalDevice()
                    .add_required_extension(VK_KHR_MAINTENANCE1_EXTENSION_NAME)
                    .add_required_extension(VK_KHR_BIND_MEMORY_2_EXTENSION_NAME)
                    .add_required_extension(VK_KHR_GET_MEMORY_REQUIREMENTS_2_EXTENSION_NAME)
-                   .add_required_extension(VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME)
                    .add_required_extension(VK_KHR_IMAGE_FORMAT_LIST_EXTENSION_NAME)
-                   .add_required_extension(VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME)
 #ifdef _WIN32
                    .add_required_extension(VK_KHR_EXTERNAL_MEMORY_WIN32_EXTENSION_NAME)
                    .add_required_extension(VK_KHR_EXTERNAL_SEMAPHORE_WIN32_EXTENSION_NAME)
@@ -1724,7 +1734,7 @@ bool VulkanManager::selectPhysicalDevice()
                    .add_required_extension(VK_KHR_VIDEO_DECODE_QUEUE_EXTENSION_NAME)
                    .add_required_extension(VK_KHR_VIDEO_DECODE_H264_EXTENSION_NAME)
                    .add_required_extension(VK_KHR_VIDEO_DECODE_H265_EXTENSION_NAME)
-                   .add_required_extension(VK_KHR_VIDEO_DECODE_AV1_EXTENSION_NAME)
+                   //.add_required_extension(VK_KHR_VIDEO_DECODE_AV1_EXTENSION_NAME)
                    // for openGL interop
                    .add_required_extension(VK_KHR_EXTERNAL_MEMORY_EXTENSION_NAME)
                    .add_required_extension(VK_KHR_EXTERNAL_SEMAPHORE_EXTENSION_NAME)
@@ -1905,6 +1915,7 @@ bool VulkanManager::createDevice()
 
 #undef PICK_QF
 
+    // 并且在这创建锁
     std::vector<vkb::CustomQueueDescription> queue_descriptions;
     for (uint32_t i = 0; i < num; ++i) {
         if (queueFamily_[i].num <= 0 || queueFamily_[i].idx < 0)
@@ -1913,6 +1924,22 @@ bool VulkanManager::createDevice()
         queue_descriptions.push_back(vkb::CustomQueueDescription{
             static_cast<uint32_t>(queueFamily_[i].idx),
             std::vector<float>(queueFamily_[i].num, 1.0f / queueFamily_[i].num)});
+
+        // 为每个队列创建一个锁
+        const size_t family_idx = static_cast<size_t>(queueFamily_[i].idx);
+        const size_t queue_count = static_cast<size_t>(queueFamily_[i].num);
+        if (queueMtxes_.size() <= family_idx) {
+            queueMtxes_.resize(family_idx + 1);
+        }
+        auto &locks = queueMtxes_[family_idx];
+        if (locks.size() < queue_count) {
+            locks.resize(queue_count);
+        }
+        for (size_t j = 0; j < queue_count; ++j) {
+            if (!locks[j]) {
+                locks[j] = std::make_unique<std::mutex>();
+            }
+        }
     }
 
     auto ret = device_builder.add_pNext(&features2)
@@ -1981,6 +2008,35 @@ void VulkanManager::setupDeviceContext()
     for (int i = 0; i < nbqf_; ++i) {
         deviceContext_->qf[i] = queueFamily_[i];
     }
+
+    deviceContext_->lock_queue = [](struct AVHWDeviceContext *ctx, uint32_t queue_family,
+                                    uint32_t index) {
+        VulkanManager::getInstance().lockQueue(queue_family, index);
+    };
+    deviceContext_->unlock_queue = [](struct AVHWDeviceContext *ctx, uint32_t queue_family,
+                                      uint32_t index) {
+        VulkanManager::getInstance().unlockQueue(queue_family, index);
+    };
+}
+
+void VulkanManager::lockQueue(uint32_t queue_family, uint32_t index)
+{
+    if (queueMtxes_.size() <= queue_family)
+        return;
+    auto &locks = queueMtxes_[queue_family];
+    if (locks.size() <= index || !locks[index])
+        return;
+    locks[index]->lock();
+}
+
+void VulkanManager::unlockQueue(uint32_t queue_family, uint32_t index)
+{
+    if (queueMtxes_.size() <= queue_family)
+        return;
+    auto &locks = queueMtxes_[queue_family];
+    if (locks.size() <= index || !locks[index])
+        return;
+    locks[index]->unlock();
 }
 
 const vkb::InstanceDispatchTable &getInstanceDispatchTable()
