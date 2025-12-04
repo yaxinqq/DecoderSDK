@@ -1599,12 +1599,23 @@ public:
         if (!initialized_)
             return;
 
-        if (vkDevice_.device != VK_NULL_HANDLE) {
-            vkb::destroy_device(vkDevice_);
+        try {
+            if (vkDevice_.device != VK_NULL_HANDLE) {
+                vkDispatchTable_.fp_vkDeviceWaitIdle(vkDevice_.device);
+                vkb::destroy_device(vkDevice_);
+            }
+        } catch (std::exception &e) {
+            qWarning() << QStringLiteral("Destroy VkDevice Failed: %1")
+                              .arg(QString::fromStdString(e.what()));
         }
 
-        if (vkInstance_.instance != VK_NULL_HANDLE) {
-            vkb::destroy_instance(vkInstance_);
+        try {
+            if (vkInstance_.instance != VK_NULL_HANDLE) {
+                vkb::destroy_instance(vkInstance_);
+            }
+        } catch (std::exception &e) {
+            qWarning() << QStringLiteral("Destroy VkInstance Failed: %1")
+                              .arg(QString::fromStdString(e.what()));
         }
 
         initialized_ = false;
@@ -1666,6 +1677,7 @@ void VulkanManager::initialize()
         qInfo() << QStringLiteral("Vulkan instance created");
 
         if (!selectPhysicalDevice()) {
+            vkb::destroy_instance(vkInstance_);
             return;
         }
         qInfo() << QStringLiteral("Physical device selected");
@@ -1687,21 +1699,37 @@ void VulkanManager::initialize()
 bool VulkanManager::createInstance()
 {
     vkb::InstanceBuilder builder;
+    builder = builder.set_app_name(qApp->applicationName().toStdString().c_str())
+                  .request_validation_layers(true)
+                  .use_default_debug_messenger()
+                  .set_debug_callback(customDebugCallback)
+                  .set_headless()
+                  .require_api_version(1, 3, 0);
 
-    auto ret = builder.set_app_name(qApp->applicationName().toStdString().c_str())
-                   .request_validation_layers(true)
-                   .use_default_debug_messenger()
-                   .require_api_version(1, 3, 0)
-                   .enable_extension(VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME)
-                   .enable_extension(VK_EXT_LAYER_SETTINGS_EXTENSION_NAME)
-                   .enable_extension(VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME)
-                   .set_debug_callback(customDebugCallback)
-                   .set_headless()
-                   .build();
+    vkInstanceExtensions_ = {
+        VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME,
+        VK_EXT_LAYER_SETTINGS_EXTENSION_NAME,
+        VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME,
+    };
 
-    vkInstanceExtensions_.push_back(VK_EXT_LAYER_SETTINGS_EXTENSION_NAME);
-    vkInstanceExtensions_.push_back(VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME);
-    vkInstanceExtensions_.push_back(VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME);
+    const auto systemInfoRet = vkb::SystemInfo::get_system_info();
+    if (systemInfoRet.has_value()) {
+        const auto &systemInfo = systemInfoRet.value();
+        auto iter = vkInstanceExtensions_.cbegin();
+        while (iter != vkInstanceExtensions_.cend()) {
+            if (!systemInfo.is_extension_available(*iter)) {
+                iter = vkInstanceExtensions_.erase(iter);
+            } else {
+                ++iter;
+            }
+        }
+    }
+
+    for (auto iter = vkInstanceExtensions_.cbegin(); iter != vkInstanceExtensions_.cend(); ++iter) {
+        builder.enable_extension(*iter);
+    }
+
+    const auto ret = builder.build();
 
     if (!ret) {
         qWarning() << QStringLiteral("Failed to create Vulkan instance: %1")
@@ -1718,11 +1746,9 @@ bool VulkanManager::selectPhysicalDevice()
 {
     vkb::PhysicalDeviceSelector selector{vkInstance_};
     auto ret = selector.set_minimum_version(1, 3)
+                   .prefer_gpu_device_type(vkb::PreferredDeviceType::discrete)
+                   .allow_any_gpu_device_type(true)
                    .add_required_extension(VK_KHR_SAMPLER_YCBCR_CONVERSION_EXTENSION_NAME)
-                   .add_required_extension(VK_KHR_MAINTENANCE1_EXTENSION_NAME)
-                   .add_required_extension(VK_KHR_BIND_MEMORY_2_EXTENSION_NAME)
-                   .add_required_extension(VK_KHR_GET_MEMORY_REQUIREMENTS_2_EXTENSION_NAME)
-                   .add_required_extension(VK_KHR_IMAGE_FORMAT_LIST_EXTENSION_NAME)
 #ifdef _WIN32
                    .add_required_extension(VK_KHR_EXTERNAL_MEMORY_WIN32_EXTENSION_NAME)
                    .add_required_extension(VK_KHR_EXTERNAL_SEMAPHORE_WIN32_EXTENSION_NAME)
@@ -1736,8 +1762,8 @@ bool VulkanManager::selectPhysicalDevice()
                    .add_required_extension(VK_KHR_VIDEO_DECODE_H265_EXTENSION_NAME)
                    //.add_required_extension(VK_KHR_VIDEO_DECODE_AV1_EXTENSION_NAME)
                    // for openGL interop
-                   .add_required_extension(VK_KHR_EXTERNAL_MEMORY_EXTENSION_NAME)
-                   .add_required_extension(VK_KHR_EXTERNAL_SEMAPHORE_EXTENSION_NAME)
+                   //.add_required_extension(VK_KHR_EXTERNAL_MEMORY_EXTENSION_NAME)
+                   //.add_required_extension(VK_KHR_EXTERNAL_SEMAPHORE_EXTENSION_NAME)
                    .select();
 
     if (!ret) {
@@ -1770,14 +1796,6 @@ bool VulkanManager::createDevice()
     VkPhysicalDeviceVulkan13Features features13;
     features13.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES;
 
-    VkPhysicalDeviceVideoMaintenance1FeaturesKHR videoMaintenance1;
-    videoMaintenance1.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VIDEO_MAINTENANCE_1_FEATURES_KHR;
-
-#ifdef VK_KHR_video_maintenance2
-    VkPhysicalDeviceVideoMaintenance2FeaturesKHR videoMaintenance2;
-    videoMaintenance2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VIDEO_MAINTENANCE_2_FEATURES_KHR;
-#endif
-
     VkPhysicalDeviceDescriptorBufferFeaturesEXT descriptorBuffer;
     descriptorBuffer.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_BUFFER_FEATURES_EXT;
 
@@ -1790,13 +1808,7 @@ bool VulkanManager::createDevice()
     features2.pNext = &features11;
     features11.pNext = &features12;
     features12.pNext = &features13;
-    features13.pNext = &videoMaintenance1;
-    videoMaintenance1.pNext =
-#ifdef VK_KHR_video_maintenance2
-        &videoMaintenance2;
-    videoMaintenance2.pNext =
-#endif
-        &descriptorBuffer;
+    features13.pNext = &descriptorBuffer;
     descriptorBuffer.pNext = &atomicFloat;
     atomicFloat.pNext = &cooperativeMatrix;
     cooperativeMatrix.pNext = nullptr;
@@ -1814,12 +1826,6 @@ bool VulkanManager::createDevice()
     features11.pNext = nullptr;
     features12.pNext = nullptr;
     features13.pNext = nullptr;
-    videoMaintenance1.pNext =
-#ifdef VK_KHR_video_maintenance2
-        nullptr;
-    videoMaintenance2.pNext =
-#endif
-        nullptr;
     descriptorBuffer.pNext = nullptr;
     atomicFloat.pNext = nullptr;
     cooperativeMatrix.pNext = nullptr;
@@ -2072,6 +2078,11 @@ bool isVulkanAvaliable()
 decoder_sdk::VulkanDeviceContext *getDeviceContext()
 {
     return VulkanManager::getInstance().deviceContext();
+}
+
+void shutdown()
+{
+    return VulkanManager::getInstance().cleanup();
 }
 } // namespace vulkan
 #endif
