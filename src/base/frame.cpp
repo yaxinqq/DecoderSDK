@@ -562,6 +562,12 @@ std::shared_ptr<VulkanFrame> Frame::lockVulkanFrame() const
     // 拷贝 queue_family 数组
     std::memcpy(dst->queue_family, pVkFrame->queue_family, count * sizeof(uint32_t));
 
+    // 拷贝 format 数组
+    std::memcpy(dst->format, vk->format, count * sizeof(VkFormat));
+
+    // 拷贝 nb_layers
+    dst->nb_layers = vk->nb_layers;
+
     // 保存AVVKFrame指针
     dst->avvkframePtr = frame_->data[0];
     return dst;

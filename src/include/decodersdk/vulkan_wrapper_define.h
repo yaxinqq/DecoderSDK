@@ -181,6 +181,19 @@ typedef struct VulkanFrame {
     uint32_t queue_family[8];
 
     /**
+     * Vulkan format for each image. MUST be compatible with the pixel format.
+     * If unset, will be automatically set.
+     * There are at most two compatible formats for a frame - a multiplane
+     * format, and a single-plane multi-image format.
+     */
+    VkFormat format[8];
+
+    /**
+     * Number of layers each image will have.
+     */
+    int nb_layers;
+
+    /**
      * AVVKFrame pointer
      */
     uint8_t *avvkframePtr = nullptr;
