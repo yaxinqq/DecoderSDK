@@ -48,79 +48,98 @@ protected:
     bool renderFrame(const decoder_sdk::Frame &frame) override;
 
 private:
+    /**
+     * @brief 初始化绘制管线
+     *
+     * @param width 帧宽度
+     * @param height 帧高度
+     * @return 是否初始化成功
+     */
+    bool initGraphicsPipeline(uint32_t width, uint32_t height);
+
+    // Vulkan和OpenGL互操作资源初始化
+    /**
+     * @brief Vulkan和OpenGL互操作资源初始化
+     *
+     * @param width 帧宽度
+     * @param height 帧高度
+     * @return 是否初始化成功
+     */
+    bool initInteropResources(uint32_t width, uint32_t height);
+
+    // 执行YUV到RGBA的转换
+    /**
+     * @brief NV12 VkImage 转换到 RGBA VkImage
+     *
+     * @param frame 视频帧
+     * @return 是否转换成功
+     */
+    bool convertNV12ToRGBA(const decoder_sdk::Frame &frame);
+
     /*
      * @brief 绘制视频帧
-     */
-    void drawFrame(GLuint idY, GLuint idUV);
-
-    /**
-     * @brief 准备导出到外部的数据集
-     * 
-     * @param w 帧的宽度
-     * @param h 帧的高度
-     * @param sizeY Y平面分量的大小
-     * @param sizeUV UV屏幕分量的大小
-     * @return 是否准备成功
-     */
-    bool prepareExternalBuffer(int w, int h, uint64_t &sizeY, uint64_t &sizeUV);
-
-    /**
-     * @brief 查找合适的内存类型
-     * 
-     * @param typeBits 该内存类型可用于资源所要求的类型掩码
-     * @param props 需要的属性
-     * @return 适合的内存类型索引
-     */
-    uint32_t findMemoryTypeLocal(uint32_t typeBits, VkMemoryPropertyFlags props);
-
-    /**
-     * @brief 初始化导出信号量
-     * 
-     * @return 是否成功
-     */
-    bool initExternalSemaphores(const decoder_sdk::Frame &frame);
-
-    /**
-     * @brief semReady_的handle
-     * 
-     * @return handle指针
-     */
-    void *readySemaphoreHandle() const;
-    /**
-     * @brief semComplete_的handle
      *
-     * @return handle指针
+     * @param rgbaTexture openGL纹理ID
      */
-    void *completeSemaphoreHandle() const;
-    /**
-     * @brief externalBuffer的handle
+    void drawFrame(GLuint rgbaTexture);
+
+#ifdef _WIN32
+    /*
+     * @brief 导出共享内存句柄
      *
-     * @return handle指针
+     * @param memory vulkan侧的共享内存
+     * @param outHandle 句柄（OUT）
+     * @return 是否导出成功
      */
-    void *externalBufferHandle() const;
+    bool exportMemoryHandle(VkDeviceMemory memory, HANDLE &outHandle);
+#else
+    /*
+     * @brief 导出共享内存描述符
+     *
+     * @param memory vulkan侧的共享内存
+     * @param outFd 描述符（OUT）
+     * @return 是否导出成功
+     */
+    bool exportMemoryHandle(VkDeviceMemory memory, int &outFd);
+#endif
+
+#ifdef _WIN32
+    /*
+     * @brief 导出共享信号量句柄
+     *
+     * @param semaphore vulkan侧的共享信号量
+     * @param outHandle 句柄（OUT）
+     * @return 是否导出成功
+     */
+    bool exportSemaphoreHandle(VkSemaphore semaphore, HANDLE &outHandle);
+#else
+    /*
+     * @brief 导出共享信号量描述符
+     *
+     * @param semaphore vulkan侧的共享信号量
+     * @param outFd 描述符（OUT）
+     * @return 是否导出成功
+     */
+    bool exportSemaphoreHandle(VkSemaphore semaphore, int &outFd);
+#endif
 
     /**
-     * @brief 关闭所有外部信号
+     * @brief 找到对应导出内存的格式
+     *
+     * @param typeFilter 格式过滤器
+     * @param properties vulkan支持的内存属性
+     * @return 内存格式
      */
-    void shutdownExternalSemaphores();
+    uint32_t findMemoryTypeIndex(uint32_t typeFilter, VkMemoryPropertyFlags properties);
 
     /**
-     * @brief 拷贝图像
-     * 
-     * @param frame 视频帧
-     * @param vulkanFrame vulkan帧
-     * @param w 宽度
-     * @param h 高度
-     * @return 是否成功
+     * @brief 清理Vulkan资源
      */
-    bool copyImageToExternalBuffer(const decoder_sdk::Frame &frame, const std::shared_ptr<decoder_sdk::VulkanFrame> &vulkanFrame, int w, int h);
-
+    void cleanupVulkanResources();
     /**
-     * @brief 创建命令池
-     * 
-     * @return 是否创建成功
+     * @brief 清理OpenGL资源
      */
-    bool createCommandPool();
+    void cleanupOpenGLResources();
 
 private:
     // vulkan的相关对象
@@ -130,31 +149,43 @@ private:
     const vkb::InstanceDispatchTable &vkInstanceDispatchTable_;
     const vkb::DispatchTable &vkDispatchTable_;
 
-    VkCommandPool commandPool_ = VK_NULL_HANDLE;
-
-    VkBuffer extBuffer_ = VK_NULL_HANDLE;
-    VkDeviceMemory extMemory_ = VK_NULL_HANDLE;
-    uint64_t extBufferSize_ = 0;
-    uint64_t extOffsetY_ = 0;
-    uint64_t extOffsetUV_ = 0;
-
-    VkSemaphore semReady_ = VK_NULL_HANDLE;
-    VkSemaphore semComplete_ = VK_NULL_HANDLE;
-    bool semInitialized_ = false;
-
-    uint32_t graphicsQueueIndex_ = 0;
-    VkQueue graphicsQueue_ = VK_NULL_HANDLE;
-
-
     // OpenGL的相关对象
     QOpenGLShaderProgram program_;
     QOpenGLBuffer vbo_;
 
-    GLuint memObj_ = 0;
-    GLuint pbo_ = 0;
-    size_t memSize_ = 0;
-    GLuint glReadySem_ = 0;
-    GLuint glCompleteSem_ = 0;
+    // Vulkan渲染管线
+    VkPipeline graphicsPipeline_ = VK_NULL_HANDLE;
+    VkPipelineLayout graphicsPipelineLayout_ = VK_NULL_HANDLE;
+    VkRenderPass renderPass_ = VK_NULL_HANDLE;
+    VkFramebuffer framebuffer_ = VK_NULL_HANDLE;
+
+    // Vulkan采样器
+    VkSamplerYcbcrConversion ycbcrConversion_ = VK_NULL_HANDLE;
+    VkSampler ycbcrSampler_ = VK_NULL_HANDLE;
+
+    // Vulkan RGBA输出纹理（用于导出给OpenGL）
+    VkImage rgbaImage_ = VK_NULL_HANDLE;
+    VkDeviceMemory rgbaMemory_ = VK_NULL_HANDLE;
+    VkImageView rgbaImageView_ = VK_NULL_HANDLE;
+
+    // Vulkan 描述符（用于渲染管线绑定资源）
+    VkDescriptorPool descriptorPool_ = VK_NULL_HANDLE;
+    VkDescriptorSetLayout descriptorSetLayout_ = VK_NULL_HANDLE;
+    VkDescriptorSet descriptorSet_ = VK_NULL_HANDLE;
+    VkCommandPool commandPool_ = VK_NULL_HANDLE;
+    VkCommandBuffer commandBuffer_ = VK_NULL_HANDLE;
+
+    // Vulkan 图形队列
+    VkFence fence_ = VK_NULL_HANDLE;
+    VkQueue graphicsQueue_ = VK_NULL_HANDLE;
+    uint32_t graphicsQueueIndex_ = 0;
+
+    // OpenGL导入的RGBA纹理
+    GLuint glRGBATexture_ = 0;
+    GLuint glMemoryObject_ = 0;
+
+    // 标记是否初始化成功
+    bool isInteropInitialized_ = false;
 };
 
 #endif

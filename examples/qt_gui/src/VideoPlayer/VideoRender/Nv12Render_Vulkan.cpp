@@ -1,7 +1,13 @@
 #include "Nv12Render_Vulkan.h"
 
 #ifdef VULKAN_AVAILABLE
+#include <QApplication>
+#include <QByteArray>
+#include <QFile>
+
 #include <vulkan/vulkan.h>
+
+#include <mutex>
 
 namespace {
 const char *vsrc = R"(
@@ -10,13 +16,13 @@ const char *vsrc = R"(
 #endif
 	
     attribute vec4 vertexIn;
-	attribute vec2 textureIn;
-	varying vec2 textureOut;
-	void main(void)
-	{
-		gl_Position = vertexIn;
-		textureOut = textureIn;
-	}
+    attribute vec2 textureIn;
+    varying vec2 textureOut;
+    void main(void)
+    {
+        gl_Position = vertexIn;
+        textureOut = textureIn;
+    }
 )";
 
 const char *fsrc = R"(
@@ -24,28 +30,12 @@ const char *fsrc = R"(
     precision mediump float;
 #endif
 
-    uniform sampler2D textureY;
-    uniform sampler2D textureUV;
-
+    uniform sampler2D texture;
     varying vec2 textureOut;
 
     void main(void)
     {
-        // 采样Y和UV纹理
-        float y = texture2D(textureY, textureOut).r;
-        vec2 uv = texture2D(textureUV, textureOut).rg;
-
-        // 常量偏移和转换矩阵
-        const vec3 yuv2rgb_ofs = vec3(0.0625, 0.5, 0.5);
-        const mat3 yuv2rgb_mat = mat3(
-            1.16438356,  0.0,           1.79274107,
-            1.16438356, -0.21324861, -0.53290932,
-            1.16438356,  2.11240178,  0.0
-        );
-
-        // YUV到RGB的转换
-        vec3 rgb = (vec3(y, uv.r, uv.g) - yuv2rgb_ofs) * yuv2rgb_mat;
-        gl_FragColor = vec4(rgb, 1.0);
+        gl_FragColor = texture2D(texture, textureOut);
     }
 )";
 
@@ -76,8 +66,15 @@ typedef void(APIENTRYP PFNGLSIGNALSEMAPHOREEXTPROC)(GLuint semaphore, GLuint num
                                                     const GLenum *srcLayouts);
 typedef void(APIENTRYP PFNGLCREATETEXTURESPROC)(GLenum target, GLsizei n, GLuint *textures);
 typedef void(APIENTRYP PFNGLDELETESEMAPHORESEXTPROC)(GLsizei n, const GLuint *semaphores);
+typedef void(APIENTRYP PFNGLTEXTURESTORAGEMEM2DEXTPROC)(GLuint texture, GLsizei levels,
+                                                        GLenum internalformat, GLsizei width,
+                                                        GLsizei height, GLuint memory,
+                                                        GLuint64 offset);
 
-// 全局或类内静态存储
+// 全局锁
+static std::mutex g_mutex;
+
+// gl函数扩展
 static bool g_extLoaded = false;
 static bool g_extLoadTried = false;
 
@@ -88,24 +85,25 @@ static PFNGLWAITSEMAPHOREEXTPROC glWaitSemaphoreEXT = nullptr;
 static PFNGLCREATEMEMORYOBJECTSEXTPROC glCreateMemoryObjectsEXT = nullptr;
 static PFNGLDELETEMEMORYOBJECTSEXTPROC glDeleteMemoryObjectsEXT = nullptr;
 static PFNGLIMPORTMEMORYWIN32HANDLEEXTPROC glImportMemoryWin32HandleEXT = nullptr;
-static PFNGLNAMEDBUFFERSTORAGEMEMEXTPROC glNamedBufferStorageMemEXT = nullptr;
-static PFNGLTEXTURESTORAGE2DPROC glTextureStorage2D = nullptr;
-static PFNGLTEXTURESUBIMAGE2DPROC glTextureSubImage2D = nullptr;
-static PFNGLTEXTUREPARAMETERIPROC glTextureParameteri = nullptr;
 static PFNGLSIGNALSEMAPHOREEXTPROC glSignalSemaphoreEXT = nullptr;
-static PFNGLCREATETEXTURESPROC glCreateTextures = nullptr;
 static PFNGLDELETESEMAPHORESEXTPROC glDeleteSemaphoresEXT = nullptr;
+static PFNGLTEXTURESTORAGEMEM2DEXTPROC glTextureStorageMem2DEXT = nullptr;
 
-bool loadExtFunctions(QOpenGLContext *ctx)
+static bool loadExtFunctions(QOpenGLContext *ctx)
 {
     // 已经加载过就返回结果
+    if (g_extLoadTried)
+        return g_extLoaded;
+
+    std::lock_guard l(g_mutex);
+    // 获得锁之后，再确认一次
     if (g_extLoadTried)
         return g_extLoaded;
 
     g_extLoadTried = true;
 
     if (!ctx) {
-        qWarning() << "loadExtFunctions: no context!";
+        qWarning() << QStringLiteral("[Nv12Render_Vulkan] LoadExtFunctions: no context!");
         g_extLoaded = false;
         return false;
     }
@@ -125,7 +123,8 @@ bool loadExtFunctions(QOpenGLContext *ctx)
             func = reinterpret_cast<std::decay_t<decltype(func)>>(addr);
 
             if (!func) {
-                qWarning() << "Missing extension func:" << name;
+                qWarning()
+                    << QStringLiteral("[Nv12Render_Vulkan] Missing extension func: %1").arg(name);
                 return false;
             }
         }
@@ -140,72 +139,230 @@ bool loadExtFunctions(QOpenGLContext *ctx)
     ok &= loadFunc(glCreateMemoryObjectsEXT, "glCreateMemoryObjectsEXT");
     ok &= loadFunc(glDeleteMemoryObjectsEXT, "glDeleteMemoryObjectsEXT");
     ok &= loadFunc(glImportMemoryWin32HandleEXT, "glImportMemoryWin32HandleEXT");
-    ok &= loadFunc(glNamedBufferStorageMemEXT, "glNamedBufferStorageMemEXT");
-    ok &= loadFunc(glTextureStorage2D, "glTextureStorage2D");
-    ok &= loadFunc(glTextureSubImage2D, "glTextureSubImage2D");
-    ok &= loadFunc(glTextureParameteri, "glTextureParameteri");
     ok &= loadFunc(glSignalSemaphoreEXT, "glSignalSemaphoreEXT");
-    ok &= loadFunc(glCreateTextures, "glCreateTextures");
     ok &= loadFunc(glDeleteSemaphoresEXT, "glDeleteSemaphoresEXT");
+    ok &= loadFunc(glTextureStorageMem2DEXT, "glTextureStorageMem2DEXT");
 
     g_extLoaded = ok;
     return ok;
 }
 
-struct QueueGuard {
-    const decoder_sdk::Frame &f;
-    uint32_t queueFamily;
-    uint32_t queueIndex;
-    QueueGuard(const decoder_sdk::Frame &f, uint32_t queueFamily, uint32_t queueIndex)
-        : f(f)
-        , queueFamily(queueFamily)
-        , queueIndex(queueIndex)
-    {
-        f.lockVulkanQueue(queueFamily, queueIndex);
+// vulkan着色器
+static QByteArray g_vertShaderSrc;
+static QByteArray g_fragShaderSrc;
+static bool g_shaderLoaded = false;
+static bool g_shaderLoadTried = false;
+
+static bool loadShaderFunctions()
+{
+    // 已经加载过就返回结果
+    if (g_shaderLoadTried)
+        return g_shaderLoaded;
+
+    std::lock_guard l(g_mutex);
+    // 获得锁之后，再确认一次
+    if (g_shaderLoadTried)
+        return g_shaderLoaded;
+
+    g_shaderLoadTried = true;
+
+    const auto applicationDirPath = qApp->applicationDirPath();
+    QFile vertFile(QStringLiteral("%1/shaders/ycbcr_to_rgba.vert.spv").arg(applicationDirPath));
+    QFile fragFile(QStringLiteral("%1/shaders/ycbcr_to_rgba.frag.spv").arg(applicationDirPath));
+    if (vertFile.open(QIODevice::ReadOnly)) {
+        g_vertShaderSrc = vertFile.readAll();
+        vertFile.close();
     }
-    ~QueueGuard()
-    {
-        f.unlockVulkanQueue(queueFamily, queueIndex);
+    if (fragFile.open(QIODevice::ReadOnly)) {
+        g_fragShaderSrc = fragFile.readAll();
+        fragFile.close();
     }
-};
+
+    g_shaderLoaded = !g_vertShaderSrc.isEmpty() && !g_fragShaderSrc.isEmpty();
+    return g_shaderLoaded;
+}
+
+static uint32_t getPlaneCount(VkFormat format)
+{
+    switch (format) {
+        case VK_FORMAT_G8_B8_R8_3PLANE_420_UNORM: // YUV420P
+        case VK_FORMAT_G8_B8_R8_3PLANE_422_UNORM: // YUV422P
+        case VK_FORMAT_G8_B8_R8_3PLANE_444_UNORM: // YUV444P
+            return 3;
+
+        case VK_FORMAT_G8_B8R8_2PLANE_420_UNORM: // NV12
+        case VK_FORMAT_G8_B8R8_2PLANE_422_UNORM: // NV16
+            return 2;
+
+        default:
+            return 1; // 单平面格式
+    }
+}
+
+static GLenum getPlaneFormatGL(VkFormat format, uint32_t planeIndex)
+{
+    switch (format) {
+        case VK_FORMAT_G8_B8_R8_3PLANE_420_UNORM:
+        case VK_FORMAT_G8_B8_R8_3PLANE_422_UNORM:
+        case VK_FORMAT_G8_B8_R8_3PLANE_444_UNORM:
+            // 所有平面都是8-bit单通道
+            return GL_RG;
+
+        case VK_FORMAT_G8_B8R8_2PLANE_420_UNORM:
+        case VK_FORMAT_G8_B8R8_2PLANE_422_UNORM:
+            if (planeIndex == 0) {
+                return GL_RG; // Y平面
+            } else {
+                return GL_RED; // UV平面（交错）
+            }
+
+        default:
+            return GL_RGB; // 默认
+    }
+}
+
+static VkImageAspectFlagBits getPlaneAspect(VkFormat format, uint32_t planeIndex)
+{
+    switch (format) {
+        case VK_FORMAT_G8_B8_R8_3PLANE_420_UNORM:
+        case VK_FORMAT_G8_B8_R8_3PLANE_422_UNORM:
+        case VK_FORMAT_G8_B8_R8_3PLANE_444_UNORM:
+        case VK_FORMAT_G8_B8R8_2PLANE_420_UNORM:
+        case VK_FORMAT_G8_B8R8_2PLANE_422_UNORM:
+            return static_cast<VkImageAspectFlagBits>(VK_IMAGE_ASPECT_PLANE_0_BIT << planeIndex);
+        default:
+            return VK_IMAGE_ASPECT_COLOR_BIT;
+    }
+}
+
+static void getPlaneDimensions(VkFormat format, uint32_t width, uint32_t height,
+                               uint32_t planeIndex, uint32_t &outWidth, uint32_t &outHeight)
+{
+    switch (format) {
+        case VK_FORMAT_G8_B8_R8_3PLANE_420_UNORM: // YUV420P
+            if (planeIndex == 0) {
+                outWidth = width;
+                outHeight = height;
+            } else {
+                outWidth = (width + 1) / 2;   // UV平面宽度减半
+                outHeight = (height + 1) / 2; // UV平面高度减半
+            }
+            break;
+
+        case VK_FORMAT_G8_B8R8_2PLANE_420_UNORM: // NV12
+            if (planeIndex == 0) {
+                outWidth = width;
+                outHeight = height;
+            } else {
+                outWidth = (width + 1) / 2;   // UV平面宽度减半
+                outHeight = (height + 1) / 2; // UV平面高度减半
+            }
+            break;
+
+        case VK_FORMAT_G8_B8_R8_3PLANE_422_UNORM: // YUV422P
+            if (planeIndex == 0) {
+                outWidth = width;
+                outHeight = height;
+            } else {
+                outWidth = (width + 1) / 2; // UV平面宽度减半
+                outHeight = height;         // 高度不变
+            }
+            break;
+
+        case VK_FORMAT_G8_B8R8_2PLANE_422_UNORM: // NV16
+            if (planeIndex == 0) {
+                outWidth = width;
+                outHeight = height;
+            } else {
+                outWidth = (width + 1) / 2; // UV平面宽度减半
+                outHeight = height;         // 高度不变
+            }
+            break;
+
+        case VK_FORMAT_G8_B8_R8_3PLANE_444_UNORM: // YUV444P
+            outWidth = width;
+            outHeight = height;
+            break;
+
+        default:
+            outWidth = width;
+            outHeight = height;
+    }
+}
+
+/* Converts return values to strings */
+const char *vkRet2str(VkResult res)
+{
+#define CASE(VAL) \
+    case VAL:     \
+        return #VAL
+    switch (res) {
+        CASE(VK_SUCCESS);
+        CASE(VK_NOT_READY);
+        CASE(VK_TIMEOUT);
+        CASE(VK_EVENT_SET);
+        CASE(VK_EVENT_RESET);
+        CASE(VK_INCOMPLETE);
+        CASE(VK_ERROR_OUT_OF_HOST_MEMORY);
+        CASE(VK_ERROR_OUT_OF_DEVICE_MEMORY);
+        CASE(VK_ERROR_INITIALIZATION_FAILED);
+        CASE(VK_ERROR_DEVICE_LOST);
+        CASE(VK_ERROR_MEMORY_MAP_FAILED);
+        CASE(VK_ERROR_LAYER_NOT_PRESENT);
+        CASE(VK_ERROR_EXTENSION_NOT_PRESENT);
+        CASE(VK_ERROR_FEATURE_NOT_PRESENT);
+        CASE(VK_ERROR_INCOMPATIBLE_DRIVER);
+        CASE(VK_ERROR_TOO_MANY_OBJECTS);
+        CASE(VK_ERROR_FORMAT_NOT_SUPPORTED);
+        CASE(VK_ERROR_FRAGMENTED_POOL);
+        CASE(VK_ERROR_UNKNOWN);
+        CASE(VK_ERROR_OUT_OF_POOL_MEMORY);
+        CASE(VK_ERROR_INVALID_EXTERNAL_HANDLE);
+        CASE(VK_ERROR_FRAGMENTATION);
+        CASE(VK_ERROR_INVALID_OPAQUE_CAPTURE_ADDRESS);
+        CASE(VK_PIPELINE_COMPILE_REQUIRED);
+        CASE(VK_ERROR_SURFACE_LOST_KHR);
+        CASE(VK_ERROR_NATIVE_WINDOW_IN_USE_KHR);
+        CASE(VK_SUBOPTIMAL_KHR);
+        CASE(VK_ERROR_OUT_OF_DATE_KHR);
+        CASE(VK_ERROR_INCOMPATIBLE_DISPLAY_KHR);
+        CASE(VK_ERROR_VALIDATION_FAILED_EXT);
+        CASE(VK_ERROR_INVALID_SHADER_NV);
+        CASE(VK_ERROR_VIDEO_PICTURE_LAYOUT_NOT_SUPPORTED_KHR);
+        CASE(VK_ERROR_VIDEO_PROFILE_OPERATION_NOT_SUPPORTED_KHR);
+        CASE(VK_ERROR_VIDEO_PROFILE_FORMAT_NOT_SUPPORTED_KHR);
+        CASE(VK_ERROR_VIDEO_PROFILE_CODEC_NOT_SUPPORTED_KHR);
+        CASE(VK_ERROR_VIDEO_STD_VERSION_NOT_SUPPORTED_KHR);
+        CASE(VK_ERROR_INVALID_DRM_FORMAT_MODIFIER_PLANE_LAYOUT_EXT);
+        CASE(VK_ERROR_NOT_PERMITTED_KHR);
+        CASE(VK_ERROR_FULL_SCREEN_EXCLUSIVE_MODE_LOST_EXT);
+        CASE(VK_THREAD_IDLE_KHR);
+        CASE(VK_THREAD_DONE_KHR);
+        CASE(VK_OPERATION_DEFERRED_KHR);
+        CASE(VK_OPERATION_NOT_DEFERRED_KHR);
+        default:
+            return "Unknown error";
+    }
+#undef CASE
+}
 } // namespace
 
 Nv12Render_Vulkan::Nv12Render_Vulkan()
     : VideoRender(),
-      vkInstance_{vulkan::getVkInstance()},
-      vkPhysicalDevice_{vulkan::getVkPhysicalDevice()},
-      vkDevice_{vulkan::getVkDevice()},
-      vkInstanceDispatchTable_{vulkan::getInstanceDispatchTable()},
-      vkDispatchTable_{vulkan::getDispatchTable()}
+      vkInstance_{vulkan_utils::getVkInstance()},
+      vkPhysicalDevice_{vulkan_utils::getVkPhysicalDevice()},
+      vkDevice_{vulkan_utils::getVkDevice()},
+      vkInstanceDispatchTable_{vulkan_utils::getInstanceDispatchTable()},
+      vkDispatchTable_{vulkan_utils::getDispatchTable()}
 {
 }
 
 Nv12Render_Vulkan::~Nv12Render_Vulkan()
 {
+    cleanupVulkanResources();
+    cleanupOpenGLResources();
+
     vbo_.destroy();
-    if (pbo_ > 0) {
-        glDeleteBuffers(1, &pbo_);
-        pbo_ = 0;
-    }
-    if (memObj_ > 0) {
-        glDeleteMemoryObjectsEXT(1, &memObj_);
-        memObj_ = 0;
-    }
-
-    if (commandPool_ != VK_NULL_HANDLE) {
-        vkDispatchTable_.fp_vkDestroyCommandPool(vkDevice_.device, commandPool_, nullptr);
-        commandPool_ = VK_NULL_HANDLE;
-    }
-
-    if (extBuffer_) {
-        vkDispatchTable_.fp_vkDestroyBuffer(vkDevice_.device, extBuffer_, nullptr);
-        extBuffer_ = VK_NULL_HANDLE;
-    }
-    if (extMemory_) {
-        vkDispatchTable_.fp_vkFreeMemory(vkDevice_.device, extMemory_, nullptr);
-        extMemory_ = VK_NULL_HANDLE;
-    }
-    shutdownExternalSemaphores();
 }
 
 bool Nv12Render_Vulkan::initRenderVbo(const bool horizontal, const bool vertical)
@@ -230,44 +387,521 @@ bool Nv12Render_Vulkan::initRenderTexture(const decoder_sdk::Frame &frame)
 
 bool Nv12Render_Vulkan::initInteropsResource(const decoder_sdk::Frame &frame)
 {
-    if (!loadExtFunctions(QOpenGLContext::currentContext()) || !vulkan::isVulkanAvaliable()) {
+    if (!loadExtFunctions(QOpenGLContext::currentContext()) || !loadShaderFunctions() ||
+        !vulkan_utils::isVulkanAvaliable()) {
         return false;
     }
 
-    if (!createCommandPool()) {
+    const bool result = initInteropResources(frame.width(), frame.height());
+    return result;
+}
+
+bool Nv12Render_Vulkan::renderFrame(const decoder_sdk::Frame &frame)
+{
+    // Vulkan离屏渲染将NV12转为RGBA
+    if (!convertNV12ToRGBA(frame)) {
+        qWarning() << QStringLiteral("[Nv12Render_Vulkan] Failed to convert NV12 to RGBA.");
         return false;
     }
 
-    uint64_t sizeY = 0, sizeUV = 0;
-    if (!prepareExternalBuffer(frame.width(), frame.height(), sizeY, sizeUV)) {
-        qWarning() << QStringLiteral("prepareExternalBuffer failed");
+    // OpenGL渲染共享的RGBA纹理
+    drawFrame(glRGBATexture_);
+
+    return true;
+}
+
+bool Nv12Render_Vulkan::initGraphicsPipeline(uint32_t width, uint32_t height)
+{
+    const auto queueIndex = vkDevice_.get_queue_index(vkb::QueueType::graphics);
+    if (!queueIndex.has_value()) {
+        return false;
+    }
+    graphicsQueueIndex_ = queueIndex.value();
+    vkDispatchTable_.fp_vkGetDeviceQueue(vkDevice_.device, graphicsQueueIndex_, 0, &graphicsQueue_);
+
+    VkResult ret = VK_SUCCESS;
+
+    VkCommandPoolCreateInfo cmdPoolInfo{};
+    cmdPoolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+    cmdPoolInfo.queueFamilyIndex = graphicsQueueIndex_;
+    cmdPoolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+
+    ret = vkDispatchTable_.fp_vkCreateCommandPool(vkDevice_.device, &cmdPoolInfo, nullptr,
+                                                  &commandPool_);
+    if (ret != VK_SUCCESS) {
+        qWarning() << QStringLiteral("[Nv12Render_Vulkan] Failed to create command pool: %1.")
+                          .arg(vkRet2str(ret));
+        return false;
+    }
+    VkCommandBufferAllocateInfo cmdAllocInfo{};
+    cmdAllocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    cmdAllocInfo.commandPool = commandPool_;
+    cmdAllocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    cmdAllocInfo.commandBufferCount = 1;
+
+    ret = vkDispatchTable_.fp_vkAllocateCommandBuffers(vkDevice_.device, &cmdAllocInfo,
+                                                       &commandBuffer_);
+    if (ret != VK_SUCCESS) {
+        qWarning() << QStringLiteral("[Nv12Render_Vulkan] Failed to create command buffers: %1.")
+                          .arg(vkRet2str(ret));
         return false;
     }
 
-    void *hmem = externalBufferHandle();
-    size_t total = (size_t)extBufferSize_;
-    if (!memObj_ || memSize_ != total) {
-        if (pbo_) {
-            glDeleteBuffers(1, &pbo_);
-            pbo_ = 0;
-        }
-        if (memObj_) {
-            glDeleteMemoryObjectsEXT(1, &memObj_);
-            memObj_ = 0;
-        }
-        glCreateMemoryObjectsEXT(1, &memObj_);
-        glImportMemoryWin32HandleEXT(memObj_, (GLuint64)total, GL_HANDLE_TYPE_OPAQUE_WIN32_EXT,
-                                     hmem);
-        glGenBuffers(1, &pbo_);
-        glNamedBufferStorageMemEXT(pbo_, (GLsizeiptr)total, memObj_, 0);
-        memSize_ = total;
+    // yCbCr
+    VkSamplerYcbcrConversionCreateInfo convCreate{};
+    convCreate.sType = VK_STRUCTURE_TYPE_SAMPLER_YCBCR_CONVERSION_CREATE_INFO;
+    convCreate.format = VK_FORMAT_G8_B8R8_2PLANE_420_UNORM;
+    convCreate.ycbcrModel = VK_SAMPLER_YCBCR_MODEL_CONVERSION_YCBCR_709;
+    convCreate.ycbcrRange = VK_SAMPLER_YCBCR_RANGE_ITU_FULL;
+    convCreate.components = {VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY,
+                             VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY};
+    convCreate.xChromaOffset = VK_CHROMA_LOCATION_COSITED_EVEN;
+    convCreate.yChromaOffset = VK_CHROMA_LOCATION_COSITED_EVEN;
+
+    // 查询是否支持线性滤波
+    VkFormatProperties2 formatProps2 = {};
+    formatProps2.sType = VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_2;
+
+    VkFormatProperties3 formatProps3 = {};
+    formatProps3.sType = VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_3;
+    formatProps2.pNext = &formatProps3; // 链接到主结构
+
+    vkInstanceDispatchTable_.fp_vkGetPhysicalDeviceFormatProperties2(
+        vkPhysicalDevice_.physical_device, VK_FORMAT_G8_B8R8_2PLANE_420_UNORM, &formatProps2);
+
+    // 检查色度重采样所需的线性滤波支持
+    const bool chromaLinearSupported =
+        (formatProps3.optimalTilingFeatures &
+         VK_FORMAT_FEATURE_SAMPLED_IMAGE_YCBCR_CONVERSION_CHROMA_RECONSTRUCTION_EXPLICIT_BIT) != 0;
+
+    convCreate.chromaFilter = chromaLinearSupported ? VK_FILTER_LINEAR : VK_FILTER_NEAREST;
+    convCreate.forceExplicitReconstruction = VK_FALSE;
+
+    ret = vkDispatchTable_.fp_vkCreateSamplerYcbcrConversion(vkDevice_.device, &convCreate, nullptr,
+                                                             &ycbcrConversion_);
+    if (ret != VK_SUCCESS) {
+        qWarning() << QStringLiteral(
+                          "[Nv12Render_Vulkan] Failed to create YCbCr conversion sampler: %1.")
+                          .arg(vkRet2str(ret));
+        return false;
+    }
+
+    // Sampler
+    VkSamplerYcbcrConversionInfo convInfo{};
+    convInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_YCBCR_CONVERSION_INFO;
+    convInfo.conversion = ycbcrConversion_;
+
+    // 检查滤波器采样所需的线性滤波支持
+    const bool sampleLinearSupported = (formatProps3.optimalTilingFeatures &
+                                        VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT) != 0;
+
+    VkSamplerCreateInfo sampInfo{};
+    sampInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+    sampInfo.pNext = &convInfo;
+    sampInfo.magFilter = sampleLinearSupported ? VK_FILTER_LINEAR : VK_FILTER_NEAREST;
+    sampInfo.minFilter = sampleLinearSupported ? VK_FILTER_LINEAR : VK_FILTER_NEAREST;
+    sampInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+    sampInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    sampInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    sampInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    sampInfo.maxAnisotropy = 1.0f;
+    sampInfo.minLod = 0.0f;
+    sampInfo.maxLod = 0.0f;
+
+    ret = vkDispatchTable_.fp_vkCreateSampler(vkDevice_.device, &sampInfo, nullptr, &ycbcrSampler_);
+    if (ret != VK_SUCCESS) {
+        qWarning() << QStringLiteral("[Nv12Render_Vulkan] Failed to create sampler: %1.")
+                          .arg(vkRet2str(ret));
+        return false;
+    }
+
+    VkDescriptorPoolSize poolSize{};
+    poolSize.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    poolSize.descriptorCount = 2;
+    VkDescriptorPoolCreateInfo poolInfo{};
+    poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    poolInfo.poolSizeCount = 1;
+    poolInfo.pPoolSizes = &poolSize;
+    poolInfo.maxSets = 2;
+    poolInfo.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
+
+    ret = vkDispatchTable_.fp_vkCreateDescriptorPool(vkDevice_.device, &poolInfo, nullptr,
+                                                     &descriptorPool_);
+    if (ret != VK_SUCCESS) {
+        qWarning() << QStringLiteral("[Nv12Render_Vulkan] Failed to create descriptor pool: %1.")
+                          .arg(vkRet2str(ret));
+        return false;
+    }
+
+    VkDescriptorSetLayoutBinding binding{};
+    binding.binding = 0;
+    binding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    binding.descriptorCount = 1;
+    binding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    binding.pImmutableSamplers = &ycbcrSampler_;
+    VkDescriptorSetLayoutCreateInfo dslInfo{};
+    dslInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    dslInfo.bindingCount = 1;
+    dslInfo.pBindings = &binding;
+
+    ret = vkDispatchTable_.fp_vkCreateDescriptorSetLayout(vkDevice_.device, &dslInfo, nullptr,
+                                                          &descriptorSetLayout_);
+    if (ret != VK_SUCCESS) {
+        qWarning() << QStringLiteral("[Nv12Render_Vulkan] Failed to create descriptor layout: %1.")
+                          .arg(vkRet2str(ret));
+        return false;
+    }
+
+    VkPipelineLayoutCreateInfo plInfo{};
+    plInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    plInfo.setLayoutCount = 1;
+    plInfo.pSetLayouts = &descriptorSetLayout_;
+
+    ret = vkDispatchTable_.fp_vkCreatePipelineLayout(vkDevice_.device, &plInfo, nullptr,
+                                                     &graphicsPipelineLayout_);
+    if (ret != VK_SUCCESS) {
+        qWarning() << QStringLiteral("[Nv12Render_Vulkan] Failed to create pipeline layout: %1.")
+                          .arg(vkRet2str(ret));
+        return false;
+    }
+
+    VkAttachmentDescription colorAttach{};
+    colorAttach.format = VK_FORMAT_R8G8B8A8_UNORM;
+    colorAttach.samples = VK_SAMPLE_COUNT_1_BIT;
+    colorAttach.loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    colorAttach.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    colorAttach.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    colorAttach.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    colorAttach.initialLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    colorAttach.finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
+    VkAttachmentReference colorRef{};
+    colorRef.attachment = 0;
+    colorRef.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
+    VkSubpassDescription subpass{};
+    subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+    subpass.colorAttachmentCount = 1;
+    subpass.pColorAttachments = &colorRef;
+
+    VkSubpassDependency dep{};
+    dep.srcSubpass = VK_SUBPASS_EXTERNAL;
+    dep.dstSubpass = 0;
+    dep.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    dep.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    dep.srcAccessMask = 0;
+    dep.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+
+    VkRenderPassCreateInfo rpInfo{};
+    rpInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+    rpInfo.attachmentCount = 1;
+    rpInfo.pAttachments = &colorAttach;
+    rpInfo.subpassCount = 1;
+    rpInfo.pSubpasses = &subpass;
+    rpInfo.dependencyCount = 1;
+    rpInfo.pDependencies = &dep;
+
+    ret = vkDispatchTable_.fp_vkCreateRenderPass(vkDevice_.device, &rpInfo, nullptr, &renderPass_);
+    if (ret != VK_SUCCESS) {
+        qWarning() << QStringLiteral("[Nv12Render_Vulkan] Failed to create render pass: %1.")
+                          .arg(vkRet2str(ret));
+        return false;
+    }
+
+    // 创建着色器
+    if (g_vertShaderSrc.isEmpty() || g_fragShaderSrc.isEmpty()) {
+        qWarning() << QStringLiteral("[Nv12Render_Vulkan] Failed to read shaders.");
+        return false;
+    }
+
+    VkShaderModuleCreateInfo smInfo{};
+    smInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+    smInfo.codeSize = static_cast<size_t>(g_vertShaderSrc.size());
+    smInfo.pCode = reinterpret_cast<const uint32_t *>(g_vertShaderSrc.constData());
+    VkShaderModule vertModule = VK_NULL_HANDLE;
+
+    ret = vkDispatchTable_.fp_vkCreateShaderModule(vkDevice_.device, &smInfo, nullptr, &vertModule);
+    if (ret != VK_SUCCESS) {
+        qWarning() << QStringLiteral("[Nv12Render_Vulkan] Failed to create vert shader module: %1.")
+                          .arg(vkRet2str(ret));
+        return false;
+    }
+
+    smInfo.codeSize = static_cast<size_t>(g_fragShaderSrc.size());
+    smInfo.pCode = reinterpret_cast<const uint32_t *>(g_fragShaderSrc.constData());
+    VkShaderModule fragModule = VK_NULL_HANDLE;
+    ret = vkDispatchTable_.fp_vkCreateShaderModule(vkDevice_.device, &smInfo, nullptr, &fragModule);
+    if (ret != VK_SUCCESS) {
+        vkDispatchTable_.fp_vkDestroyShaderModule(vkDevice_.device, vertModule, nullptr);
+        qWarning() << QStringLiteral("[Nv12Render_Vulkan] Failed to create frag shader module: %1.")
+                          .arg(vkRet2str(ret));
+        return false;
+    }
+
+    VkPipelineShaderStageCreateInfo stages[2]{};
+    stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
+    stages[0].module = vertModule;
+    stages[0].pName = "main";
+    stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+    stages[1].module = fragModule;
+    stages[1].pName = "main";
+
+    VkPipelineVertexInputStateCreateInfo vi{};
+    vi.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+
+    VkPipelineInputAssemblyStateCreateInfo ia{};
+    ia.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+    ia.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+
+    VkPipelineViewportStateCreateInfo vpState{};
+    vpState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+    vpState.viewportCount = 1;
+    vpState.scissorCount = 1;
+
+    VkPipelineRasterizationStateCreateInfo rs{};
+    rs.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+    rs.polygonMode = VK_POLYGON_MODE_FILL;
+    rs.cullMode = VK_CULL_MODE_NONE;
+    rs.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+    rs.lineWidth = 1.0f;
+
+    VkPipelineMultisampleStateCreateInfo ms{};
+    ms.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+    ms.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+    VkPipelineColorBlendAttachmentState cbAtt{};
+    cbAtt.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+                           VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+    cbAtt.blendEnable = VK_FALSE;
+
+    VkPipelineColorBlendStateCreateInfo cb{};
+    cb.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+    cb.attachmentCount = 1;
+    cb.pAttachments = &cbAtt;
+
+    VkDynamicState dynStates[2] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+    VkPipelineDynamicStateCreateInfo dyn{};
+    dyn.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+    dyn.dynamicStateCount = 2;
+    dyn.pDynamicStates = dynStates;
+
+    VkGraphicsPipelineCreateInfo gp{};
+    gp.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+    gp.stageCount = 2;
+    gp.pStages = stages;
+    gp.pVertexInputState = &vi;
+    gp.pInputAssemblyState = &ia;
+    gp.pViewportState = &vpState;
+    gp.pRasterizationState = &rs;
+    gp.pMultisampleState = &ms;
+    gp.pColorBlendState = &cb;
+    gp.pDynamicState = &dyn;
+    gp.layout = graphicsPipelineLayout_;
+    gp.renderPass = renderPass_;
+    gp.subpass = 0;
+
+    ret = vkDispatchTable_.fp_vkCreateGraphicsPipelines(vkDevice_.device, VK_NULL_HANDLE, 1, &gp,
+                                                        nullptr, &graphicsPipeline_);
+    if (ret != VK_SUCCESS) {
+        vkDispatchTable_.fp_vkDestroyShaderModule(vkDevice_.device, vertModule, nullptr);
+        vkDispatchTable_.fp_vkDestroyShaderModule(vkDevice_.device, fragModule, nullptr);
+        qWarning() << QStringLiteral("[Nv12Render_Vulkan] Failed to create graphics pipeline: %1.")
+                          .arg(vkRet2str(ret));
+        return false;
+    }
+    vkDispatchTable_.fp_vkDestroyShaderModule(vkDevice_.device, vertModule, nullptr);
+    vkDispatchTable_.fp_vkDestroyShaderModule(vkDevice_.device, fragModule, nullptr);
+
+    VkFramebufferCreateInfo fbInfo{};
+    fbInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+    fbInfo.renderPass = renderPass_;
+    fbInfo.attachmentCount = 1;
+    fbInfo.pAttachments = &rgbaImageView_;
+    fbInfo.width = width;
+    fbInfo.height = height;
+    fbInfo.layers = 1;
+
+    ret =
+        vkDispatchTable_.fp_vkCreateFramebuffer(vkDevice_.device, &fbInfo, nullptr, &framebuffer_);
+    if (ret != VK_SUCCESS) {
+        qWarning() << QStringLiteral("[Nv12Render_Vulkan] Failed to create frame buffer: %1.")
+                          .arg(vkRet2str(ret));
+        return false;
     }
 
     return true;
 }
 
-bool Nv12Render_Vulkan::renderFrame(const decoder_sdk::Frame &frame)
+bool Nv12Render_Vulkan::initInteropResources(uint32_t width, uint32_t height)
 {
+    if (isInteropInitialized_) {
+        return true;
+    }
+
+    // 先清理可能存在的资源
+    cleanupVulkanResources();
+    cleanupOpenGLResources();
+
+    VkResult ret = VK_SUCCESS;
+
+    // 创建RGBA输出图像（用于渲染管线离屏渲染）
+    VkExternalMemoryImageCreateInfo externalImageInfo = {};
+    externalImageInfo.sType = VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_IMAGE_CREATE_INFO;
+    externalImageInfo.handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_BIT;
+
+    VkImageCreateInfo imageCreateInfo = {};
+    imageCreateInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    imageCreateInfo.pNext = &externalImageInfo;
+    imageCreateInfo.imageType = VK_IMAGE_TYPE_2D;
+    imageCreateInfo.format = VK_FORMAT_R8G8B8A8_UNORM;
+    imageCreateInfo.extent = {width, height, 1};
+    imageCreateInfo.mipLevels = 1;
+    imageCreateInfo.arrayLayers = 1;
+    imageCreateInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+    imageCreateInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+    imageCreateInfo.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+    imageCreateInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    imageCreateInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+
+    ret =
+        vkDispatchTable_.fp_vkCreateImage(vkDevice_.device, &imageCreateInfo, nullptr, &rgbaImage_);
+    if (ret != VK_SUCCESS) {
+        qWarning() << QStringLiteral("[Nv12Render_Vulkan] Failed to create RGBA output image: %1.")
+                          .arg(vkRet2str(ret));
+        return false;
+    }
+
+    // 分配并导出内存
+    VkMemoryRequirements memReqs;
+    vkDispatchTable_.fp_vkGetImageMemoryRequirements(vkDevice_.device, rgbaImage_, &memReqs);
+
+    VkExportMemoryAllocateInfo exportMemoryInfo = {};
+    exportMemoryInfo.sType = VK_STRUCTURE_TYPE_EXPORT_MEMORY_ALLOCATE_INFO;
+    exportMemoryInfo.handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_BIT;
+
+    // 根据实际设备，确定是否分配专用内存
+    VkMemoryDedicatedAllocateInfo dedicatedAlloc{};
+    void *allocPNext = &exportMemoryInfo;
+
+    VkMemoryDedicatedRequirements dedReq{};
+    dedReq.sType = VK_STRUCTURE_TYPE_MEMORY_DEDICATED_REQUIREMENTS;
+
+    VkMemoryRequirements2 req2{};
+    req2.sType = VK_STRUCTURE_TYPE_MEMORY_REQUIREMENTS_2;
+    req2.pNext = &dedReq;
+
+    VkImageMemoryRequirementsInfo2 imgReqInfo{};
+    imgReqInfo.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_REQUIREMENTS_INFO_2;
+    imgReqInfo.image = rgbaImage_;
+
+    vkDispatchTable_.fp_vkGetImageMemoryRequirements2(vkDevice_.device, &imgReqInfo, &req2);
+    memReqs = req2.memoryRequirements;
+
+    const VkBool32 useDed = dedReq.prefersDedicatedAllocation | dedReq.requiresDedicatedAllocation;
+    if (useDed) {
+        dedicatedAlloc.sType = VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO;
+        dedicatedAlloc.image = rgbaImage_;
+        dedicatedAlloc.pNext = allocPNext;
+        allocPNext = &dedicatedAlloc;
+    }
+
+    VkMemoryAllocateInfo memAllocInfo = {};
+    memAllocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    memAllocInfo.pNext = allocPNext;
+    memAllocInfo.allocationSize = memReqs.size;
+    // 需要找到支持导出的内存类型
+    memAllocInfo.memoryTypeIndex =
+        findMemoryTypeIndex(memReqs.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+
+    ret = vkDispatchTable_.fp_vkAllocateMemory(vkDevice_.device, &memAllocInfo, nullptr,
+                                               &rgbaMemory_);
+    if (ret != VK_SUCCESS) {
+        qWarning() << QStringLiteral("[Nv12Render_Vulkan] Failed to allocate RGBA memory: %1.")
+                          .arg(vkRet2str(ret));
+        return false;
+    }
+
+    ret = vkDispatchTable_.fp_vkBindImageMemory(vkDevice_.device, rgbaImage_, rgbaMemory_, 0);
+    if (ret != VK_SUCCESS) {
+        qWarning() << QStringLiteral("[Nv12Render_Vulkan] Failed to bind RGBA image memory: %1.")
+                          .arg(vkRet2str(ret));
+        return false;
+    }
+
+    // 创建图像视图
+    VkImageViewCreateInfo viewCreateInfo = {};
+    viewCreateInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    viewCreateInfo.image = rgbaImage_;
+    viewCreateInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    viewCreateInfo.format = VK_FORMAT_R8G8B8A8_UNORM;
+    viewCreateInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    viewCreateInfo.subresourceRange.baseMipLevel = 0;
+    viewCreateInfo.subresourceRange.levelCount = 1;
+    viewCreateInfo.subresourceRange.baseArrayLayer = 0;
+    viewCreateInfo.subresourceRange.layerCount = 1;
+
+    ret = vkDispatchTable_.fp_vkCreateImageView(vkDevice_.device, &viewCreateInfo, nullptr,
+                                                &rgbaImageView_);
+    if (ret != VK_SUCCESS) {
+        qWarning() << QStringLiteral("[Nv12Render_Vulkan] Failed to create RGBA image view: %1")
+                          .arg(vkRet2str(ret));
+        return false;
+    }
+
+    // 导出Vulkan内存到OpenGL
+    HANDLE memoryHandle = nullptr;
+    if (!exportMemoryHandle(rgbaMemory_, memoryHandle)) {
+        qWarning() << QStringLiteral("[Nv12Render_Vulkan] Failed to export Vulkan memory handle.");
+        return false;
+    }
+
+    // 在OpenGL中导入内存和创建纹理
+    glCreateMemoryObjectsEXT(1, &glMemoryObject_);
+    glImportMemoryWin32HandleEXT(glMemoryObject_, memReqs.size, GL_HANDLE_TYPE_OPAQUE_WIN32_EXT,
+                                 memoryHandle);
+
+    glGenTextures(1, &glRGBATexture_);
+    glBindTexture(GL_TEXTURE_2D, glRGBATexture_);
+    glTextureStorageMem2DEXT(glRGBATexture_, 1, GL_RGBA8, width, height, glMemoryObject_, 0);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glBindTexture(GL_TEXTURE_2D, 0);
+
+    // 初始化渲染管线
+    if (!initGraphicsPipeline(width, height)) {
+        qWarning() << QStringLiteral("[Nv12Render_Vulkan] Failed to initialize graphics pipeline.");
+        return false;
+    }
+
+    VkFenceCreateInfo fenceInfo{};
+    fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+    fenceInfo.flags = 0;
+    ret = vkDispatchTable_.fp_vkCreateFence(vkDevice_.device, &fenceInfo, nullptr, &fence_);
+    if (ret != VK_SUCCESS) {
+        qWarning() << QStringLiteral("[Nv12Render_Vulkan] Failed to create vulkan fence: %1")
+                          .arg(vkRet2str(ret));
+        return false;
+    }
+    vkDispatchTable_.fp_vkResetFences(vkDevice_.device, 1, &fence_);
+
+    isInteropInitialized_ = true;
+    return true;
+}
+
+bool Nv12Render_Vulkan::convertNV12ToRGBA(const decoder_sdk::Frame &frame)
+{
+    if (!isInteropInitialized_ || graphicsPipeline_ == VK_NULL_HANDLE ||
+        renderPass_ == VK_NULL_HANDLE || framebuffer_ == VK_NULL_HANDLE ||
+        ycbcrSampler_ == VK_NULL_HANDLE) {
+        qWarning() << QStringLiteral(
+            "[Nv12Render_Vulkan] Interop or graphics pipeline not initialized.");
+        return false;
+    }
+
     struct Guard {
         const decoder_sdk::Frame &f;
         std::shared_ptr<decoder_sdk::VulkanFrame> vkFrame;
@@ -279,89 +913,245 @@ bool Nv12Render_Vulkan::renderFrame(const decoder_sdk::Frame &frame)
         {
             f.unlockVulkanFrame(vkFrame);
         }
-    } guard(frame); 
+    } guard(frame);
 
-    if (!glReadySem_ || !glCompleteSem_) {
-        if (!initExternalSemaphores(frame)) {
-            qWarning() << QStringLiteral("initExternalSemaphores failed");
-            return false;
-        }
-        glGenSemaphoresEXT(1, &glReadySem_);
-        glGenSemaphoresEXT(1, &glCompleteSem_);
-
-        void *hReady = readySemaphoreHandle();
-        void *hComplete = completeSemaphoreHandle();
-        glImportSemaphoreWin32HandleEXT(glReadySem_, GL_HANDLE_TYPE_OPAQUE_WIN32_EXT, hReady);
-        glImportSemaphoreWin32HandleEXT(glCompleteSem_, GL_HANDLE_TYPE_OPAQUE_WIN32_EXT, hComplete);
-    }
-
-    const auto &vkFrmae = guard.vkFrame;
-    if (!vkFrmae || !semInitialized_) {
+    const auto &vkFrame = guard.vkFrame;
+    if (!vkFrame || vkFrame->format[0] != VK_FORMAT_G8_B8R8_2PLANE_420_UNORM) {
+        qWarning() << QStringLiteral(
+            "[Nv12Render_Vulkan] VkFrame is invalid or vkFrame foramt is invalid.");
         return false;
     }
 
-    for (int i = 0; i < 8 && vkFrmae->sem[i] != VK_NULL_HANDLE; ++i) {
+    for (int i = 0; i < 8 && vkFrame->sem[i] != VK_NULL_HANDLE; ++i) {
         VkSemaphoreWaitInfo waitInfo{};
         waitInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO;
         waitInfo.semaphoreCount = 1;
-        waitInfo.pSemaphores = &vkFrmae->sem[i];
-        waitInfo.pValues = &vkFrmae->sem_value[i];
+        waitInfo.pSemaphores = &vkFrame->sem[i];
+        waitInfo.pValues = &vkFrame->sem_value[i];
         vkDispatchTable_.fp_vkWaitSemaphores(vkDevice_.device, &waitInfo, UINT64_MAX);
     }
 
-    const int w = frame.width();
-    const int h = frame.height();
-    if (!copyImageToExternalBuffer(frame, vkFrmae, w, h)) {
-        qWarning() << QStringLiteral("copyImageToExternalBuffer failed");
+    const auto frameWidth = static_cast<uint32_t>(frame.width());
+    const auto frameHeight = static_cast<uint32_t>(frame.height());
+    const VkFormat nv12Format = vkFrame->format[0];
+    VkImage nv12Image = vkFrame->img[0];
+    VkResult ret = VK_SUCCESS;
+
+    VkImageViewCreateInfo nv12ViewInfo{};
+    nv12ViewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    nv12ViewInfo.image = nv12Image;
+    nv12ViewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    nv12ViewInfo.format = nv12Format;
+    nv12ViewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    nv12ViewInfo.subresourceRange.baseMipLevel = 0;
+    nv12ViewInfo.subresourceRange.levelCount = 1;
+    nv12ViewInfo.subresourceRange.baseArrayLayer = 0;
+    nv12ViewInfo.subresourceRange.layerCount = 1;
+
+    // 关联 YCbCr 转换
+    VkSamplerYcbcrConversionInfo conversionInfo = {};
+    conversionInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_YCBCR_CONVERSION_INFO;
+    conversionInfo.conversion = ycbcrConversion_;
+    nv12ViewInfo.pNext = &conversionInfo;
+
+    VkImageView nv12View = VK_NULL_HANDLE;
+    ret =
+        vkDispatchTable_.fp_vkCreateImageView(vkDevice_.device, &nv12ViewInfo, nullptr, &nv12View);
+    if (ret != VK_SUCCESS) {
+        qWarning() << QStringLiteral("[Nv12Render_Vulkan] Failed to cteate NV12 image view: %1.")
+                          .arg(vkRet2str(ret));
+        return false;
     }
 
-    // GPU-side wait on ready semaphore
-    const GLuint waitBuffers[1] = {pbo_};
-    glWaitSemaphoreEXT(glReadySem_, 1, waitBuffers, 0, nullptr, nullptr);
-    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, pbo_);
+    if (descriptorSet_ == VK_NULL_HANDLE) {
+        VkDescriptorSetAllocateInfo allocInfo{};
+        allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+        allocInfo.descriptorPool = descriptorPool_;
+        allocInfo.descriptorSetCount = 1;
+        allocInfo.pSetLayouts = &descriptorSetLayout_;
 
-    GLuint texY = 0, texUV = 0;
-    glCreateTextures(GL_TEXTURE_2D, 1, &texY);
-    glCreateTextures(GL_TEXTURE_2D, 1, &texUV);
-    glTextureStorage2D(texY, 1, GL_R8, w, h);
-    glTextureStorage2D(texUV, 1, GL_RG8, w / 2, h / 2);
-    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-    glTextureSubImage2D(texY, 0, 0, 0, w, h, GL_RED, GL_UNSIGNED_BYTE, (const void *)(uintptr_t)0);
-    glTextureSubImage2D(texUV, 0, 0, 0, w / 2, h / 2, GL_RG, GL_UNSIGNED_BYTE,
-                        (const void *)(uintptr_t)extOffsetUV_);
-    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
-    glTextureParameteri(texY, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTextureParameteri(texY, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glTextureParameteri(texY, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTextureParameteri(texY, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    glTextureParameteri(texUV, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTextureParameteri(texUV, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glTextureParameteri(texUV, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTextureParameteri(texUV, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-
-    // 绘制
-    drawFrame(texY, texUV);
-
-    // GPU-side signal complete semaphore
-    const GLuint signalBuffers[1] = {pbo_};
-    glSignalSemaphoreEXT(glCompleteSem_, 1, signalBuffers, 0, nullptr, nullptr);
-    for (int i = 0; i < 8 && vkFrmae->sem[i] != VK_NULL_HANDLE; ++i) {
-        vkFrmae->sem_value[i]++;
-        VkSemaphoreSignalInfo sig{};
-        sig.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SIGNAL_INFO;
-        sig.semaphore = vkFrmae->sem[i];
-        sig.value = vkFrmae->sem_value[i];
-        vkDispatchTable_.fp_vkSignalSemaphore(vkDevice_.device, &sig);
+        ret = vkDispatchTable_.fp_vkAllocateDescriptorSets(vkDevice_.device, &allocInfo,
+                                                           &descriptorSet_);
+        if (ret != VK_SUCCESS) {
+            vkDispatchTable_.fp_vkDestroyImageView(vkDevice_.device, nv12View, nullptr);
+            qWarning() << QStringLiteral(
+                              "[Nv12Render_Vulkan] Failed to allocate descriptor sets: %1.")
+                              .arg(vkRet2str(ret));
+            return false;
+        }
     }
 
-    glDeleteTextures(1, &texY);
-    glDeleteTextures(1, &texUV);
+    VkDescriptorImageInfo nv12Combined{};
+    nv12Combined.sampler = ycbcrSampler_;
+    nv12Combined.imageView = nv12View;
+    nv12Combined.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
+    VkWriteDescriptorSet write{};
+    write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    write.dstSet = descriptorSet_;
+    write.dstBinding = 0;
+    write.dstArrayElement = 0;
+    write.descriptorCount = 1;
+    write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    write.pImageInfo = &nv12Combined;
+    vkDispatchTable_.fp_vkUpdateDescriptorSets(vkDevice_.device, 1, &write, 0, nullptr);
+
+    VkCommandBufferBeginInfo beginInfo{};
+    beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    ret = vkDispatchTable_.fp_vkBeginCommandBuffer(commandBuffer_, &beginInfo);
+    if (ret != VK_SUCCESS) {
+        vkDispatchTable_.fp_vkDestroyImageView(vkDevice_.device, nv12View, nullptr);
+        qWarning() << QStringLiteral("[Nv12Render_Vulkan] Failed to begin command buffer: %1.")
+                          .arg(vkRet2str(ret));
+        return false;
+    }
+
+    VkImageMemoryBarrier preBarriers[2]{};
+    preBarriers[0].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    preBarriers[0].srcAccessMask = 0;
+    preBarriers[0].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    preBarriers[0].oldLayout = vkFrame->layout[0];
+    preBarriers[0].newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    preBarriers[0].image = nv12Image;
+    preBarriers[0].subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    preBarriers[0].subresourceRange.baseMipLevel = 0;
+    preBarriers[0].subresourceRange.levelCount = 1;
+    preBarriers[0].subresourceRange.baseArrayLayer = 0;
+    preBarriers[0].subresourceRange.layerCount = 1;
+
+    preBarriers[1].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    preBarriers[1].srcAccessMask = 0;
+    preBarriers[1].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    preBarriers[1].oldLayout = VK_IMAGE_LAYOUT_GENERAL;
+    preBarriers[1].newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    preBarriers[1].image = rgbaImage_;
+    preBarriers[1].subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    preBarriers[1].subresourceRange.baseMipLevel = 0;
+    preBarriers[1].subresourceRange.levelCount = 1;
+    preBarriers[1].subresourceRange.baseArrayLayer = 0;
+    preBarriers[1].subresourceRange.layerCount = 1;
+
+    vkDispatchTable_.fp_vkCmdPipelineBarrier(
+        commandBuffer_, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+        VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, 0, 0,
+        nullptr, 0, nullptr, 2, preBarriers);
+
+    VkClearValue clear{};
+    clear.color = {{0.0f, 0.0f, 0.0f, 1.0f}};
+    VkRenderPassBeginInfo rpBegin{};
+    rpBegin.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+    rpBegin.renderPass = renderPass_;
+    rpBegin.framebuffer = framebuffer_;
+    rpBegin.renderArea.offset = {0, 0};
+    rpBegin.renderArea.extent = {frameWidth, frameHeight};
+    rpBegin.clearValueCount = 1;
+    rpBegin.pClearValues = &clear;
+    vkDispatchTable_.fp_vkCmdBeginRenderPass(commandBuffer_, &rpBegin, VK_SUBPASS_CONTENTS_INLINE);
+
+    vkDispatchTable_.fp_vkCmdBindPipeline(commandBuffer_, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                          graphicsPipeline_);
+    vkDispatchTable_.fp_vkCmdBindDescriptorSets(commandBuffer_, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                                graphicsPipelineLayout_, 0, 1, &descriptorSet_, 0,
+                                                nullptr);
+
+    VkViewport vp{};
+    vp.x = 0.0f;
+    vp.y = 0.0f;
+    vp.width = static_cast<float>(frameWidth);
+    vp.height = static_cast<float>(frameHeight);
+    vp.minDepth = 0.0f;
+    vp.maxDepth = 1.0f;
+    VkRect2D sc{};
+    sc.offset = {0, 0};
+    sc.extent = {frameWidth, frameHeight};
+    vkDispatchTable_.fp_vkCmdSetViewport(commandBuffer_, 0, 1, &vp);
+    vkDispatchTable_.fp_vkCmdSetScissor(commandBuffer_, 0, 1, &sc);
+    vkDispatchTable_.fp_vkCmdDraw(commandBuffer_, 3, 1, 0, 0);
+
+    vkDispatchTable_.fp_vkCmdEndRenderPass(commandBuffer_);
+
+    VkImageMemoryBarrier postBarrier[2]{};
+    postBarrier[0].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    postBarrier[0].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    postBarrier[0].dstAccessMask = 0;
+    postBarrier[0].oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    postBarrier[0].newLayout = VK_IMAGE_LAYOUT_GENERAL;
+    postBarrier[0].image = rgbaImage_;
+    postBarrier[0].subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    postBarrier[0].subresourceRange.baseMipLevel = 0;
+    postBarrier[0].subresourceRange.levelCount = 1;
+    postBarrier[0].subresourceRange.baseArrayLayer = 0;
+    postBarrier[0].subresourceRange.layerCount = 1;
+
+    postBarrier[1].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    postBarrier[1].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    postBarrier[1].dstAccessMask = 0;
+    postBarrier[1].oldLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    postBarrier[1].newLayout = vkFrame->layout[0];
+    postBarrier[1].image = nv12Image;
+    postBarrier[1].subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    postBarrier[1].subresourceRange.baseMipLevel = 0;
+    postBarrier[1].subresourceRange.levelCount = 1;
+    postBarrier[1].subresourceRange.baseArrayLayer = 0;
+    postBarrier[1].subresourceRange.layerCount = 1;
+    vkDispatchTable_.fp_vkCmdPipelineBarrier(
+        commandBuffer_, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+        VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0, nullptr, 0, nullptr, 2, postBarrier);
+
+    ret = vkDispatchTable_.fp_vkEndCommandBuffer(commandBuffer_);
+    if (ret != VK_SUCCESS) {
+        vkDispatchTable_.fp_vkDestroyImageView(vkDevice_.device, nv12View, nullptr);
+        qWarning() << QStringLiteral("[Nv12Render_Vulkan] Failed to end command buffer: %1.")
+                          .arg(vkRet2str(ret));
+        return false;
+    }
+
+    VkSubmitInfo submitInfo{};
+    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    submitInfo.commandBufferCount = 1;
+    submitInfo.pCommandBuffers = &commandBuffer_;
+
+    {
+        struct QueueGuard {
+            const decoder_sdk::Frame &f;
+            uint32_t queueFamily;
+            uint32_t queueIndex;
+
+            QueueGuard(const decoder_sdk::Frame &f, uint32_t queueFamily, uint32_t queueIndex)
+                : f(f), queueFamily(queueFamily), queueIndex(queueIndex)
+
+            {
+                f.lockVulkanQueue(queueFamily, queueIndex);
+            }
+            ~QueueGuard()
+            {
+                f.unlockVulkanQueue(queueFamily, queueIndex);
+            }
+        } guard(frame, graphicsQueueIndex_, 0);
+        ret = vkDispatchTable_.fp_vkQueueSubmit(graphicsQueue_, 1, &submitInfo, fence_);
+        if (ret != VK_SUCCESS) {
+            vkDispatchTable_.fp_vkDestroyImageView(vkDevice_.device, nv12View, nullptr);
+            qWarning() << QStringLiteral("[Nv12Render_Vulkan] Failed to submit queue: %1.")
+                              .arg(vkRet2str(ret));
+            return false;
+        }
+    }
+
+    vkDispatchTable_.fp_vkWaitForFences(vkDevice_.device, 1, &fence_, VK_TRUE, UINT64_MAX);
+    vkDispatchTable_.fp_vkResetFences(vkDevice_.device, 1, &fence_);
+
+    vkDispatchTable_.fp_vkDestroyImageView(vkDevice_.device, nv12View, nullptr);
     return true;
 }
 
-void Nv12Render_Vulkan::drawFrame(GLuint idY, GLuint idUV)
+void Nv12Render_Vulkan::drawFrame(GLuint rgbaTexture)
 {
+    if (rgbaTexture == 0) {
+        qWarning() << QStringLiteral("[Nv12Render_Vulkan] Invalid RGBA texture.");
+        return;
+    }
+
     program_.bind();
     vbo_.bind();
     program_.enableAttributeArray("vertexIn");
@@ -369,369 +1159,231 @@ void Nv12Render_Vulkan::drawFrame(GLuint idY, GLuint idUV)
     program_.setAttributeBuffer("vertexIn", GL_FLOAT, 0, 2, 0);
     program_.setAttributeBuffer("textureIn", GL_FLOAT, 2 * 4 * sizeof(GLfloat), 2, 0);
 
-    glActiveTexture(GL_TEXTURE0 + 1);
-    glBindTexture(GL_TEXTURE_2D, idY);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, rgbaTexture);
+    program_.setUniformValue("texture", 0);
 
-    glActiveTexture(GL_TEXTURE0 + 0);
-    glBindTexture(GL_TEXTURE_2D, idUV);
-
-    program_.setUniformValue("textureY", 1);
-    program_.setUniformValue("textureUV", 0);
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+
     program_.disableAttributeArray("vertexIn");
     program_.disableAttributeArray("textureIn");
     vbo_.release();
     program_.release();
 }
 
-bool Nv12Render_Vulkan::prepareExternalBuffer(int w, int h, uint64_t &sizeY, uint64_t &sizeUV)
+#ifdef _WIN32
+bool Nv12Render_Vulkan::exportMemoryHandle(VkDeviceMemory memory, HANDLE &outHandle)
 {
-    sizeY = (uint64_t)w * (uint64_t)h;
-    sizeUV = (uint64_t)(w / 2) * (uint64_t)(h / 2) * 2ull;
-    uint64_t total = sizeY + sizeUV;
-    if (extBuffer_ && extBufferSize_ >= total) {
-        extBufferSize_ = total;
-        extOffsetY_ = 0;
-        extOffsetUV_ = sizeY;
-        return true;
-    }
-    if (extBuffer_) {
-        vkDispatchTable_.fp_vkDestroyBuffer(vkDevice_.device, extBuffer_, nullptr);
-        extBuffer_ = VK_NULL_HANDLE;
-    }
-    if (extMemory_) {
-        vkDispatchTable_.fp_vkFreeMemory(vkDevice_.device, extMemory_, nullptr);
-        extMemory_ = VK_NULL_HANDLE;
+    // 获取Win32内存句柄函数
+    auto vkGetMemoryWin32HandleKHR = reinterpret_cast<PFN_vkGetMemoryWin32HandleKHR>(
+        vkDevice_.fp_vkGetDeviceProcAddr(vkDevice_.device, "vkGetMemoryWin32HandleKHR"));
+    if (!vkGetMemoryWin32HandleKHR) {
+        qWarning() << QStringLiteral(
+            "[Nv12Render_Vulkan] Not supported vkGetMemoryWin32HandleKHR.");
+        return false;
     }
 
-    VkExternalMemoryBufferCreateInfo extBuf{};
-    extBuf.sType = VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_BUFFER_CREATE_INFO;
-    extBuf.handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_BIT;
+    VkMemoryGetWin32HandleInfoKHR getHandleInfo = {};
+    getHandleInfo.sType = VK_STRUCTURE_TYPE_MEMORY_GET_WIN32_HANDLE_INFO_KHR;
+    getHandleInfo.memory = memory;
+    getHandleInfo.handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_BIT;
 
-    VkBufferCreateInfo bci{};
-    bci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-    bci.pNext = &extBuf;
-    bci.size = total;
-    bci.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
-    bci.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    if (vkDispatchTable_.fp_vkCreateBuffer(vkDevice_.device, &bci, nullptr, &extBuffer_) !=
-        VK_SUCCESS)
+    const VkResult result = vkGetMemoryWin32HandleKHR(vkDevice_.device, &getHandleInfo, &outHandle);
+    if (result != VK_SUCCESS) {
+        qWarning() << QStringLiteral("[Nv12Render_Vulkan] Failed to get Win32 memory handle: %1.")
+                          .arg(vkRet2str(result));
         return false;
+    }
 
-    VkMemoryRequirements req{};
-    vkDispatchTable_.fp_vkGetBufferMemoryRequirements(vkDevice_.device, extBuffer_, &req);
-    uint32_t memType = findMemoryTypeLocal(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    if (memType == UINT32_MAX)
-        return false;
-
-    VkExportMemoryAllocateInfo exportInfo{};
-    exportInfo.sType = VK_STRUCTURE_TYPE_EXPORT_MEMORY_ALLOCATE_INFO;
-    exportInfo.handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_BIT;
-
-    VkMemoryAllocateInfo mai{};
-    mai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    mai.pNext = &exportInfo;
-    mai.allocationSize = req.size;
-    mai.memoryTypeIndex = memType;
-    if (vkDispatchTable_.fp_vkAllocateMemory(vkDevice_.device, &mai, nullptr, &extMemory_) !=
-        VK_SUCCESS)
-        return false;
-    if (vkDispatchTable_.fp_vkBindBufferMemory(vkDevice_.device, extBuffer_, extMemory_, 0) !=
-        VK_SUCCESS)
-        return false;
-
-    extBufferSize_ = total;
-    extOffsetY_ = 0;
-    extOffsetUV_ = sizeY;
     return true;
 }
-
-uint32_t Nv12Render_Vulkan::findMemoryTypeLocal(uint32_t typeBits, VkMemoryPropertyFlags props)
+#else
+bool Nv12Render_Vulkan::exportMemoryHandle(VkDeviceMemory memory, int &outFd)
 {
-    VkPhysicalDeviceMemoryProperties memProps{};
-    vkInstanceDispatchTable_.fp_vkGetPhysicalDeviceMemoryProperties(
-        vkPhysicalDevice_.physical_device, &memProps);
-    for (uint32_t i = 0; i < memProps.memoryTypeCount; ++i) {
-        if ((typeBits & (1u << i)) && (memProps.memoryTypes[i].propertyFlags & props) == props)
-            return i;
+    // 获取linux内存句柄函数
+    auto vkGetMemoryFdKHR = reinterpret_cast<PFN_vkGetMemoryFdKHR>(
+        vkDevice_.fp_vkGetDeviceProcAddr(vkDevice_.device, "vkGetMemoryFdKHR"));
+    if (!vkGetMemoryFdKHR) {
+        qWarning() << QStringLiteral("[Nv12Render_Vulkan] Not supported vkGetMemoryFdKHR.");
+        return false;
     }
-    return UINT32_MAX;
+
+    VkMemoryGetFdInfoKHR getFdInfo = {};
+    getFdInfo.sType = VK_STRUCTURE_TYPE_MEMORY_GET_FD_INFO_KHR;
+    getFdInfo.memory = memory;
+    getFdInfo.handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT;
+
+    const VkResult result = vkGetMemoryFdKHR(vkDevice_.device, &getFdInfo, &outFd);
+    if (result != VK_SUCCESS) {
+        qWarning() << QStringLiteral(
+                          "[Nv12Render_Vulkan] Failed to get memory file descriptor: %1.")
+                          .arg(vkRet2str(result));
+        return false;
+    }
+
+    return true;
 }
+#endif
 
-bool Nv12Render_Vulkan::initExternalSemaphores(const decoder_sdk::Frame &frame)
+#ifdef _WIN32
+bool Nv12Render_Vulkan::exportSemaphoreHandle(VkSemaphore semaphore, HANDLE &outHandle)
 {
-    if (semInitialized_) {
-        return true;
-    }
-
-    VkExportSemaphoreCreateInfo exportInfo{};
-    exportInfo.sType = VK_STRUCTURE_TYPE_EXPORT_SEMAPHORE_CREATE_INFO;
-    exportInfo.handleTypes = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_WIN32_BIT;
-
-    VkSemaphoreCreateInfo sci{};
-    sci.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
-    sci.pNext = &exportInfo;
-    if (vkDispatchTable_.fp_vkCreateSemaphore(vkDevice_.device, &sci, nullptr, &semReady_) !=
-        VK_SUCCESS) {
+    // 获取Win32信号量句柄函数
+    auto vkGetSemaphoreWin32HandleKHR = reinterpret_cast<PFN_vkGetSemaphoreWin32HandleKHR>(
+        vkDevice_.fp_vkGetDeviceProcAddr(vkDevice_.device, "vkGetSemaphoreWin32HandleKHR"));
+    if (!vkGetSemaphoreWin32HandleKHR) {
+        qWarning() << QStringLiteral(
+            "[Nv12Render_Vulkan] Not supported vkGetSemaphoreWin32HandleKHR.");
         return false;
     }
 
-    if (vkDispatchTable_.fp_vkCreateSemaphore(vkDevice_.device, &sci, nullptr, &semComplete_) !=
-        VK_SUCCESS) {
+    VkSemaphoreGetWin32HandleInfoKHR info{};
+    info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_GET_WIN32_HANDLE_INFO_KHR;
+    info.semaphore = semaphore;
+    info.handleType = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_WIN32_BIT;
+
+    const VkResult result = vkGetSemaphoreWin32HandleKHR(vkDevice_.device, &info, &outHandle);
+    if (result != VK_SUCCESS) {
+        qWarning() << QStringLiteral("[Nv12Render_Vulkan] Failed to export semaphore handle: %1.")
+                          .arg(vkRet2str(result));
         return false;
     }
 
-    // Initialize complete semaphore to signaled so first copy doesn't wait
-    VkSubmitInfo2 submit{};
-    submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2;
-    VkSemaphoreSubmitInfo sig{};
-    sig.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO;
-    sig.semaphore = semComplete_;
-    sig.stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
-    sig.deviceIndex = 0;
-    submit.signalSemaphoreInfoCount = 1;
-    submit.pSignalSemaphoreInfos = &sig;
+    return true;
+}
+#else
+bool Nv12Render_Vulkan::exportSemaphoreHandle(VkSemaphore semaphore, int &outFd)
+{
+    // 获取Linux信号量句柄函数
+    auto vkGetSemaphoreFdKHR = reinterpret_cast<PFN_vkGetSemaphoreFdKHR>(
+        vkDevice_.fp_vkGetDeviceProcAddr(vkDevice_.device, "vkGetSemaphoreFdKHR"));
+    if (!vkGetSemaphoreFdKHR) {
+        qWarning() << QStringLiteral("[Nv12Render_Vulkan] Not supported vkGetSemaphoreFdKHR.");
+        return false;
+    }
 
-    // 通过空提交信号量，让信号量进入“已信号”状态, 等待信号量的操作能立即通过，不阻塞
-    {
-        QueueGuard queueGuard(frame, graphicsQueueIndex_, 0);
-        if (vkDispatchTable_.fp_vkQueueSubmit2(graphicsQueue_, 1, &submit, VK_NULL_HANDLE) !=
-            VK_SUCCESS) {
-            return false;
+    VkSemaphoreGetFdInfoKHR info = {};
+    info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_GET_FD_INFO_KHR;
+    info.semaphore = semaphore;
+    info.handleType = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_FD_BIT;
+
+    const VkResult result = vkGetSemaphoreFdKHR(vkDevice_.device, &info, &outFd);
+    if (result != VK_SUCCESS) {
+        qWarning() << QStringLiteral("[Nv12Render_Vulkan] Failed to export semaphore handle: %1.")
+                          .arg(vkRet2str(result));
+        return false;
+    }
+
+    return true;
+}
+#endif
+
+uint32_t Nv12Render_Vulkan::findMemoryTypeIndex(uint32_t typeFilter,
+                                                VkMemoryPropertyFlags properties)
+{
+    VkPhysicalDeviceMemoryProperties memProperties = {};
+    vkInstanceDispatchTable_.fp_vkGetPhysicalDeviceMemoryProperties(
+        vkPhysicalDevice_.physical_device, &memProperties);
+
+    for (uint32_t i = 0; i < memProperties.memoryTypeCount; ++i) {
+        // typeFilter 是一个掩码，判断当前内存类型 i 是否可用
+        bool typeSupported = (typeFilter & (1 << i)) != 0;
+        bool hasProperties =
+            (memProperties.memoryTypes[i].propertyFlags & properties) == properties;
+
+        if (typeSupported && hasProperties) {
+            return i;
         }
     }
 
-    semInitialized_ = true;
-    return true;
+    qWarning() << QStringLiteral("[Nv12Render_Vulkan] Failed to find suitable memory type.");
+    return 0;
 }
 
-void *Nv12Render_Vulkan::readySemaphoreHandle() const
+void Nv12Render_Vulkan::cleanupVulkanResources()
 {
-    HANDLE h = nullptr;
-
-    PFN_vkGetSemaphoreWin32HandleKHR pfn =
-        (PFN_vkGetSemaphoreWin32HandleKHR)vkInstance_.fp_vkGetDeviceProcAddr(
-            vkDevice_.device, "vkGetSemaphoreWin32HandleKHR");
-    if (pfn) {
-        VkSemaphoreGetWin32HandleInfoKHR info{};
-        info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_GET_WIN32_HANDLE_INFO_KHR;
-        info.semaphore = semReady_;
-        info.handleType = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_WIN32_BIT;
-
-        pfn(vkDevice_.device, &info, &h);
+    // 渲染管线
+    if (graphicsPipeline_ != VK_NULL_HANDLE) {
+        vkDispatchTable_.fp_vkDestroyPipeline(vkDevice_.device, graphicsPipeline_, nullptr);
+        graphicsPipeline_ = VK_NULL_HANDLE;
+    }
+    if (graphicsPipelineLayout_ != VK_NULL_HANDLE) {
+        vkDispatchTable_.fp_vkDestroyPipelineLayout(vkDevice_.device, graphicsPipelineLayout_,
+                                                    nullptr);
+        graphicsPipelineLayout_ = VK_NULL_HANDLE;
+    }
+    if (renderPass_ != VK_NULL_HANDLE) {
+        vkDispatchTable_.fp_vkDestroyRenderPass(vkDevice_.device, renderPass_, nullptr);
+        renderPass_ = VK_NULL_HANDLE;
+    }
+    if (framebuffer_ != VK_NULL_HANDLE) {
+        vkDispatchTable_.fp_vkDestroyFramebuffer(vkDevice_.device, framebuffer_, nullptr);
+        framebuffer_ = VK_NULL_HANDLE;
     }
 
-    return h;
+    // 采样器
+    if (ycbcrSampler_ != VK_NULL_HANDLE) {
+        vkDispatchTable_.fp_vkDestroySampler(vkDevice_.device, ycbcrSampler_, nullptr);
+        ycbcrSampler_ = VK_NULL_HANDLE;
+    }
+    if (ycbcrConversion_ != VK_NULL_HANDLE) {
+        vkDispatchTable_.fp_vkDestroySamplerYcbcrConversion(vkDevice_.device, ycbcrConversion_,
+                                                            nullptr);
+        ycbcrConversion_ = VK_NULL_HANDLE;
+    }
+
+    // RGBA输出纹理
+    if (rgbaImageView_ != VK_NULL_HANDLE) {
+        vkDispatchTable_.fp_vkDestroyImageView(vkDevice_.device, rgbaImageView_, nullptr);
+        rgbaImageView_ = VK_NULL_HANDLE;
+    }
+    if (rgbaImage_ != VK_NULL_HANDLE) {
+        vkDispatchTable_.fp_vkDestroyImage(vkDevice_.device, rgbaImage_, nullptr);
+        rgbaImage_ = VK_NULL_HANDLE;
+    }
+    if (rgbaMemory_ != VK_NULL_HANDLE) {
+        vkDispatchTable_.fp_vkFreeMemory(vkDevice_.device, rgbaMemory_, nullptr);
+        rgbaMemory_ = VK_NULL_HANDLE;
+    }
+
+    // 描述符
+    if (descriptorPool_ != VK_NULL_HANDLE) {
+        vkDispatchTable_.fp_vkDestroyDescriptorPool(vkDevice_.device, descriptorPool_, nullptr);
+        descriptorPool_ = VK_NULL_HANDLE;
+    }
+    if (descriptorSetLayout_ != VK_NULL_HANDLE) {
+        vkDispatchTable_.fp_vkDestroyDescriptorSetLayout(vkDevice_.device, descriptorSetLayout_,
+                                                         nullptr);
+        descriptorSetLayout_ = VK_NULL_HANDLE;
+    }
+    if (commandBuffer_ != VK_NULL_HANDLE && commandPool_ != VK_NULL_HANDLE) {
+        vkDispatchTable_.fp_vkFreeCommandBuffers(vkDevice_.device, commandPool_, 1,
+                                                 &commandBuffer_);
+        commandBuffer_ = VK_NULL_HANDLE;
+    }
+    if (commandPool_ != VK_NULL_HANDLE) {
+        vkDispatchTable_.fp_vkDestroyCommandPool(vkDevice_.device, commandPool_, nullptr);
+        commandPool_ = VK_NULL_HANDLE;
+    }
+
+    // 图形队列
+    if (fence_ != VK_NULL_HANDLE) {
+        vkDispatchTable_.fp_vkDestroyFence(vkDevice_.device, fence_, nullptr);
+        fence_ = VK_NULL_HANDLE;
+    }
 }
 
-void *Nv12Render_Vulkan::completeSemaphoreHandle() const
+void Nv12Render_Vulkan::cleanupOpenGLResources()
 {
-    HANDLE h = nullptr;
-
-    PFN_vkGetSemaphoreWin32HandleKHR pfn =
-        (PFN_vkGetSemaphoreWin32HandleKHR)vkInstance_.fp_vkGetDeviceProcAddr(
-            vkDevice_.device, "vkGetSemaphoreWin32HandleKHR");
-    if (pfn) {
-        VkSemaphoreGetWin32HandleInfoKHR info{};
-        info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_GET_WIN32_HANDLE_INFO_KHR;
-        info.semaphore = semComplete_;
-        info.handleType = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_WIN32_BIT;
-
-        pfn(vkDevice_.device, &info, &h);
+    if (glRGBATexture_) {
+        glDeleteTextures(1, &glRGBATexture_);
+        glRGBATexture_ = 0;
     }
-
-    return h;
-}
-
-void *Nv12Render_Vulkan::externalBufferHandle() const
-{
-    HANDLE h = nullptr;
-
-    PFN_vkGetMemoryWin32HandleKHR pfn =
-        (PFN_vkGetMemoryWin32HandleKHR)vkInstance_.fp_vkGetDeviceProcAddr(
-            vkDevice_.device, "vkGetMemoryWin32HandleKHR");
-    if (pfn) {
-        VkMemoryGetWin32HandleInfoKHR info{};
-        info.sType = VK_STRUCTURE_TYPE_MEMORY_GET_WIN32_HANDLE_INFO_KHR;
-        info.memory = extMemory_;
-        info.handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_BIT;
-        pfn(vkDevice_.device, &info, &h);
+    if (glMemoryObject_) {
+        if (glDeleteMemoryObjectsEXT)
+            glDeleteMemoryObjectsEXT(1, &glMemoryObject_);
+        glMemoryObject_ = 0;
     }
-
-    return h;
-}
-
-void Nv12Render_Vulkan::shutdownExternalSemaphores()
-{
-    if (glReadySem_ > 0) {
-        glDeleteSemaphoresEXT(1, &glReadySem_);
-        glReadySem_ = 0;
-    }
-
-    if (glCompleteSem_ > 0) {
-        glDeleteSemaphoresEXT(1, &glCompleteSem_);
-        glCompleteSem_ = 0;
-    }
-
-    if (semReady_) {
-        vkDispatchTable_.fp_vkDestroySemaphore(vkDevice_.device, semReady_, nullptr);
-        semReady_ = VK_NULL_HANDLE;
-    }
-
-    if (semComplete_) {
-        vkDispatchTable_.fp_vkDestroySemaphore(vkDevice_.device, semComplete_, nullptr);
-        semComplete_ = VK_NULL_HANDLE;
-    }
-
-    semInitialized_ = false;
-}
-
-bool Nv12Render_Vulkan::copyImageToExternalBuffer(
-    const decoder_sdk::Frame &frame, const std::shared_ptr<decoder_sdk::VulkanFrame> &vulkanFrame, int w, int h)
-{
-    if (!vulkanFrame || !extBuffer_)
-        return false;
-
-    VkCommandBufferAllocateInfo cbAlloc{};
-    cbAlloc.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-    cbAlloc.commandPool = commandPool_;
-    cbAlloc.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    cbAlloc.commandBufferCount = 1;
-    VkCommandBuffer cmd;
-    if (vkDispatchTable_.fp_vkAllocateCommandBuffers(vkDevice_.device, &cbAlloc, &cmd) !=
-        VK_SUCCESS)
-        return false;
-
-    VkCommandBufferBeginInfo bi{};
-    bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-    bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    if (vkDispatchTable_.fp_vkBeginCommandBuffer(cmd, &bi) != VK_SUCCESS)
-        return false;
-
-    VkImageMemoryBarrier2 barriers[2]{};
-    for (int i = 0; i < 2; i++) {
-        barriers[i].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
-        barriers[i].srcStageMask = VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT;
-        barriers[i].srcAccessMask = 0;
-        barriers[i].dstStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT;
-        barriers[i].dstAccessMask = VK_ACCESS_2_TRANSFER_READ_BIT;
-        barriers[i].oldLayout = vulkanFrame->layout[0];
-        barriers[i].newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-        barriers[i].image = vulkanFrame->img[0];
-        barriers[i].subresourceRange.baseMipLevel = 0;
-        barriers[i].subresourceRange.levelCount = 1;
-        barriers[i].subresourceRange.baseArrayLayer = 0;
-        barriers[i].subresourceRange.layerCount = 1;
-    }
-    barriers[0].subresourceRange.aspectMask = VK_IMAGE_ASPECT_PLANE_0_BIT;
-    barriers[1].subresourceRange.aspectMask = VK_IMAGE_ASPECT_PLANE_1_BIT;
-    uint32_t srcQ = vulkanFrame->queue_family[0];
-    if (srcQ != VK_QUEUE_FAMILY_IGNORED) {
-        barriers[0].srcQueueFamilyIndex = srcQ;
-        barriers[0].dstQueueFamilyIndex = graphicsQueueIndex_;
-        barriers[1].srcQueueFamilyIndex = srcQ;
-        barriers[1].dstQueueFamilyIndex = graphicsQueueIndex_;
-    } else {
-        barriers[0].srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        barriers[0].dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        barriers[1].srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        barriers[1].dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    }
-
-    VkDependencyInfo dep{};
-    dep.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
-    dep.imageMemoryBarrierCount = 2;
-    dep.pImageMemoryBarriers = barriers;
-    vkDispatchTable_.fp_vkCmdPipelineBarrier2(cmd, &dep);
-
-    VkBufferImageCopy copyY{};
-    copyY.bufferOffset = extOffsetY_;
-    copyY.imageSubresource.aspectMask = VK_IMAGE_ASPECT_PLANE_0_BIT;
-    copyY.imageSubresource.mipLevel = 0;
-    copyY.imageSubresource.baseArrayLayer = 0;
-    copyY.imageSubresource.layerCount = 1;
-    copyY.imageOffset = {0, 0, 0};
-    copyY.imageExtent = {(uint32_t)w, (uint32_t)h, 1};
-    VkBufferImageCopy copyUV{};
-    copyUV.bufferOffset = extOffsetUV_;
-    copyUV.imageSubresource.aspectMask = VK_IMAGE_ASPECT_PLANE_1_BIT;
-    copyUV.imageSubresource.mipLevel = 0;
-    copyUV.imageSubresource.baseArrayLayer = 0;
-    copyUV.imageSubresource.layerCount = 1;
-    copyUV.imageOffset = {0, 0, 0};
-    copyUV.imageExtent = {(uint32_t)(w / 2), (uint32_t)(h / 2), 1};
-
-    vkDispatchTable_.fp_vkCmdCopyImageToBuffer(
-        cmd, vulkanFrame->img[0], VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, extBuffer_, 1, &copyY);
-    vkDispatchTable_.fp_vkCmdCopyImageToBuffer(
-        cmd, vulkanFrame->img[0], VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, extBuffer_, 1, &copyUV);
-
-    if (vkDispatchTable_.fp_vkEndCommandBuffer(cmd) != VK_SUCCESS)
-        return false;
-
-    if (!semInitialized_)
-        initExternalSemaphores(frame);
-
-    VkSemaphoreSubmitInfo waits{};
-    waits.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO;
-    waits.semaphore = semComplete_;
-    waits.value = 0;
-    waits.stageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT;
-    waits.deviceIndex = 0;
-    VkSemaphoreSubmitInfo sigs{};
-    sigs.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO;
-    sigs.semaphore = semReady_;
-    sigs.value = 0;
-    sigs.stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
-    sigs.deviceIndex = 0;
-    VkCommandBufferSubmitInfo cmdInfo{};
-    cmdInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO;
-    cmdInfo.commandBuffer = cmd;
-    VkSubmitInfo2 submit2{};
-    submit2.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2;
-    submit2.waitSemaphoreInfoCount = 1;
-    submit2.pWaitSemaphoreInfos = &waits;
-    submit2.commandBufferInfoCount = 1;
-    submit2.pCommandBufferInfos = &cmdInfo;
-    submit2.signalSemaphoreInfoCount = 1;
-    submit2.pSignalSemaphoreInfos = &sigs;
-
-    VkFenceCreateInfo fi{};
-    fi.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
-    VkFence f{};
-    vkDispatchTable_.fp_vkCreateFence(vkDevice_.device, &fi, nullptr, &f);
-    {
-        QueueGuard queueGuard(frame, graphicsQueueIndex_, 0);
-        vkDispatchTable_.fp_vkQueueSubmit2(graphicsQueue_, 1, &submit2, f);
-    }
-    vkDispatchTable_.fp_vkWaitForFences(vkDevice_.device, 1, &f, VK_TRUE, UINT64_MAX);
-    vkDispatchTable_.fp_vkDestroyFence(vkDevice_.device, f, nullptr);
-    vkDispatchTable_.fp_vkFreeCommandBuffers(vkDevice_.device, commandPool_, 1, &cmd);
-    return true;
-}
-
-bool Nv12Render_Vulkan::createCommandPool()
-{
-    auto graphicsQueueIndex = vkDevice_.get_queue_index(vkb::QueueType::graphics);
-    if (!graphicsQueueIndex.has_value()) {
-        qWarning() << QStringLiteral("Failed to get graphics queue index");
-        return false;
-    }
-    graphicsQueueIndex_ = graphicsQueueIndex.value();
-    graphicsQueue_ = vkDevice_.get_queue(vkb::QueueType::graphics).value();
-
-    VkCommandPoolCreateInfo poolInfo{};
-    poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
-    poolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
-    poolInfo.queueFamilyIndex = graphicsQueueIndex_;
-
-    if (vkDispatchTable_.fp_vkCreateCommandPool(vkDevice_.device, &poolInfo, nullptr,
-                                                &commandPool_) != VK_SUCCESS) {
-        qWarning() << QStringLiteral("Failed to create command pool!");
-        return false;
-    }
-
-    return true;
 }
 
 #endif

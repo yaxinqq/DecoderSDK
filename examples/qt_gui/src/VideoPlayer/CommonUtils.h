@@ -155,10 +155,11 @@ bool isVAAPIAvailable();
 #elif Q_OS_LINUX
 #define VK_USE_PLATFORM_XCB_KHR
 #endif
-#include <VkBootstrap.h>
+#include "VkBootstrap.h"
 #include "decodersdk/vulkan_wrapper_define.h"
+#include "vulkan/vulkan.h"
 
-namespace vulkan {
+namespace vulkan_utils {
 const vkb::InstanceDispatchTable &getInstanceDispatchTable();
 const vkb::DispatchTable &getDispatchTable();
 const vkb::Instance &getVkInstance();
@@ -166,5 +167,6 @@ const vkb::PhysicalDevice &getVkPhysicalDevice();
 const vkb::Device &getVkDevice();
 bool isVulkanAvaliable();
 decoder_sdk::VulkanDeviceContext *getDeviceContext();
-} // namespace vulkan
+void shutdown();
+} // namespace vulkan_utils
 #endif

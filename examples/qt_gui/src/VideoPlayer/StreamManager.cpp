@@ -328,7 +328,7 @@ void *StreamManager::createHwContextCallback(decoder_sdk::HWAccelType type)
 
 #ifdef VULKAN_AVAILABLE
         case decoder_sdk::HWAccelType::kVulkan:
-            return vulkan::getDeviceContext();
+            return vulkan_utils::getDeviceContext();
 #endif
 
         default:
