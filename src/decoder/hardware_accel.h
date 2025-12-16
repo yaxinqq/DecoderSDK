@@ -130,7 +130,7 @@ public:
      * @brief 获取VAAPI的VADisplay
      * @return VADisplay
      */
-    void* getVADisplay() const;
+    void *getVADisplay() const;
 #endif
 
     /**
@@ -178,13 +178,13 @@ public:
 private:
     /**
      * @brief 初始化硬件设备
-     * @param deviceType 设备类型
+     * @param deviceType 设备类型，可能会被修改，vulkan会有回退机制
      * @param deviceIndex 设备索引
      * @param createCallback 创建硬件上下文的回调
      * @param freeCallback 销毁硬件上下文的回调
      * @return 是否初始化成功
      */
-    bool initHWDevice(AVHWDeviceType deviceType, int deviceIndex,
+    bool initHWDevice(AVHWDeviceType &deviceType, int deviceIndex,
                       const CreateHWContextCallback &createCallback = nullptr,
                       const FreeHWContextCallback &freeCallback = nullptr);
 

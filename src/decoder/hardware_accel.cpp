@@ -131,25 +131,25 @@ bool HardwareAccel::init(HWAccelType type, int deviceIndex,
     }
 
     initialized_ = false;
-    type_ = type;
     deviceIndex_ = deviceIndex;
 
     // 如果类型为NONE，直接返回成功
-    if (type_ == HWAccelType::kNone) {
+    if (type == HWAccelType::kNone) {
         return true;
     }
 
     // 确定硬件设备类型
     AVHWDeviceType deviceType;
-    if (type_ == HWAccelType::kAuto) {
+    if (type == HWAccelType::kAuto) {
         deviceType = findBestHWAccelType();
         if (deviceType == AV_HWDEVICE_TYPE_NONE) {
             LOG_WARN("No suitable hardware acceleration method found");
+            type_ = HWAccelType::kNone;
             return false;
         }
-        type_ = fromAVHWDeviceType(deviceType);
+        type = fromAVHWDeviceType(deviceType);
     } else {
-        deviceType = toAVHWDeviceType(type_);
+        deviceType = toAVHWDeviceType(type);
         if (!isAvailableHWAccelType(type)) {
             // 回退到软解
             type_ = HWAccelType::kNone;
@@ -159,10 +159,13 @@ bool HardwareAccel::init(HWAccelType type, int deviceIndex,
 
     // 初始化硬件设备
     if (!initHWDevice(deviceType, deviceIndex_, createCallback, freeCallback)) {
-        LOG_WARN("Failed to initialize hardware device: {}", getHWAccelTypeName(type_));
+        LOG_WARN("Failed to initialize hardware device: {}", getHWAccelTypeName(type));
+        type_ = HWAccelType::kNone;
         return false;
     }
 
+    // 获得硬件设备类型
+    type_ = fromAVHWDeviceType(deviceType);
     // 获取硬件像素格式
     hwPixFmt_ = getHWPixelFormatForDevice(deviceType);
     if (hwPixFmt_ == AV_PIX_FMT_NONE) {
@@ -554,7 +557,7 @@ AVPixelFormat HardwareAccel::getHWPixelFormat(AVCodecContext *codecCtx,
     return AV_PIX_FMT_NONE;
 }
 
-bool HardwareAccel::initHWDevice(AVHWDeviceType deviceType, int deviceIndex,
+bool HardwareAccel::initHWDevice(AVHWDeviceType &deviceType, int deviceIndex,
                                  const CreateHWContextCallback &createCallback,
                                  const FreeHWContextCallback &freeCallback)
 {
@@ -576,6 +579,21 @@ bool HardwareAccel::initHWDevice(AVHWDeviceType deviceType, int deviceIndex,
             // 将AVHWDeviceType转换为HWAccelType用于回调
             HWAccelType sdkType = fromAVHWDeviceType(deviceType);
             void *userHwContext = createCallback(sdkType);
+
+            // 如果是vulkan，且userHwContext为空或不合规，则按照DXVA2或VAAPI进行回退
+            if (sdkType == HWAccelType::kVulkan &&
+                (!userHwContext || !validateUserHWContext(userHwContext, deviceType))) {
+#ifdef OS_WINDOWS
+                sdkType = HWAccelType::kDxva2;
+                deviceType = AV_HWDEVICE_TYPE_DXVA2;
+#elif OS_LINUX
+                sdkType = HWAccelType::kVaapi;
+                deviceType = AV_HWDEVICE_TYPE_VAAPI;
+#else
+#endif
+                userHwContext = createCallback(sdkType);
+                LOG_WARN("Vulkan Accel not supported, change to {}", getHWAccelTypeName(sdkType));
+            }
 
             if (userHwContext) {
                 // 验证用户提供的硬件上下文类型是否匹配
