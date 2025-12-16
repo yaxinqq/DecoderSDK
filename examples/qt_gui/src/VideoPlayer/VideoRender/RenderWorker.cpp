@@ -21,6 +21,10 @@
 #include "Nv12Render_Vulkan.h"
 #endif
 
+#ifdef QSV_AVAILABLE
+#include "mfxstructures.h"
+#endif
+
 #include <QDebug>
 #include <QOpenGLContext>
 #include <QThread>
@@ -178,7 +182,7 @@ void RenderWorker::renderVideo(const std::shared_ptr<decoder_sdk::Frame> &videoF
     // 检查是否需要重新创建视频渲染器
     bool needRecreateRenderer = false;
 
-    if (!render_ || !render_->isValid()) {
+    if (!render_ || render_->shouldRebuild()) {
         needRecreateRenderer = true;
     } else if (renderWidth_ != width || renderHeight_ != height) {
         needRecreateRenderer = true;
@@ -196,7 +200,7 @@ void RenderWorker::renderVideo(const std::shared_ptr<decoder_sdk::Frame> &videoF
         }
 
         // 根据像素格式创建新的渲染器
-        render_ = createRenderer(pixelFormat);
+        render_ = createRenderer(videoFrame);
         if (render_) {
             render_->initialize(videoFrame);
             renderWidth_ = width;
@@ -215,8 +219,10 @@ void RenderWorker::renderVideo(const std::shared_ptr<decoder_sdk::Frame> &videoF
     }
 }
 
-QSharedPointer<VideoRender> RenderWorker::createRenderer(decoder_sdk::ImageFormat format)
+QSharedPointer<VideoRender> RenderWorker::createRenderer(
+    const std::shared_ptr<decoder_sdk::Frame> &videoFrame)
 {
+    const auto format = videoFrame->pixelFormat();
     switch (format) {
 #ifdef CUDA_AVAILABLE
         case decoder_sdk::ImageFormat::kCuda:
@@ -238,6 +244,29 @@ QSharedPointer<VideoRender> RenderWorker::createRenderer(decoder_sdk::ImageForma
         case decoder_sdk::ImageFormat::kVulkan:
             return QSharedPointer<VideoRender>(new Nv12Render_Vulkan);
 #endif
+        case decoder_sdk::ImageFormat::kQsv: {
+#ifdef Q_OS_WIN
+            // 判断当前的解码后端是D3D11Va还是Dxva2
+            auto *const mfxSurface = reinterpret_cast<mfxFrameSurface1 *>(videoFrame->data(3));
+            // 验证是否为D3D11的Texture
+            ID3D11Texture2D *sourceTexture = reinterpret_cast<ID3D11Texture2D *>(
+                reinterpret_cast<mfxHDLPair *>(mfxSurface->Data.MemId)->first);
+
+            // COM 层验证
+            ComPtr<ID3D11Texture2D> verifiedTexture;
+            const auto hr =
+                sourceTexture->QueryInterface(__uuidof(ID3D11Texture2D), (void **)&verifiedTexture);
+            verifiedTexture.Reset();
+
+            if (SUCCEEDED(hr)) {
+                return QSharedPointer<VideoRender>(new Nv12Render_D3d11va);
+            } else {
+                return QSharedPointer<VideoRender>(new Nv12Render_Dxva2);
+            }
+#else
+            return QSharedPointer<VideoRender>(new Nv12Render_Vaapi(context_));
+#endif
+        }
         default:
             // 对于软解格式，使用软解渲染器作为默认选择
             return QSharedPointer<VideoRender>(new SoftwareRender);

@@ -24,6 +24,14 @@ public:
     Nv12Render_D3d11va();
     ~Nv12Render_D3d11va() override;
 
+public:
+    /*
+     * @brief render是否需要重建
+     *
+     * @return 是否需要重建
+     */
+    bool shouldRebuild() const;
+
 protected:
     /**
      * @brief 初始化VBO
@@ -57,10 +65,20 @@ protected:
     bool renderFrame(const decoder_sdk::Frame &frame) override;
 
 private:
-    /*
-     * @brief 初始化WGL互操作资源
+    /**
+     * @brief 初始化D3D资源，如果传入wglDevice，则使用传入的，否则使用d3d11Device创建
+     *
+     * @param d3d11Device D3D11设备
+     * @param wglDevice wgl设备
+     * @return 是否初始化成功
      */
-    bool initializeWGLInterop();
+    bool initializeD3DResource(const ComPtr<ID3D11Device> &d3d11Device,
+                               const wgl::WglDeviceRef &wglDevice = wgl::WglDeviceRef());
+
+    /*
+     * @brief 检查WGL互操作资源是否有效
+     */
+    bool checkWGLInterop();
     /*
      * @brief 初始化视频帧处理工具
      *
@@ -141,6 +159,9 @@ private:
     // 同步机制相关
     ComPtr<ID3D11Query> eventQuery_ = nullptr; // D3D11事件查询对象
     bool enableSyncWorkaround_ = true;         // 是否启用同步解决方案
+
+    // 是否需要重建
+    bool shouldReBuild_ = false;
 };
 
 #endif

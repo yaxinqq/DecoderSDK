@@ -223,6 +223,11 @@ bool VideoRender::isValid() const
     return initialized_.load() && fboDrawResourcesInitialized_.load();
 }
 
+bool VideoRender::shouldRebuild() const
+{
+    return false;
+}
+
 RenderBufferQueue::Statistics VideoRender::getStatistics() const
 {
     return bufferQueue_->getStatistics();

@@ -51,7 +51,8 @@ private:
     void renderVideo(const std::shared_ptr<decoder_sdk::Frame> &videoFrame);
 
     // 根据像素格式创建对应的渲染器
-    QSharedPointer<VideoRender> createRenderer(decoder_sdk::ImageFormat format);
+    QSharedPointer<VideoRender> createRenderer(
+        const std::shared_ptr<decoder_sdk::Frame> &videoFrame);
 
 private:
     QSharedPointer<VideoRender> render_;

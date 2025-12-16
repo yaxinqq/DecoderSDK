@@ -1,6 +1,10 @@
 ﻿#ifdef D3D11VA_AVAILABLE
 #include "Nv12Render_D3d11va.h"
 
+#ifdef QSV_AVAILABLE
+#include "mfxstructures.h"
+#endif
+
 #include <thread>
 
 #ifdef _WIN32
@@ -39,40 +43,9 @@ const char *fsrc = R"(
 )";
 } // namespace
 
-Nv12Render_D3d11va::Nv12Render_D3d11va()
-    : VideoRender(),
-      d3d11Device_(d3d11_utils::getD3D11Device()),
-      wglD3DDevice_(d3d11_utils::getWglDeviceRef())
+Nv12Render_D3d11va::Nv12Render_D3d11va() : VideoRender()
 {
-    if (d3d11Device_) {
-        d3d11Device_->GetImmediateContext(&d3d11Context_);
-
-        // 检测是否为Intel集显，如果是则启用同步解决方案
-        ComPtr<IDXGIDevice> dxgiDevice;
-        if (SUCCEEDED(d3d11Device_->QueryInterface(__uuidof(IDXGIDevice), (void **)&dxgiDevice))) {
-            ComPtr<IDXGIAdapter> adapter;
-            if (SUCCEEDED(dxgiDevice->GetAdapter(&adapter))) {
-                DXGI_ADAPTER_DESC desc;
-                if (SUCCEEDED(adapter->GetDesc(&desc))) {
-                    const QString adapterDesc = QString::fromWCharArray(desc.Description);
-                    // Intel集显通常包含"Intel"字样
-                    enableSyncWorkaround_ = adapterDesc.contains("Intel", Qt::CaseInsensitive);
-                    qInfo() << QStringLiteral(
-                                   "[Nv12Render_D3d11va] Adapter: %1, Enable sync workaround: %2")
-                                   .arg(adapterDesc)
-                                   .arg(enableSyncWorkaround_);
-
-                    if (enableSyncWorkaround_) {
-                        // 创建D3D11查询对象用于同步
-                        D3D11_QUERY_DESC queryDesc = {};
-                        queryDesc.Query = D3D11_QUERY_EVENT;
-                        queryDesc.MiscFlags = 0;
-                        d3d11Device_->CreateQuery(&queryDesc, &eventQuery_);
-                    }
-                }
-            }
-        }
-    }
+    initializeD3DResource(d3d11_utils::getD3D11Device(), d3d11_utils::getWglDeviceRef());
 }
 
 Nv12Render_D3d11va::~Nv12Render_D3d11va()
@@ -94,6 +67,11 @@ Nv12Render_D3d11va::~Nv12Render_D3d11va()
     if (d3d11Device_) {
         d3d11Device_.Reset();
     }
+}
+
+bool Nv12Render_D3d11va::shouldRebuild() const
+{
+    return shouldReBuild_;
 }
 
 bool Nv12Render_D3d11va::initRenderVbo(const bool horizontal, const bool vertical)
@@ -120,7 +98,37 @@ bool Nv12Render_D3d11va::initRenderTexture(const decoder_sdk::Frame &frame)
 
 bool Nv12Render_D3d11va::initInteropsResource(const decoder_sdk::Frame &frame)
 {
-    if (!initializeWGLInterop()) {
+    const auto curPixelForamt = frame.pixelFormat();
+
+    // 得到当前纹理中设备
+    ID3D11Texture2D *sourceTexture = nullptr;
+    if (curPixelForamt == decoder_sdk::ImageFormat::kD3d11va) {
+        sourceTexture = reinterpret_cast<ID3D11Texture2D *>(frame.data(0));
+    }
+#ifdef QSV_AVAILABLE
+    else if (curPixelForamt == decoder_sdk::ImageFormat::kQsv) {
+        auto *const mfxSurface = reinterpret_cast<mfxFrameSurface1 *>(frame.data(3));
+        if (mfxSurface) {
+            sourceTexture = reinterpret_cast<ID3D11Texture2D *>(
+                reinterpret_cast<mfxHDLPair *>(mfxSurface->Data.MemId)->first);
+        }
+    }
+#endif
+
+    ComPtr<ID3D11Device> textureDevice;
+    sourceTexture->GetDevice(&textureDevice);
+    if (textureDevice.Get() != d3d11Device_.Get()) {
+        qInfo() << QStringLiteral(
+            "[Nv12Render_D3d11va] The decoding-side D3D11 Device is inconsistent with the one "
+            "currently in use; therefore, the D3D11 Resource needs to be reinitialized.");
+        if (!initializeD3DResource(textureDevice)) {
+            qWarning() << QStringLiteral(
+                "[Nv12Render_D3d11va] Reinitialize D3D11 resource failed!");
+            return false;
+        }
+    }
+
+    if (!checkWGLInterop()) {
         qWarning() << QStringLiteral("[Nv12Render_D3d11va] Failed to initialize WGL interop!");
         return false;
     }
@@ -152,18 +160,71 @@ bool Nv12Render_D3d11va::renderFrame(const decoder_sdk::Frame &frame)
     return drawFrame(glRGBTexture_);
 }
 
-bool Nv12Render_D3d11va::initializeWGLInterop()
+bool Nv12Render_D3d11va::initializeD3DResource(const ComPtr<ID3D11Device> &d3d11Device,
+                                               const wgl::WglDeviceRef &wglDevice)
+{
+    d3d11Device_ = d3d11Device;
+
+    if (!d3d11Device_.Get()) {
+        qWarning() << QStringLiteral("[Nv12Render_D3d11va] Can not get D3D11 Device!");
+        return false;
+    }
+
+    d3d11Device_->GetImmediateContext(&d3d11Context_);
+    if (!d3d11Context_.Get()) {
+        qWarning() << QStringLiteral("[Nv12Render_D3d11va] Can not get D3D11 Context!");
+        return false;
+    }
+
+    // 如果传入的wgl设备有效，就使用传入的设备，否则使用d3d11 device新建
+    if (wglDevice.isValid()) {
+        wglD3DDevice_ = wglDevice;
+    } else {
+        wglD3DDevice_ = wgl::WglDeviceRef(d3d11Device_.Get());
+    }
+
+    if (!wglD3DDevice_.isValid()) {
+        qWarning() << QStringLiteral("[Nv12Render_D3d11va] Can not get wgl Device!");
+        return false;
+    }
+
+    // 检测是否为Intel集显，如果是则启用同步解决方案
+    ComPtr<IDXGIDevice> dxgiDevice;
+    if (SUCCEEDED(d3d11Device_->QueryInterface(__uuidof(IDXGIDevice), (void **)&dxgiDevice))) {
+        ComPtr<IDXGIAdapter> adapter;
+        if (SUCCEEDED(dxgiDevice->GetAdapter(&adapter))) {
+            DXGI_ADAPTER_DESC desc;
+            if (SUCCEEDED(adapter->GetDesc(&desc))) {
+                const QString adapterDesc = QString::fromWCharArray(desc.Description);
+                // Intel集显通常包含"Intel"字样
+                enableSyncWorkaround_ = adapterDesc.contains("Intel", Qt::CaseInsensitive);
+                qInfo() << QStringLiteral(
+                               "[Nv12Render_D3d11va] Adapter: %1, Enable sync workaround: %2")
+                               .arg(adapterDesc)
+                               .arg(enableSyncWorkaround_);
+
+                if (enableSyncWorkaround_) {
+                    // 创建D3D11查询对象用于同步
+                    D3D11_QUERY_DESC queryDesc = {};
+                    queryDesc.Query = D3D11_QUERY_EVENT;
+                    queryDesc.MiscFlags = 0;
+                    d3d11Device_->CreateQuery(&queryDesc, &eventQuery_);
+                }
+            }
+        }
+    }
+    return true;
+}
+
+bool Nv12Render_D3d11va::checkWGLInterop()
 {
     if (!d3d11Device_) {
         qWarning() << QStringLiteral("[Nv12Render_D3d11va] D3D11 device is null!");
         return false;
     }
 
-    HRESULT hr = d3d11Device_->GetDeviceRemovedReason();
-    if (FAILED(hr)) {
-        qWarning() << QStringLiteral(
-                          "[Nv12Render_D3d11va] D3D11 device is in error state, HRESULT:")
-                   << Qt::hex << hr;
+    if (!wglD3DDevice_.isValid()) {
+        qWarning() << QStringLiteral("[Nv12Render_D3d11va] WGL device is invalid!");
         return false;
     }
 
@@ -282,15 +343,38 @@ bool Nv12Render_D3d11va::createRGBTexture()
 
 bool Nv12Render_D3d11va::processNV12ToRGB(const decoder_sdk::Frame &frame)
 {
-    ID3D11Texture2D *sourceTexture = reinterpret_cast<ID3D11Texture2D *>(frame.data(0));
+    ID3D11Texture2D *sourceTexture = nullptr;
+    UINT arraySlice = 0;
+
+    const auto curPixelForamt = frame.pixelFormat();
+
+    // 得到当前纹理和切片索引
+    if (curPixelForamt == decoder_sdk::ImageFormat::kD3d11va) {
+        sourceTexture = reinterpret_cast<ID3D11Texture2D *>(frame.data(0));
+        arraySlice = static_cast<UINT>(reinterpret_cast<intptr_t>(frame.data(1)));
+    }
+#ifdef QSV_AVAILABLE
+    else if (curPixelForamt == decoder_sdk::ImageFormat::kQsv) {
+        auto *const mfxSurface = reinterpret_cast<mfxFrameSurface1 *>(frame.data(3));
+        if (mfxSurface) {
+            auto *const pair = reinterpret_cast<mfxHDLPair *>(mfxSurface->Data.MemId);
+            if (pair->first) {
+                sourceTexture = reinterpret_cast<ID3D11Texture2D *>(pair->first);
+            }
+            if (pair->second) {
+                arraySlice = *reinterpret_cast<UINT *>(pair->second);
+            }
+        }
+    }
+#endif
+
     if (!sourceTexture || !videoProcessor_ || !videoContext_) {
         qWarning() << QStringLiteral("[Nv12Render_D3d11va] Missing required resources!");
         return false;
     }
 
     // 使用资源缓存避免频繁重建
-    auto cacheKey = std::make_pair(reinterpret_cast<uintptr_t>(sourceTexture),
-                                   static_cast<UINT>(reinterpret_cast<intptr_t>(frame.data(1))));
+    auto cacheKey = std::make_pair(reinterpret_cast<uintptr_t>(sourceTexture), arraySlice);
 
     ResourceCacheEntry entry;
     if (1) {
@@ -301,37 +385,12 @@ bool Nv12Render_D3d11va::processNV12ToRGB(const decoder_sdk::Frame &frame)
         if (sourceDevice.Get() == d3d11Device_.Get()) {
             entry.inputTexture = sourceTexture;
         } else {
-            // 不同设备，使用共享句柄
-            ComPtr<IDXGIResource> dxgiResource;
-            HRESULT hr =
-                sourceTexture->QueryInterface(__uuidof(IDXGIResource), (void **)&dxgiResource);
-            if (FAILED(hr)) {
-                qWarning()
-                    << QStringLiteral(
-                           "[Nv12Render_D3d11va] Failed to query source DXGI resource, HRESULT:")
-                    << Qt::hex << hr;
-                return false;
-            }
-
-            HANDLE sharedHandle = nullptr;
-            hr = dxgiResource->GetSharedHandle(&sharedHandle);
-            if (FAILED(hr)) {
-                qWarning()
-                    << QStringLiteral(
-                           "[Nv12Render_D3d11va] Failed to get source shared handle, HRESULT:")
-                    << Qt::hex << hr;
-                return false;
-            }
-
-            hr = d3d11Device_->OpenSharedResource(sharedHandle, __uuidof(ID3D11Texture2D),
-                                                  (void **)&entry.inputTexture);
-            if (FAILED(hr)) {
-                qWarning()
-                    << QStringLiteral(
-                           "[Nv12Render_D3d11va] Failed to open shared source texture, HRESULT:")
-                    << Qt::hex << hr;
-                return false;
-            }
+            // 不同设备，重建Render
+            shouldReBuild_ = true;
+            qWarning() << QStringLiteral(
+                "[Nv12Render_D3d11va] The decoding-side D3D11 Device is inconsistent with the one "
+                "currently in use; therefore, the render needs to be rebuild.");
+            return false;
         }
 
         // 创建InputView
@@ -339,8 +398,7 @@ bool Nv12Render_D3d11va::processNV12ToRGB(const decoder_sdk::Frame &frame)
         inputViewDesc.FourCC = 0;
         inputViewDesc.ViewDimension = D3D11_VPIV_DIMENSION_TEXTURE2D;
         inputViewDesc.Texture2D.MipSlice = 0;
-        inputViewDesc.Texture2D.ArraySlice =
-            static_cast<UINT>(reinterpret_cast<intptr_t>(frame.data(1)));
+        inputViewDesc.Texture2D.ArraySlice = arraySlice;
 
         HRESULT hr = videoDevice_->CreateVideoProcessorInputView(
             entry.inputTexture.Get(), videoProcessorEnum_.Get(), &inputViewDesc, &entry.inputView);

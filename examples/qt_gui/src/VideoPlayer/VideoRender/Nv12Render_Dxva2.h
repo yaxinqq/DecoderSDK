@@ -24,6 +24,14 @@ public:
     explicit Nv12Render_Dxva2();
     ~Nv12Render_Dxva2() override;
 
+public:
+    /*
+     * @brief render是否需要重建
+     *
+     * @return 是否需要重建
+     */
+    bool shouldRebuild() const;
+
 protected:
     /**
      * @brief 初始化VBO
@@ -57,10 +65,20 @@ protected:
     bool renderFrame(const decoder_sdk::Frame &frame) override;
 
 private:
-    /*
-     * @brief 初始化WGL互操作资源
+    /**
+     * @brief 初始化D3D资源，如果传入wglDevice，则使用传入的，否则使用d3d9Device创建
+     *
+     * @param d3d9Device D3D9设备
+     * @param wglDevice wgl设备
+     * @return 是否初始化成功
      */
-    bool initializeWGLInterop();
+    bool initializeD3DResource(const ComPtr<IDirect3DDevice9Ex> &d3d9Device,
+                               const wgl::WglDeviceRef &wglDevice = wgl::WglDeviceRef());
+
+    /*
+     * @brief 检查WGL互操作资源是否有效
+     */
+    bool checkWGLInterop();
     /*
      * @brief 清理申请的资源
      */
@@ -107,6 +125,9 @@ private:
     GLuint sharedTexture_ = 0;
     QOpenGLShaderProgram program_;
     QOpenGLBuffer vbo_;
+
+    // 是否需要重建
+    bool shouldReBuild_ = false;
 };
 
 #endif

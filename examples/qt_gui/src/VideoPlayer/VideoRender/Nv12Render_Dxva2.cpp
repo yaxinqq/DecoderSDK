@@ -1,6 +1,10 @@
 ﻿#ifdef DXVA2_AVAILABLE
 #include "Nv12Render_Dxva2.h"
 
+#ifdef QSV_AVAILABLE
+#include "mfxstructures.h"
+#endif
+
 #ifdef _WIN32
 #include <Windows.h>
 #include <d3d9.h>
@@ -39,11 +43,9 @@ const char *fsrc = R"(
 )";
 } // namespace
 
-Nv12Render_Dxva2::Nv12Render_Dxva2()
-    : VideoRender(),
-      d3d9Device_(dxva2_utils::getDXVA2Device()),
-      wglD3DDevice_(dxva2_utils::getWglDeviceRef())
+Nv12Render_Dxva2::Nv12Render_Dxva2() : VideoRender()
 {
+    initializeD3DResource(dxva2_utils::getDXVA2Device(), dxva2_utils::getWglDeviceRef());
 }
 
 Nv12Render_Dxva2::~Nv12Render_Dxva2()
@@ -53,6 +55,11 @@ Nv12Render_Dxva2::~Nv12Render_Dxva2()
 
     // 清理VBO
     vbo_.destroy();
+}
+
+bool Nv12Render_Dxva2::shouldRebuild() const
+{
+    return shouldReBuild_;
 }
 
 bool Nv12Render_Dxva2::initRenderVbo(const bool horizontal, const bool vertical)
@@ -80,7 +87,49 @@ bool Nv12Render_Dxva2::initRenderTexture(const decoder_sdk::Frame &frame)
 
 bool Nv12Render_Dxva2::initInteropsResource(const decoder_sdk::Frame &frame)
 {
-    if (!initializeWGLInterop()) {
+    const auto curPixelForamt = frame.pixelFormat();
+
+    // 得到当前纹理中设备
+    LPDIRECT3DSURFACE9 sourceSurface = nullptr;
+    if (curPixelForamt == decoder_sdk::ImageFormat::kDxva2) {
+        sourceSurface = reinterpret_cast<LPDIRECT3DSURFACE9>(frame.data(3));
+    }
+#ifdef QSV_AVAILABLE
+    else if (curPixelForamt == decoder_sdk::ImageFormat::kQsv) {
+        auto *const mfxSurface = reinterpret_cast<mfxFrameSurface1 *>(frame.data(3));
+        if (mfxSurface) {
+            sourceSurface = reinterpret_cast<LPDIRECT3DSURFACE9>(
+                reinterpret_cast<mfxHDLPair *>(mfxSurface->Data.MemId)->first);
+        }
+    }
+#endif
+
+    if (!sourceSurface) {
+        qWarning() << QStringLiteral("[Nv12Render_Dxva2] Missing required resources!");
+        return false;
+    }
+
+    ComPtr<IDirect3DDevice9> textureDevice;
+    sourceSurface->GetDevice(&textureDevice);
+    ComPtr<IDirect3DDevice9Ex> textureDeviceEx;
+    HRESULT hr =
+        textureDevice->QueryInterface(__uuidof(IDirect3DDevice9Ex), (void **)&textureDeviceEx);
+    if (FAILED(hr)) {
+        qWarning() << QStringLiteral("[Nv12Render_Dxva2] Unsupported device!");
+        return false;
+    }
+
+    if (textureDeviceEx.Get() != d3d9Device_.Get()) {
+        qInfo() << QStringLiteral(
+            "[Nv12Render_Dxva2] The decoding-side D3D9 Device is inconsistent with the one "
+            "currently in use; therefore, the D3D9 Resource needs to be reinitialized.");
+        if (!initializeD3DResource(textureDeviceEx)) {
+            qWarning() << QStringLiteral("[Nv12Render_Dxva2] Reinitialize D3D9 resource failed!");
+            return false;
+        }
+    }
+
+    if (!checkWGLInterop()) {
         qWarning() << QStringLiteral("[Nv12Render_Dxva2] Failed to initialize WGL interop!");
         return false;
     }
@@ -99,9 +148,23 @@ bool Nv12Render_Dxva2::renderFrame(const decoder_sdk::Frame &frame)
     if (!frame.isValid()) {
         return false;
     }
+    const auto curPixelForamt = frame.pixelFormat();
 
     // 从Frame中提取DXVA2表面指针
-    LPDIRECT3DSURFACE9 sourceSurface = reinterpret_cast<LPDIRECT3DSURFACE9>(frame.data(3));
+    LPDIRECT3DSURFACE9 sourceSurface = nullptr;
+    if (curPixelForamt == decoder_sdk::ImageFormat::kDxva2) {
+        sourceSurface = reinterpret_cast<LPDIRECT3DSURFACE9>(frame.data(3));
+    }
+#ifdef QSV_AVAILABLE
+    else if (curPixelForamt == decoder_sdk::ImageFormat::kQsv) {
+        auto *const mfxSurface = reinterpret_cast<mfxFrameSurface1 *>(frame.data(3));
+        if (mfxSurface) {
+            sourceSurface = reinterpret_cast<LPDIRECT3DSURFACE9>(
+                reinterpret_cast<mfxHDLPair *>(mfxSurface->Data.MemId)->first);
+        }
+    }
+#endif
+
     if (!sourceSurface) {
         qWarning() << QStringLiteral("[Nv12Render_Dxva2] Invalid DXVA2 surface!");
         return false;
@@ -117,17 +180,40 @@ bool Nv12Render_Dxva2::renderFrame(const decoder_sdk::Frame &frame)
     return drawFrame(sharedTexture_);
 }
 
-bool Nv12Render_Dxva2::initializeWGLInterop()
+bool Nv12Render_Dxva2::initializeD3DResource(const ComPtr<IDirect3DDevice9Ex> &d3d9Device,
+                                             const wgl::WglDeviceRef &wglDevice)
+{
+    d3d9Device_ = d3d9Device;
+
+    if (!d3d9Device_.Get()) {
+        qWarning() << QStringLiteral("[Nv12Render_Dxva2] Can not get D3D9 Device!");
+        return false;
+    }
+
+    // 如果传入的wgl设备有效，就使用传入的设备，否则使用d3d11 device新建
+    if (wglDevice.isValid()) {
+        wglD3DDevice_ = wglDevice;
+    } else {
+        wglD3DDevice_ = wgl::WglDeviceRef(d3d9Device_.Get());
+    }
+
+    if (!wglD3DDevice_.isValid()) {
+        qWarning() << QStringLiteral("[Nv12Render_Dxva2] Can not get wgl Device!");
+        return false;
+    }
+
+    return true;
+}
+
+bool Nv12Render_Dxva2::checkWGLInterop()
 {
     if (!d3d9Device_) {
         qWarning() << QStringLiteral("[Nv12Render_Dxva2] D3D9 device is null!");
         return false;
     }
 
-    HRESULT hr = d3d9Device_->TestCooperativeLevel();
-    if (FAILED(hr)) {
-        qWarning() << QStringLiteral("[Nv12Render_Dxva2] D3D9 device is in error state, HRESULT:")
-                   << Qt::hex << hr;
+    if (!wglD3DDevice_.isValid()) {
+        qWarning() << QStringLiteral("[Nv12Render_Dxva2] WGL device is invalid!");
         return false;
     }
 
@@ -171,6 +257,19 @@ bool Nv12Render_Dxva2::convertNv12ToRgbStretchRect(LPDIRECT3DSURFACE9 nv12Surfac
     if (!nv12Surface || !rgbRenderTarget_) {
         qWarning() << QStringLiteral(
             "[Nv12Render_Dxva2] Missing surfaces for StretchRect conversion!");
+        return false;
+    }
+
+    // 检查设备是否相同
+    ComPtr<IDirect3DDevice9> textureDevice;
+    nv12Surface->GetDevice(&textureDevice);
+
+    if (textureDevice.Get() != d3d9Device_.Get()) {
+        // 不同设备，重建Render
+        shouldReBuild_ = true;
+        qWarning() << QStringLiteral(
+            "[Nv12Render_Dxva2] The decoding-side D3D9 Device is inconsistent with the one "
+            "currently in use; therefore, the render needs to be rebuild.");
         return false;
     }
 

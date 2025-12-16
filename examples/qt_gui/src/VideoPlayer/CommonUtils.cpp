@@ -524,6 +524,7 @@ struct FuncTable {
 };
 static struct FuncTable g_funcTable;
 static bool g_funcTableLoaded = false;
+static std::mutex g_loadFuncMtx;
 
 // WglDeviceRef::ControlBlock 实现
 WglDeviceRef::ControlBlock::ControlBlock(HANDLE handle) : wglHandle(handle)
@@ -695,6 +696,10 @@ void WglDeviceRef::release() noexcept
 
 HANDLE WglDeviceRef::createWglDevice(void *device)
 {
+    if (!wgl::loadFuncTable()) {
+        qWarning() << QStringLiteral("Failed to load WGL function table!");
+    }
+
     if (!device || !g_funcTable.wglDXOpenDeviceNV) {
         return nullptr;
     }
@@ -711,6 +716,11 @@ HANDLE WglDeviceRef::createWglDevice(void *device)
 
 bool loadFuncTable()
 {
+    if (g_funcTableLoaded) {
+        return true;
+    }
+
+    std::lock_guard l(g_loadFuncMtx);
     if (g_funcTableLoaded) {
         return true;
     }

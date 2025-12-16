@@ -53,6 +53,13 @@ public:
      */
     bool isValid() const;
 
+    /*
+     * @brief render是否需要重建
+     *
+     * @return 是否需要重建。目前仅D3D11va和DXVA2有重建需求
+     */
+    virtual bool shouldRebuild() const;
+
     /**
      * @brief 获取缓冲队列统计信息
      */
