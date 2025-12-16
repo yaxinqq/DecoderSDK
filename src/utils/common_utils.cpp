@@ -181,6 +181,8 @@ AVPixelFormat imageFormat2AVPixelFormat(ImageFormat format)
             return AV_PIX_FMT_VAAPI;
         case ImageFormat::kVulkan:
             return AV_PIX_FMT_VULKAN;
+        case ImageFormat::kQsv:
+            return AV_PIX_FMT_QSV;
         default:
             break;
     }
@@ -218,6 +220,8 @@ ImageFormat avPixelFormat2ImageFormat(AVPixelFormat format)
             return ImageFormat::kVaapi;
         case AV_PIX_FMT_VULKAN:
             return ImageFormat::kVulkan;
+        case AV_PIX_FMT_QSV:
+            return ImageFormat::kQsv;
         default:
             break;
     }

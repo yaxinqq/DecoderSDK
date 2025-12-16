@@ -272,9 +272,11 @@ if(WIN32)
     add_definitions(-DDXVA2_AVAILABLE)
     message(STATUS "DXVA2 hardware acceleration enabled")
     
-    # DirectX Video Acceleration支持
-    add_definitions(-DDIRECTX_VA_AVAILABLE)
-    message(STATUS "DirectX Video Acceleration enabled")
+    # QSV支持 Windows默认支持，只需要头文件即可正常工作
+    set(QSV_FOUND TRUE)
+    add_definitions(-DQSV_AVAILABLE)
+    set(QSV_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/external/vpl/include)
+    message(STATUS "QSV hardware acceleration enabled")
     
 elseif(UNIX AND NOT APPLE)
     # Linux平台硬件解码支持
@@ -317,34 +319,22 @@ elseif(UNIX AND NOT APPLE)
         message(WARNING "PkgConfig not found. Cannot detect VAAPI.")
         set(VAAPI_FOUND FALSE)
     endif()
-    
-    # VDPAU支持检测（Video Decode and Presentation API for Unix）
-    if(PkgConfig_FOUND)
-        pkg_check_modules(VDPAU QUIET vdpau)
-        if(VDPAU_FOUND)
-            add_definitions(-DVDPAU_AVAILABLE)
-            message(STATUS "Found VDPAU: ${VDPAU_VERSION}")
-            set(VDPAU_FOUND TRUE)
+
+    # QSV支持检测（oneVPL）
+    pkg_check_modules(VPL QUIET IMPORTED_TARGET vpl)
+    if(VPL_FOUND AND LIBVA_FOUND)
+        set(QSV_FOUND TRUE)
+        message(STATUS "QSV (oneVPL) available: ${VPL_VERSION}")
+    else()
+        # 兼容旧系统
+        pkg_check_modules(MFX QUIET IMPORTED_TARGET libmfx)
+
+        if(MFX_FOUND AND LIBVA_FOUND)
+            set(QSV_FOUND TRUE)
+            target_link_libraries(my_target PRIVATE PkgConfig::MFX)
         else()
-            message(WARNING "VDPAU not found. VDPAU features will be disabled.")
-            set(VDPAU_FOUND FALSE)
+            message(STATUS "oneVPL not found, QSV disabled")
         endif()
-    else()
-        set(VDPAU_FOUND FALSE)
-    endif()
-    
-    # OpenMAX支持检测（主要用于嵌入式设备）
-    find_path(OPENMAX_INCLUDE_DIR
-        NAMES IL/OMX_Core.h
-        PATHS /usr/include /usr/local/include
-    )
-    if(OPENMAX_INCLUDE_DIR)
-        add_definitions(-DOPENMAX_AVAILABLE)
-        message(STATUS "Found OpenMAX IL headers")
-        set(OPENMAX_FOUND TRUE)
-    else()
-        message(STATUS "OpenMAX IL not found")
-        set(OPENMAX_FOUND FALSE)
     endif()
     
 elseif(APPLE)
@@ -431,6 +421,12 @@ else()
     message(STATUS "  - Vulkan: Disabled")
 endif()
 set(VULKAN_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/external/vulkan/include)
+
+if(QSV_FOUND)
+    message(STATUS "  - QSV: Enabled")
+else()
+    message(STATUS "  - QSV: Disabled")
+endif()
 
 # 添加子项目
 # src

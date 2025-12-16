@@ -84,7 +84,7 @@ public:
      * @brief 获取硬件像素格式
      * @return 硬件像素格式
      */
-    AVPixelFormat getHWPixelFormat() const
+    AVPixelFormat getPixelFormat() const
     {
         return hwPixFmt_;
     }

@@ -179,6 +179,11 @@ protected:
     virtual void decodeLoop() = 0;
 
     /**
+     * @brief 初始化硬件加速上下文，并返回硬件加速上下文类型
+     * @return 硬件加速上下文类型
+     */
+    virtual HWAccelType initHwAccelContext();
+    /**
      * @brief 根据情况，是否设置解码器的硬件解码
      * @return true 成功，false 失败
      */

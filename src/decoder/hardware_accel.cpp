@@ -39,6 +39,10 @@ extern "C" {
 #include "hardware_accel_vulkan_helper.h"
 #endif
 
+#ifdef QSV_AVAILABLE
+#include <libavutil/hwcontext_qsv.h>
+#endif
+
 namespace {
 struct FreeHWContext {
     decoder_sdk::HWAccelType type;
@@ -417,6 +421,8 @@ std::string HardwareAccel::getHWAccelTypeName(HWAccelType type)
             return "VAAPI";
         case HWAccelType::kVulkan:
             return "Vulkan";
+        case HWAccelType::kQsv:
+            return "QSV";
         default:
             return "Unknown";
     }
@@ -439,6 +445,8 @@ std::string HardwareAccel::getHWAccelTypeDescription(HWAccelType type)
             return "Video Acceleration API (Linux)";
         case HWAccelType::kVulkan:
             return "Vulkan";
+        case HWAccelType::kQsv:
+            return "Intel Quick Sync Video";
         default:
             return "Unknown hardware acceleration";
     }
@@ -459,6 +467,8 @@ HWAccelType HardwareAccel::fromAVHWDeviceType(AVHWDeviceType avType)
             return HWAccelType::kVaapi;
         case AV_HWDEVICE_TYPE_VULKAN:
             return HWAccelType::kVulkan;
+        case AV_HWDEVICE_TYPE_QSV:
+            return HWAccelType::kQsv;
         default:
             return HWAccelType::kNone;
     }
@@ -479,6 +489,8 @@ AVHWDeviceType HardwareAccel::toAVHWDeviceType(HWAccelType type)
             return AV_HWDEVICE_TYPE_VAAPI;
         case HWAccelType::kVulkan:
             return AV_HWDEVICE_TYPE_VULKAN;
+        case HWAccelType::kQsv:
+            return AV_HWDEVICE_TYPE_QSV;
         case HWAccelType::kAuto:
         default:
             return AV_HWDEVICE_TYPE_NONE;
@@ -503,7 +515,7 @@ AVPixelFormat HardwareAccel::getHWPixelFormat(AVCodecContext *codecCtx,
     }
 
     // 查找硬件像素格式
-    AVPixelFormat hwPixFmt = hwAccel->getHWPixelFormat();
+    AVPixelFormat hwPixFmt = hwAccel->getPixelFormat();
     for (int i = 0; pix_fmts[i] != AV_PIX_FMT_NONE; i++) {
         if (pix_fmts[i] == hwPixFmt) {
 #ifdef PLATFORM_IS_WINDOWS
@@ -554,6 +566,8 @@ bool HardwareAccel::initHWDevice(AVHWDeviceType deviceType, int deviceIndex,
     char deviceName[32] = {0};
     if (deviceIndex > 0) {
         snprintf(deviceName, sizeof(deviceName), "%d", deviceIndex);
+    } else {
+        snprintf(deviceName, sizeof(deviceName), "auto");
     }
 
     // 尝试通过用户回调获取硬件设备上下文
@@ -613,12 +627,15 @@ bool HardwareAccel::initHWDevice(AVHWDeviceType deviceType, int deviceIndex,
 AVHWDeviceType HardwareAccel::findBestHWAccelType()
 {
     // 优先级顺序：
-    // Windows: CUDA > D3D11VA > DXVA2 > Vulkan
-    // Linux: CUDA > VAAPI
+    // Windows: CUDA > QSV > D3D11VA > DXVA2 > Vulkan (目前暂时只有Windows和FFmpeg
+    // >= 5.0时，才支持QSV) Linux: CUDA > VAAPI
 #ifdef OS_WINDOWS
     const std::vector<AVHWDeviceType> priorityList = {
-        AV_HWDEVICE_TYPE_CUDA, AV_HWDEVICE_TYPE_D3D11VA, AV_HWDEVICE_TYPE_DXVA2,
-        AV_HWDEVICE_TYPE_VULKAN};
+        AV_HWDEVICE_TYPE_CUDA,
+#if LIBAVUTIL_VERSION_MAJOR >= 57
+        AV_HWDEVICE_TYPE_QSV,
+#endif
+        AV_HWDEVICE_TYPE_D3D11VA, AV_HWDEVICE_TYPE_DXVA2, AV_HWDEVICE_TYPE_VULKAN};
 #elif OS_LINUX
     const std::vector<AVHWDeviceType> priorityList = {
         AV_HWDEVICE_TYPE_CUDA,

@@ -230,13 +230,6 @@ if(WIN32)
         dxva2
     )
     
-    # Intel Media SDK库（QSV）
-    if(QSV_FOUND)
-        list(APPEND HARDWARE_ACCEL_LIBS
-            libmfx
-        )
-    endif()
-    
 elseif(UNIX AND NOT APPLE)
     # Linux平台硬件加速库
     
@@ -256,11 +249,6 @@ elseif(UNIX AND NOT APPLE)
     # VDPAU库
     if(VDPAU_FOUND)
         list(APPEND HARDWARE_ACCEL_LIBS ${VDPAU_LIBRARIES})
-    endif()
-    
-    # Intel Media SDK库（QSV）
-    if(QSV_FOUND)
-        list(APPEND HARDWARE_ACCEL_LIBS mfx)
     endif()
     
 elseif(APPLE)

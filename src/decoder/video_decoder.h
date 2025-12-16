@@ -56,6 +56,11 @@ protected:
      */
     void decodeLoop() override;
     /**
+     * @brief 初始化硬件加速上下文，并返回硬件加速上下文类型
+     * @return 硬件加速上下文类型
+     */
+    HWAccelType initHwAccelContext() override;
+    /**
      * @brief 硬件解码设置
      */
     bool setupHardwareDecode() override;

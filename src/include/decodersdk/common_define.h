@@ -31,6 +31,7 @@ enum class HWAccelType : uint8_t {
     kCuda,         // NVIDIA CUDA
     kVaapi,        // Video Acceleration API (Linux)
     kVulkan,       // Vulkan
+    kQsv,          // Intel Quick Sync Video
 };
 
 // 图像格式枚举（部分）
@@ -52,6 +53,7 @@ enum class ImageFormat : uint8_t {
     kCuda,         // CUDA内存句柄
     kVaapi,        // VA表明，使用DRM/VA display
     kVulkan,       // Vulkan
+    kQsv,          // Intel Quick Sync Video
 
     kUnknown, // 未知
 };

@@ -172,6 +172,11 @@ bool DecoderBase::isWaitingForPreBuffer() const
     return waitingForPreBuffer_.load();
 }
 
+HWAccelType DecoderBase::initHwAccelContext()
+{
+    return HWAccelType::kNone;
+}
+
 bool DecoderBase::setupHardwareDecode()
 {
     return false;
@@ -320,7 +325,19 @@ bool DecoderBase::openInternal()
 
     stream_ = formatContext->streams[streamIndex_];
 
+    // 构建硬件加速上下文（如果需要）
+    const auto hwType = initHwAccelContext();
+
     const AVCodec *codec = avcodec_find_decoder(stream_->codecpar->codec_id);
+    // 如果当前的硬件加速上下文是qsv，则需要重新查找codec
+    switch (hwType) {
+        case HWAccelType::kQsv:
+            codec = avcodec_find_decoder_by_name(fmt::format("{}_qsv", codec->name).c_str());
+            break;
+        default:
+            break;
+    }
+
     if (!codec) {
         sendFailedEvent();
         return false;

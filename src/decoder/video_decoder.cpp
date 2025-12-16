@@ -932,11 +932,38 @@ void VideoDecoder::decodeLoop()
                 seiDataList); // 这里不使用move是适配一个packet解出多个frame的情况
 
 #ifdef VAAPI_AVAILABLE
+            VASurfaceID surfaceID = VA_INVALID_ID;
+            const auto curPixelFormat = outFrame->pixelFormat();
+            if (curPixelFormat == AV_PIX_FMT_VAAPI) {
+                surfaceID = (VASurfaceID)(uintptr_t)frame.data(3);
+            }
+#ifdef QSV_AVAILABLE
+            // Todo: 这样的方式似乎有点问题，换另一种方式拿到VADisplay
+            if (curPixelFormat == AV_PIX_FMT_QSV) {
+                mfxFrameSurface1 *const surface =
+                    reinterpret_cast<mfxFrameSurface1 *>(frame.data(3));
+                surfaceID = reinterpret_cast<VASurfaceID>(
+                    reinterpret_cast<mfxHDLPair *>(surface->Data.MemId)->first);
+
+                // 如果这是导出的第一帧，则初始化VADisplay
+                if (!vaDisplay) {
+                    const auto err = surface->FrameInterface
+                                         ? surface->FrameInterface->GetDeviceHandle(
+                                               surface, &vaDisplay, MFX_HANDLE_VA_DISPLAY)
+                                         : MFX_ERR_NULL_PTR;
+                    if (err != MFX_ERR_NONE) {
+                        LOG_WARN("Failed to get VA display handle, err: {}", err);
+                        vaDisplay = nullptr;
+                    }
+                }
+            }
+#endif
+#endif
+
+#ifdef VAAPI_AVAILABLE
             // 如果当前是vaapi, 则缓存surface
             // 并将导出的surface赋值给Frame
-            if (outFrame->pixelFormat() == AV_PIX_FMT_VAAPI && vaDisplay) {
-                const VASurfaceID surfaceID = (VASurfaceID)(uintptr_t)frame.data(3);
-
+            if (vaDisplay) {
                 // 同步surface
                 va_wrapper::syncVASurface(vaDisplay, surfaceID);
 
@@ -1007,17 +1034,24 @@ void VideoDecoder::decodeLoop()
     updateTotalDecodeTime();
 }
 
-bool VideoDecoder::setupHardwareDecode()
+HWAccelType VideoDecoder::initHwAccelContext()
 {
-    needFixSPSProfile_ = false; // 重置SPS修正标志
-
     // 创建硬件加速器（默认尝试自动选择最佳硬件加速方式）
     hwAccel_ = HardwareAccelFactory::getInstance().createHardwareAccel(
         hwAccelType_, deviceIndex_, createHWContextCallback_, freeHWContextCallback_);
     if (!hwAccel_) {
         LOG_WARN("Hardware acceleration not available, using software decode");
-        return false;
+        return HWAccelType::kNone;
     }
+
+    return hwAccel_->getType();
+}
+
+bool VideoDecoder::setupHardwareDecode()
+{
+    needFixSPSProfile_ = false; // 重置SPS修正标志
+    if (!hwAccel_)
+        return false;
 
     if (hwAccel_->getType() == HWAccelType::kNone) {
         LOG_WARN("Hardware acceleration not available, using software decode");

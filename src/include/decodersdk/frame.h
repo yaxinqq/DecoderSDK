@@ -3,8 +3,8 @@
 #include <memory>
 
 #include "common_define.h"
-#include "vulkan_wrapper_define.h"
 #include "sdk_global.h"
+#include "vulkan_wrapper_define.h"
 
 namespace decoder_sdk {
 namespace internal {
