@@ -63,6 +63,11 @@ std::vector<UserSEIData> Frame::userSEIDataList() const
     return impl_ ? impl_->userSEIDataList() : std::vector<UserSEIData>();
 }
 
+HWAccelType Frame::backendHwType() const
+{
+    return impl_ ? impl_->backendHwType() : HWAccelType::kNone;
+}
+
 int Frame::width() const
 {
     return impl_ ? impl_->width() : 0;

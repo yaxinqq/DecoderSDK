@@ -552,6 +552,7 @@ void VideoDecoder::init(const Config &config)
 {
     std::lock_guard<std::mutex> lock(mutex_);
     hwAccelType_ = config.hwAccelType;
+    backendHwAccelType_ = config.backendHwAccelType;
     deviceIndex_ = config.hwDeviceIndex;
     softPixelFormat_ = utils::imageFormat2AVPixelFormat(config.swVideoOutFormat);
     requireFrameInMemory_ = config.requireFrameInSystemMemory;
@@ -605,9 +606,7 @@ void VideoDecoder::decodeLoop()
     std::unordered_map<VASurfaceID, AVBufferRef *> surfaceCache;
 
     // vadisplay
-    auto *vaDisplay = (hwAccel_ && hwAccel_->getType() == HWAccelType::kVaapi)
-                          ? hwAccel_->getVADisplay()
-                          : nullptr;
+    auto *vaDisplay = hwAccel_ ? hwAccel_->getVADisplay() : nullptr;
 #endif
 
     auto serial = packetQueue->serial();
@@ -822,7 +821,7 @@ void VideoDecoder::decodeLoop()
                         occuredError = true;
 
                         // 如果是I帧，等待下一个I帧过来
-                        if (frameIsKey(frame)) {
+                        if (isKeyFrame) {
                             handleKeyFrameError(
                                 hasKeyFrame, "Key frame decode failed, waiting for next key frame");
 #ifdef VAAPI_AVAILABLE
@@ -843,7 +842,7 @@ void VideoDecoder::decodeLoop()
                 LOG_WARN("{} Frame decode corrupt", demuxer_->url());
 
                 // 如果是I帧，等待下一个I帧过来
-                if (frameIsKey(frame)) {
+                if (isKeyFrame) {
                     handleKeyFrameError(hasKeyFrame,
                                         "Key frame decode failed, waiting for next key frame");
 #ifdef VAAPI_AVAILABLE
@@ -930,6 +929,9 @@ void VideoDecoder::decodeLoop()
             outFrame->setMediaType(AVMEDIA_TYPE_VIDEO);
             outFrame->setUserSEIDataList(
                 seiDataList); // 这里不使用move是适配一个packet解出多个frame的情况
+            if (hwAccel_) {
+                outFrame->setBackendHwType(hwAccel_->getBackendType());
+            }
 
 #ifdef VAAPI_AVAILABLE
             VASurfaceID surfaceID = VA_INVALID_ID;
@@ -938,24 +940,11 @@ void VideoDecoder::decodeLoop()
                 surfaceID = (VASurfaceID)(uintptr_t)frame.data(3);
             }
 #ifdef QSV_AVAILABLE
-            // Todo: 这样的方式似乎有点问题，换另一种方式拿到VADisplay
             if (curPixelFormat == AV_PIX_FMT_QSV) {
                 mfxFrameSurface1 *const surface =
                     reinterpret_cast<mfxFrameSurface1 *>(frame.data(3));
                 surfaceID = reinterpret_cast<VASurfaceID>(
                     reinterpret_cast<mfxHDLPair *>(surface->Data.MemId)->first);
-
-                // 如果这是导出的第一帧，则初始化VADisplay
-                if (!vaDisplay) {
-                    const auto err = surface->FrameInterface
-                                         ? surface->FrameInterface->GetDeviceHandle(
-                                               surface, &vaDisplay, MFX_HANDLE_VA_DISPLAY)
-                                         : MFX_ERR_NULL_PTR;
-                    if (err != MFX_ERR_NONE) {
-                        LOG_WARN("Failed to get VA display handle, err: {}", err);
-                        vaDisplay = nullptr;
-                    }
-                }
             }
 #endif
 #endif
@@ -1038,7 +1027,8 @@ HWAccelType VideoDecoder::initHwAccelContext()
 {
     // 创建硬件加速器（默认尝试自动选择最佳硬件加速方式）
     hwAccel_ = HardwareAccelFactory::getInstance().createHardwareAccel(
-        hwAccelType_, deviceIndex_, createHWContextCallback_, freeHWContextCallback_);
+        hwAccelType_, backendHwAccelType_, deviceIndex_, createHWContextCallback_,
+        freeHWContextCallback_);
     if (!hwAccel_) {
         LOG_WARN("Hardware acceleration not available, using software decode");
         return HWAccelType::kNone;

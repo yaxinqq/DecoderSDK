@@ -122,6 +122,8 @@ private:
     std::shared_ptr<HardwareAccel> hwAccel_;
     // 硬解加速类型
     HWAccelType hwAccelType_ = HWAccelType::kAuto;
+    // 派生的硬件后端加速类型（仅QSV和AMF使用此参数，且仅Windows上生效）
+    HWAccelType backendHwAccelType_ = HWAccelType::kD3d11va;
     // 硬件设备ID
     int deviceIndex_ = 0;
     // 软解图像类型

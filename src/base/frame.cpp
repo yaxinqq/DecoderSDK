@@ -33,7 +33,8 @@ Frame::Frame(const Frame &other)
       duration_(other.duration_),
       pts_(other.pts_),
       mediaType_(other.mediaType_),
-      userSEIDataList_(other.userSEIDataList_)
+      userSEIDataList_(other.userSEIDataList_),
+      backendHwType_(other.backendHwType_)
 {
     if (other.frame_) {
         ensureAllocated();
@@ -52,6 +53,7 @@ Frame &Frame::operator=(const Frame &other)
         pts_ = other.pts_;
         mediaType_ = other.mediaType_;
         userSEIDataList_ = other.userSEIDataList_;
+        backendHwType_ = other.backendHwType_;
 
         if (other.frame_) {
             ensureAllocated();
@@ -75,7 +77,8 @@ Frame::Frame(Frame &&other) noexcept
       duration_(other.duration_),
       pts_(other.pts_),
       mediaType_(other.mediaType_),
-      userSEIDataList_(std::move(other.userSEIDataList_))
+      userSEIDataList_(std::move(other.userSEIDataList_)),
+      backendHwType_(other.backendHwType_)
 {
     // 转移所有权，避免深拷贝
     other.frame_ = nullptr;
@@ -94,6 +97,7 @@ Frame &Frame::operator=(Frame &&other) noexcept
         pts_ = other.pts_;
         mediaType_ = other.mediaType_;
         userSEIDataList_ = std::move(other.userSEIDataList_);
+        backendHwType_ = other.backendHwType_;
 
         other.frame_ = nullptr;
     }
@@ -163,6 +167,30 @@ std::vector<UserSEIData> Frame::userSEIDataList() const
 void Frame::setUserSEIDataList(const std::vector<UserSEIData> &seiDataList)
 {
     userSEIDataList_ = seiDataList;
+}
+
+HWAccelType Frame::backendHwType() const
+{
+    return backendHwType_;
+}
+
+void Frame::setBackendHwType(HWAccelType hwType)
+{
+    if (!frame_)
+        return;
+
+    if (1
+#ifdef QSV_AVAILABLE
+        && frame_->format != AV_PIX_FMT_QSV
+#endif
+#ifdef AMF_AVAILABLE
+        && frame_->format != AV_PIX_FMT_AMF_SURFACE
+#endif
+    ) {
+        return;
+    }
+
+    backendHwType_ = hwType;
 }
 
 int Frame::width() const

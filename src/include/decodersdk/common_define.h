@@ -24,14 +24,15 @@ enum class MediaType : uint8_t {
 
 // 硬件加速类型
 enum class HWAccelType : uint8_t {
-    kNone,         // 不使用硬件加速
-    kAuto,         // 自动选择最佳硬件加速
-    kDxva2,        // DirectX Video Acceleration 2.0
-    kD3d11va,      // Direct3D 11 Video Acceleration
-    kCuda,         // NVIDIA CUDA
-    kVaapi,        // Video Acceleration API (Linux)
-    kVulkan,       // Vulkan
-    kQsv,          // Intel Quick Sync Video
+    kNone,    // 不使用硬件加速
+    kAuto,    // 自动选择最佳硬件加速
+    kDxva2,   // DirectX Video Acceleration 2.0
+    kD3d11va, // Direct3D 11 Video Acceleration
+    kCuda,    // NVIDIA CUDA
+    kVaapi,   // Video Acceleration API (Linux)
+    kVulkan,  // Vulkan
+    kQsv,     // Intel Quick Sync Video
+    kAmf,     // AMD Accelerated Media Framework（FFMpeg 8.0及以上才支持）
 };
 
 // 图像格式枚举（部分）
@@ -48,12 +49,13 @@ enum class ImageFormat : uint8_t {
     kBGRA,    // BGRA格式
 
     // 硬解
-    kDxva2,        // DXVA表面格式，仅Windows
-    kD3d11va,      // Direct3D 11 纹理指针
-    kCuda,         // CUDA内存句柄
-    kVaapi,        // VA表明，使用DRM/VA display
-    kVulkan,       // Vulkan
-    kQsv,          // Intel Quick Sync Video
+    kDxva2,   // DXVA表面格式，仅Windows
+    kD3d11va, // Direct3D 11 纹理指针
+    kCuda,    // CUDA内存句柄
+    kVaapi,   // VA表明，使用DRM/VA display
+    kVulkan,  // Vulkan
+    kQsv,     // Intel Quick Sync Video
+    kAmf,     // AMD Accelerated Media Framework（FFMpeg 8.0及以上才支持）
 
     kUnknown, // 未知
 };
@@ -487,6 +489,9 @@ struct Config {
     double speed = 1.0;
     // 硬件解码器类型
     HWAccelType hwAccelType = HWAccelType::kAuto;
+    // 派生的硬件解码器后端的设备类型
+    // QSV和AMF使用此参数，并且只在Windows上生效，仅支持DXVA2和D3D11；QSV在Linux上固定使用VAAPI，AMF暂不支持Linux平台
+    HWAccelType backendHwAccelType = HWAccelType::kD3d11va;
     // 硬件解码器设备索引
     int hwDeviceIndex = 0;
     // 软解时的视频输出格式

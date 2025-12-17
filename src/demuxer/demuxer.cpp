@@ -616,7 +616,7 @@ bool Demuxer::handleLoopPlayback()
 
     // 重置到文件开始位置
     if (formatContext_->pb && formatContext_->pb->seekable) {
-        const int64_t ret = avio_seek(formatContext_->pb, 0, SEEK_SET);
+        const int64_t ret = av_seek_frame(formatContext_, -1, 0, AVSEEK_FLAG_BACKWARD);
         if (ret < 0) {
             LOG_ERROR("{} Seek to start failed: {}", url_, utils::avErr2Str(static_cast<int>(ret)));
             return false;
@@ -795,7 +795,7 @@ bool Demuxer::openInternal(const std::string &url, const Config &config,
 
     // 重置到文件开始位置
     if (formatContext_->pb && formatContext_->pb->seekable) {
-        const int64_t ret = avio_seek(formatContext_->pb, 0, SEEK_SET);
+        const int64_t ret = av_seek_frame(formatContext_, -1, 0, AVSEEK_FLAG_BACKWARD);
         if (ret < 0) {
             LOG_WARN("{} Seek to start failed: {}", url_, utils::avErr2Str(static_cast<int>(ret)));
         }

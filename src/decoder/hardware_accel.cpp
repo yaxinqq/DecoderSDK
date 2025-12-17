@@ -43,6 +43,10 @@ extern "C" {
 #include <libavutil/hwcontext_qsv.h>
 #endif
 
+#ifdef AMF_AVAILABLE
+#include <libavutil/hwcontext_amf.h>
+#endif
+
 namespace {
 struct FreeHWContext {
     decoder_sdk::HWAccelType type;
@@ -88,7 +92,8 @@ HardwareAccel::HardwareAccel()
       hwPixFmt_(AV_PIX_FMT_NONE),
       initialized_(false),
       isUserContext_(false),
-      deviceIndex_(0)
+      deviceIndex_(0),
+      hwChildDeviceCtx_(nullptr)
 {
 }
 
@@ -108,16 +113,13 @@ HardwareAccel::~HardwareAccel()
         }
     }
 
-    // 释放硬件设备上下文
-    if (hwDeviceCtx_) {
-        av_buffer_unref(&hwDeviceCtx_);
-        hwDeviceCtx_ = nullptr;
-    }
+    // 释放硬件设备上下文（包括本体 + 派生）
+    clearHwCtx();
 
     initialized_ = false;
 }
 
-bool HardwareAccel::init(HWAccelType type, int deviceIndex,
+bool HardwareAccel::init(HWAccelType type, HWAccelType backendType, int deviceIndex,
                          const CreateHWContextCallback &createCallback,
                          const FreeHWContextCallback &freeCallback)
 
@@ -125,10 +127,7 @@ bool HardwareAccel::init(HWAccelType type, int deviceIndex,
     std::lock_guard<std::mutex> lock(mutex_);
 
     // 如果已经初始化，先释放资源
-    if (hwDeviceCtx_) {
-        av_buffer_unref(&hwDeviceCtx_);
-        hwDeviceCtx_ = nullptr;
-    }
+    clearHwCtx();
 
     initialized_ = false;
     deviceIndex_ = deviceIndex;
@@ -158,7 +157,12 @@ bool HardwareAccel::init(HWAccelType type, int deviceIndex,
     }
 
     // 初始化硬件设备
-    if (!initHWDevice(deviceType, deviceIndex_, createCallback, freeCallback)) {
+#if defined(OS_LINUX)
+    AVHWDeviceType backendDeviceType = AV_HWDEVICE_TYPE_VAAPI;
+#else
+    AVHWDeviceType backendDeviceType = toAVHWDeviceType(backendType);
+#endif
+    if (!initHWDevice(deviceType, backendDeviceType, deviceIndex_, createCallback, freeCallback)) {
         LOG_WARN("Failed to initialize hardware device: {}", getHWAccelTypeName(type));
         type_ = HWAccelType::kNone;
         return false;
@@ -170,8 +174,7 @@ bool HardwareAccel::init(HWAccelType type, int deviceIndex,
     hwPixFmt_ = getHWPixelFormatForDevice(deviceType);
     if (hwPixFmt_ == AV_PIX_FMT_NONE) {
         LOG_WARN("Failed to get hardware pixel format for device: {}", getHWAccelTypeName(type_));
-        av_buffer_unref(&hwDeviceCtx_);
-        hwDeviceCtx_ = nullptr;
+        clearHwCtx();
         return false;
     }
 
@@ -299,6 +302,16 @@ bool HardwareAccel::transferFrameToHost(AVFrame *hwFrame, AVFrame *swFrame)
     return true;
 }
 
+HWAccelType HardwareAccel::getBackendType() const
+{
+    if ((type_ != HWAccelType::kQsv && type_ != HWAccelType::kAmf) || !hwChildDeviceCtx_) {
+        return HWAccelType::kNone;
+    }
+
+    AVHWDeviceContext *hwContext = (AVHWDeviceContext *)hwChildDeviceCtx_->data;
+    return fromAVHWDeviceType(hwContext->type);
+}
+
 std::string HardwareAccel::getDeviceName() const
 {
     return getHWAccelTypeName(type_);
@@ -317,11 +330,22 @@ int HardwareAccel::getDeviceIndex() const
 #ifdef VAAPI_AVAILABLE
 void *HardwareAccel::getVADisplay() const
 {
-    if (type_ != HWAccelType::kVaapi || !hwDeviceCtx_) {
+    AVBufferRef *hwDeviceCtx = nullptr;
+    if (type_ == HWAccelType::kVaapi) {
+        hwDeviceCtx = hwDeviceCtx_;
+    } else if (type_ == HWAccelType::kQsv) {
+        hwDeviceCtx = hwChildDeviceCtx_;
+    }
+
+    if (!hwDeviceCtx) {
         return nullptr;
     }
 
-    AVHWDeviceContext *deviceContext = (AVHWDeviceContext *)hwDeviceCtx_->data;
+    AVHWDeviceContext *deviceContext = (AVHWDeviceContext *)hwDeviceCtx->data;
+    if (deviceContext->type != AV_HWDEVICE_TYPE_VAAPI) {
+        return nullptr;
+    }
+
     AVVAAPIDeviceContext *vaapiContext =
         reinterpret_cast<AVVAAPIDeviceContext *>(deviceContext->hwctx);
     if (!vaapiContext) {
@@ -426,6 +450,8 @@ std::string HardwareAccel::getHWAccelTypeName(HWAccelType type)
             return "Vulkan";
         case HWAccelType::kQsv:
             return "QSV";
+        case HWAccelType::kAmf:
+            return "AMF";
         default:
             return "Unknown";
     }
@@ -450,6 +476,8 @@ std::string HardwareAccel::getHWAccelTypeDescription(HWAccelType type)
             return "Vulkan";
         case HWAccelType::kQsv:
             return "Intel Quick Sync Video";
+        case HWAccelType::kAmf:
+            return "AMD Accelerated Media Framework";
         default:
             return "Unknown hardware acceleration";
     }
@@ -472,6 +500,10 @@ HWAccelType HardwareAccel::fromAVHWDeviceType(AVHWDeviceType avType)
             return HWAccelType::kVulkan;
         case AV_HWDEVICE_TYPE_QSV:
             return HWAccelType::kQsv;
+#ifdef AMF_AVAILABLE
+        case AV_HWDEVICE_TYPE_AMF:
+            return HWAccelType::kAmf;
+#endif
         default:
             return HWAccelType::kNone;
     }
@@ -494,6 +526,10 @@ AVHWDeviceType HardwareAccel::toAVHWDeviceType(HWAccelType type)
             return AV_HWDEVICE_TYPE_VULKAN;
         case HWAccelType::kQsv:
             return AV_HWDEVICE_TYPE_QSV;
+#ifdef AMF_AVAILABLE
+        case HWAccelType::kAmf:
+            return AV_HWDEVICE_TYPE_AMF;
+#endif
         case HWAccelType::kAuto:
         default:
             return AV_HWDEVICE_TYPE_NONE;
@@ -542,6 +578,7 @@ AVPixelFormat HardwareAccel::getHWPixelFormat(AVCodecContext *codecCtx,
                 if (ret < 0) {
                     LOG_WARN("Failed to initialize HW frames context: {}", utils::avErr2Str(ret));
                     av_buffer_unref(&codecCtx->hw_frames_ctx);
+                    codecCtx->hw_frames_ctx = nullptr;
                     return hwPixFmt;
                 }
             }
@@ -557,8 +594,8 @@ AVPixelFormat HardwareAccel::getHWPixelFormat(AVCodecContext *codecCtx,
     return AV_PIX_FMT_NONE;
 }
 
-bool HardwareAccel::initHWDevice(AVHWDeviceType &deviceType, int deviceIndex,
-                                 const CreateHWContextCallback &createCallback,
+bool HardwareAccel::initHWDevice(AVHWDeviceType &deviceType, AVHWDeviceType backendDeviceType,
+                                 int deviceIndex, const CreateHWContextCallback &createCallback,
                                  const FreeHWContextCallback &freeCallback)
 {
     if (deviceType == AV_HWDEVICE_TYPE_NONE) {
@@ -599,8 +636,8 @@ bool HardwareAccel::initHWDevice(AVHWDeviceType &deviceType, int deviceIndex,
                 // 验证用户提供的硬件上下文类型是否匹配
                 if (validateUserHWContext(userHwContext, deviceType)) {
                     // 从用户提供的硬件上下文创建FFmpeg的hwdevice_ctx
-                    int ret =
-                        createHWDeviceFromUserContext(userHwContext, deviceType, freeCallback);
+                    int ret = createHWDeviceFromUserContext(userHwContext, deviceType,
+                                                            &hwDeviceCtx_, freeCallback);
                     if (ret >= 0) {
                         LOG_INFO(
                             "Successfully created hardware device context from user callback!");
@@ -629,8 +666,24 @@ bool HardwareAccel::initHWDevice(AVHWDeviceType &deviceType, int deviceIndex,
         }
     }
 
-    // Fallback: 使用FFmpeg的默认创建流程
-    int ret = av_hwdevice_ctx_create(&hwDeviceCtx_, deviceType, deviceName, nullptr, 0);
+    // Fallback: 使用FFmpeg的默认创建流程。如果是AMF和QSV需要特殊处理
+    int ret = -1;
+    if (0
+#ifdef QSV_AVAILABLE
+        || deviceType == AV_HWDEVICE_TYPE_QSV
+#endif
+#ifdef AMF_AVAILABLE
+        || deviceType == AV_HWDEVICE_TYPE_AMF
+#endif
+    ) {
+        ret = tryDerivedHwContext(deviceType, backendDeviceType, deviceName, createCallback,
+                                  freeCallback);
+    }
+
+    // 正常的创建流程
+    if (ret != 0) {
+        ret = av_hwdevice_ctx_create(&hwDeviceCtx_, deviceType, deviceName, nullptr, 0);
+    }
     if (ret < 0) {
         char errBuf[AV_ERROR_MAX_STRING_SIZE];
         av_strerror(ret, errBuf, sizeof(errBuf));
@@ -650,8 +703,11 @@ AVHWDeviceType HardwareAccel::findBestHWAccelType()
 #ifdef OS_WINDOWS
     const std::vector<AVHWDeviceType> priorityList = {
         AV_HWDEVICE_TYPE_CUDA,
-#if LIBAVUTIL_VERSION_MAJOR >= 57
+#ifdef QSV_AVAILABLE
         AV_HWDEVICE_TYPE_QSV,
+#endif
+#ifdef AMF_AVAILABLE
+        AV_HWDEVICE_TYPE_AMF,
 #endif
         AV_HWDEVICE_TYPE_D3D11VA, AV_HWDEVICE_TYPE_DXVA2, AV_HWDEVICE_TYPE_VULKAN};
 #elif OS_LINUX
@@ -753,6 +809,7 @@ bool HardwareAccel::validateUserHWContext(void *userContext, AVHWDeviceType expe
 }
 
 int HardwareAccel::createHWDeviceFromUserContext(void *userContext, AVHWDeviceType deviceType,
+                                                 AVBufferRef **hwDeviceCtx,
                                                  const FreeHWContextCallback &freeCallback)
 {
     if (!userContext) {
@@ -760,12 +817,12 @@ int HardwareAccel::createHWDeviceFromUserContext(void *userContext, AVHWDeviceTy
     }
 
     // 创建硬件设备上下文
-    hwDeviceCtx_ = av_hwdevice_ctx_alloc(deviceType);
-    if (!hwDeviceCtx_) {
+    *hwDeviceCtx = av_hwdevice_ctx_alloc(deviceType);
+    if (!*hwDeviceCtx) {
         return AVERROR(ENOMEM);
     }
 
-    AVHWDeviceContext *deviceContext = (AVHWDeviceContext *)hwDeviceCtx_->data;
+    AVHWDeviceContext *deviceContext = (AVHWDeviceContext *)(*hwDeviceCtx)->data;
 
     switch (deviceType) {
 #ifdef D3D11VA_AVAILABLE
@@ -823,7 +880,8 @@ int HardwareAccel::createHWDeviceFromUserContext(void *userContext, AVHWDeviceTy
         }
 #endif
         default:
-            av_buffer_unref(&hwDeviceCtx_);
+            av_buffer_unref(hwDeviceCtx);
+            hwDeviceCtx = nullptr;
             return AVERROR(ENOSYS);
     }
 
@@ -835,13 +893,92 @@ int HardwareAccel::createHWDeviceFromUserContext(void *userContext, AVHWDeviceTy
     }
 
     // 初始化硬件设备上下文
-    int ret = av_hwdevice_ctx_init(hwDeviceCtx_);
+    int ret = av_hwdevice_ctx_init(*hwDeviceCtx);
     if (ret < 0) {
-        av_buffer_unref(&hwDeviceCtx_);
+        av_buffer_unref(hwDeviceCtx);
+        hwDeviceCtx = nullptr;
         return ret;
     }
 
     return 0;
+}
+
+int HardwareAccel::tryDerivedHwContext(AVHWDeviceType deviceType, AVHWDeviceType backendDeviceType,
+                                       const char *deviceName,
+                                       const CreateHWContextCallback &createCallback,
+                                       const FreeHWContextCallback &freeCallback)
+{
+    // 先释放已有的派生硬件上下文
+    if (hwChildDeviceCtx_) {
+        av_buffer_unref(&hwChildDeviceCtx_);
+        hwChildDeviceCtx_ = nullptr;
+    }
+
+    int ret = -1;
+
+    if (createCallback) {
+        // 尝试通过用户回调获取派生硬件设备的上下文
+        void *userHwContext = createCallback(fromAVHWDeviceType(backendDeviceType));
+        if (userHwContext && validateUserHWContext(userHwContext, backendDeviceType)) {
+            // 从用户提供的硬件上下文创建FFmpeg的hwdevice_ctx
+            ret = createHWDeviceFromUserContext(userHwContext, backendDeviceType,
+                                                &hwChildDeviceCtx_, freeCallback);
+        }
+
+        if (ret < 0) {
+            LOG_WARN(
+                "Failed to create FFmpeg hwdevice_ctx from user context, falling back to use "
+                "ffmpeg  creation! Error: {}",
+                utils::avErr2Str(ret));
+        }
+    }
+
+    if (ret < 0) {
+        // 使用默认方式创建
+        ret = av_hwdevice_ctx_create(&hwChildDeviceCtx_, backendDeviceType, deviceName, nullptr, 0);
+        if (ret < 0) {
+            LOG_WARN("Failed to create derived context by ffmpeg creation! Error: {}",
+                     utils::avErr2Str(ret));
+            return ret;
+        }
+    }
+
+    // 从派生的硬件上下文创建FFmpeg的hwdevice_ctx
+    ret = av_hwdevice_ctx_create_derived(&hwDeviceCtx_, deviceType, hwChildDeviceCtx_, 0);
+
+    if (ret < 0) {
+        LOG_WARN(
+            "Failed to create FFmpeg hwdevice_ctx from derived context, falling back to "
+            "default creation! Error: {}",
+            utils::avErr2Str(ret));
+        return ret;
+    }
+
+    // 初始化硬件设备上下文
+    ret = av_hwdevice_ctx_init(hwDeviceCtx_);
+    if (ret < 0) {
+        clearHwCtx();
+        LOG_WARN(
+            "Failed to init FFmpeg hwdevice_ctx from derived context, falling back to "
+            "default creation! Error: {}",
+            utils::avErr2Str(ret));
+        return ret;
+    }
+
+    return ret;
+}
+
+void HardwareAccel::clearHwCtx()
+{
+    if (hwChildDeviceCtx_) {
+        av_buffer_unref(&hwChildDeviceCtx_);
+        hwChildDeviceCtx_ = nullptr;
+    }
+
+    if (hwDeviceCtx_) {
+        av_buffer_unref(&hwDeviceCtx_);
+        hwDeviceCtx_ = nullptr;
+    }
 }
 
 AVPixelFormat HardwareAccel::getHWPixelFormatForDevice(AVHWDeviceType deviceType)
@@ -857,12 +994,18 @@ AVPixelFormat HardwareAccel::getHWPixelFormatForDevice(AVHWDeviceType deviceType
             return AV_PIX_FMT_VAAPI;
         case AV_HWDEVICE_TYPE_VDPAU:
             return AV_PIX_FMT_VDPAU;
+#ifdef QSV_AVAILABLE
         case AV_HWDEVICE_TYPE_QSV:
             return AV_PIX_FMT_QSV;
+#endif
         case AV_HWDEVICE_TYPE_VIDEOTOOLBOX:
             return AV_PIX_FMT_VIDEOTOOLBOX;
         case AV_HWDEVICE_TYPE_VULKAN:
             return AV_PIX_FMT_VULKAN;
+#ifdef AMF_AVAILABLE
+        case AV_HWDEVICE_TYPE_AMF:
+            return AV_PIX_FMT_AMF_SURFACE;
+#endif
         default:
             return AV_PIX_FMT_NONE;
     }
@@ -879,11 +1022,11 @@ HardwareAccelFactory &HardwareAccelFactory::getInstance()
 }
 
 std::shared_ptr<HardwareAccel> HardwareAccelFactory::createHardwareAccel(
-    HWAccelType type, int deviceIndex, const CreateHWContextCallback &createCallback,
-    const FreeHWContextCallback &freeCallback)
+    HWAccelType type, HWAccelType backendType, int deviceIndex,
+    const CreateHWContextCallback &createCallback, const FreeHWContextCallback &freeCallback)
 {
     auto hwAccel = std::make_shared<HardwareAccel>();
-    if (hwAccel->init(type, deviceIndex, createCallback, freeCallback)) {
+    if (hwAccel->init(type, backendType, deviceIndex, createCallback, freeCallback)) {
         return hwAccel;
     }
     return nullptr;

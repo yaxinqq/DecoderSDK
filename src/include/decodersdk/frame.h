@@ -76,6 +76,11 @@ public:
      * @return SEI数据组
      */
     std::vector<UserSEIData> userSEIDataList() const;
+    /**
+     * @brief 获得解码后端硬件类型，仅QSV和AMF支持，其它类型会返回HWAccelType::kNone
+     * @return HWAccelType 解码后端硬件类型
+     */
+    HWAccelType backendHwType() const;
 
     /**
      * @brief 获得图像宽度

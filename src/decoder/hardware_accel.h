@@ -40,12 +40,14 @@ public:
     /**
      * @brief 初始化硬件加速
      * @param type 硬件加速类型
+     * @param backendType 后端硬件加速类型（仅QSV和AMF使用此参数，且仅Windows上生效）
      * @param deviceIndex 设备索引
      * @param createCallback 创建硬件上下文的回调
      * @param freeCallback 释放硬件上下文的回调
      * @return 是否初始化成功
      */
-    bool init(HWAccelType type = HWAccelType::kAuto, int deviceIndex = 0,
+    bool init(HWAccelType type = HWAccelType::kAuto,
+              HWAccelType backendType = HWAccelType::kD3d11va, int deviceIndex = 0,
               const CreateHWContextCallback &createCallback = nullptr,
               const FreeHWContextCallback &freeCallback = nullptr);
 
@@ -79,6 +81,12 @@ public:
     {
         return type_;
     }
+
+    /**
+     * @brief 获取派生的硬件后端类型（仅QSV和AMF有效）
+     * @return 硬件后端类型，若没有硬件后端则返回HWAccelType::kNone
+     */
+    HWAccelType getBackendType() const;
 
     /**
      * @brief 获取硬件像素格式
@@ -179,12 +187,13 @@ private:
     /**
      * @brief 初始化硬件设备
      * @param deviceType 设备类型，可能会被修改，vulkan会有回退机制
+     * @param backendDeviceType 后端硬件设备类型（仅QSV和AMF使用此参数，且仅Windows上生效）
      * @param deviceIndex 设备索引
      * @param createCallback 创建硬件上下文的回调
      * @param freeCallback 销毁硬件上下文的回调
      * @return 是否初始化成功
      */
-    bool initHWDevice(AVHWDeviceType &deviceType, int deviceIndex,
+    bool initHWDevice(AVHWDeviceType &deviceType, AVHWDeviceType backendDeviceType, int deviceIndex,
                       const CreateHWContextCallback &createCallback = nullptr,
                       const FreeHWContextCallback &freeCallback = nullptr);
 
@@ -213,11 +222,30 @@ private:
      * @brief 从用户上下文创建FFmpeg的hwdevice_ctx
      * @param userContext 用户提供的硬件上下文
      * @param deviceType 硬件设备类型
+     * @param hwDeviceCtx 输出的硬件设备上下文
      * @param freeCallback 销毁硬件上下文的回调，会在AVHWDeviceContext的free中调用
      * @return 创建结果，0表示成功，负值表示错误
      */
     int createHWDeviceFromUserContext(void *userContext, AVHWDeviceType deviceType,
+                                      AVBufferRef **hwDeviceCtx,
                                       const FreeHWContextCallback &freeCallback = nullptr);
+
+    /**
+     * @brief 尝试从用户上下文创建派生的硬件上下文
+     * @param deviceType 硬件设备类型
+     * @param backendDeviceType 后端硬件设备类型（仅QSV和AMF使用此参数，且仅Windows上生效）
+     * @param createCallback 创建硬件上下文的回调
+     * @param freeCallback 销毁硬件上下文的回调，会在AVHWDeviceContext的free中调用
+     * @return 创建结果，0表示成功，负值表示错误
+     */
+    int tryDerivedHwContext(AVHWDeviceType deviceType, AVHWDeviceType backendDeviceType,
+                            const char *deviceName, const CreateHWContextCallback &createCallback,
+                            const FreeHWContextCallback &freeCallback = nullptr);
+
+    /**
+     * @brief 清除硬件上下文
+     */
+    void clearHwCtx();
 
     /**
      * @brief 获取硬件像素格式
@@ -234,6 +262,8 @@ private:
     bool isUserContext_;       // 是否是用户传进来的硬件设备上下文
     int deviceIndex_;          // 设备索引
     std::mutex mutex_;         // 互斥锁
+
+    AVBufferRef *hwChildDeviceCtx_; // 用于派生的硬件上下文（QSV和AMF使用）
 
     // 静态成员，用于存储硬件加速上下文
     static std::map<AVCodecContext *, HardwareAccel *> hwAccelMap_;
@@ -254,14 +284,15 @@ public:
     /**
      * @brief 创建硬件加速上下文
      * @param type 硬件加速类型
+     * @param backendType 后端硬件加速类型（仅QSV和AMF使用此参数，且仅Windows上生效）
      * @param deviceIndex 设备索引
      * @param createCallback 创建硬件上下文的回调
      * @param freeCallback 销毁硬件上下文的回调
      * @return 硬件加速上下文指针
      */
     std::shared_ptr<HardwareAccel> createHardwareAccel(
-        HWAccelType type = HWAccelType::kAuto, int deviceIndex = 0,
-        const CreateHWContextCallback &createCallback = nullptr,
+        HWAccelType type = HWAccelType::kAuto, HWAccelType backendType = HWAccelType::kD3d11va,
+        int deviceIndex = 0, const CreateHWContextCallback &createCallback = nullptr,
         const FreeHWContextCallback &freeCallback = nullptr);
 
     /**

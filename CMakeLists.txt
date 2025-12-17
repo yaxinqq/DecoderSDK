@@ -227,6 +227,10 @@ if(NOT DECODER_SDK_IS_MAIN_PROJECT)
     set(DECODERSDK_DEPENDENCY_DIR ${FFMPEG_BIN_DIR} PARENT_SCOPE)
 endif()
 
+# 检测FFmpeg版本信息
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/common_utils.cmake)
+detect_ffmpeg_version()
+
 # 查找和配置各种硬件解码支持
 set(CUDA_FOUND FALSE)
 set(D3D11VA_FOUND FALSE)
@@ -236,6 +240,7 @@ set(VDPAU_FOUND FALSE)
 set(OPENMAX_FOUND FALSE)
 set(VIDEOTOOLBOX_FOUND FALSE)
 set(QSV_FOUND FALSE)
+set(AMF_FOUND FALSE)
 
 set(VULKAN_FOUND TRUE)
 add_definitions(-DVULKAN_AVAILABLE)
@@ -272,11 +277,27 @@ if(WIN32)
     add_definitions(-DDXVA2_AVAILABLE)
     message(STATUS "DXVA2 hardware acceleration enabled")
     
-    # QSV支持 Windows默认支持，只需要头文件即可正常工作
-    set(QSV_FOUND TRUE)
-    add_definitions(-DQSV_AVAILABLE)
-    set(QSV_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/external/vpl/include)
-    message(STATUS "QSV hardware acceleration enabled")
+    # QSV支持 依赖的FFmpeg版本大于等于5.0
+    if(FFMPEG_AVUTIL_VERSION_MAJOR GREATER_EQUAL 57)
+        set(QSV_FOUND TRUE)
+        add_definitions(-DQSV_AVAILABLE)
+        set(QSV_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/external/vpl/include)
+        message(STATUS "QSV hardware acceleration enabled")
+    else()
+        message(WARNING "FFmpeg version ${FFMPEG_AVUTIL_VERSION_STRING} is too old. QSV features will be disabled.")
+        set(QSV_FOUND FALSE)
+    endif()
+
+    # AMF支持 依赖的FFmpeg版本大于等于8.0
+    if(FFMPEG_AVUTIL_VERSION_MAJOR GREATER_EQUAL 60)
+        set(AMF_FOUND TRUE)
+        add_definitions(-DAMF_AVAILABLE)
+        set(AMF_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/external/amf/include)
+        message(STATUS "AMF hardware acceleration enabled")
+    else()
+        message(WARNING "FFmpeg version ${FFMPEG_AVUTIL_VERSION_STRING} is too old. AMF features will be disabled.")
+        set(AMF_FOUND FALSE)
+    endif()
     
 elseif(UNIX AND NOT APPLE)
     # Linux平台硬件解码支持
@@ -428,6 +449,12 @@ else()
     message(STATUS "  - QSV: Disabled")
 endif()
 
+if(AMF_FOUND)
+    message(STATUS "  - AMF: Enabled")
+else()
+    message(STATUS "  - AMF: Disabled")
+endif()
+
 # 添加子项目
 # src
 add_subdirectory(src)
@@ -449,15 +476,15 @@ if(DECODER_SDK_IS_MAIN_PROJECT)
     include(CMakePackageConfigHelpers)
     
     configure_package_config_file(
-        "${CMAKE_CURRENT_SOURCE_DIR}/cmake/DecoderSDKConfig.cmake.in"
-        "${CMAKE_BINARY_DIR}/DecoderSDKConfig.cmake"
+        "${CMAKE_CURRENT_SOURCE_DIR}/cmake/decoder_sdk_config.cmake.in"
+        "${CMAKE_BINARY_DIR}/decoder_sdk_config.cmake"
         INSTALL_DESTINATION lib/cmake/DecoderSDK
         PATH_VARS CMAKE_INSTALL_PREFIX
     )
 
     # 安装配置文件
     install(FILES
-        "${CMAKE_BINARY_DIR}/DecoderSDKConfig.cmake"
+        "${CMAKE_BINARY_DIR}/decoder_sdk_config.cmake"
         DESTINATION lib/cmake/DecoderSDK
     )
 

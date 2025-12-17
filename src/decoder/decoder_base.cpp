@@ -329,11 +329,18 @@ bool DecoderBase::openInternal()
     const auto hwType = initHwAccelContext();
 
     const AVCodec *codec = avcodec_find_decoder(stream_->codecpar->codec_id);
-    // 如果当前的硬件加速上下文是qsv，则需要重新查找codec
+    // 如果当前的硬件加速上下文是qsv或是amf，则需要重新查找codec
     switch (hwType) {
+#ifdef QSV_AVAILABLE
         case HWAccelType::kQsv:
             codec = avcodec_find_decoder_by_name(fmt::format("{}_qsv", codec->name).c_str());
             break;
+#endif
+#ifdef AMF_AVAILABLE
+        case HWAccelType::kAmf:
+            codec = avcodec_find_decoder_by_name(fmt::format("{}_amf", codec->name).c_str());
+            break;
+#endif
         default:
             break;
     }

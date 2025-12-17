@@ -151,6 +151,11 @@ if (QSV_FOUND)
     target_include_directories(${PROJECT_NAME} PRIVATE ${QSV_INCLUDE_DIR})
 endif()
 
+# 如果AMF可用，添加AMF包含目录
+if (AMF_FOUND)
+    target_include_directories(${PROJECT_NAME} PRIVATE ${AMF_INCLUDE_DIR})
+endif()
+
 # 如果VAAPI可用，添加VAAPI包含目录
 if(VAAPI_FOUND)
     target_include_directories(${PROJECT_NAME} PRIVATE ${LIBVA_INCLUDE_DIR})
@@ -282,7 +287,7 @@ target_compile_definitions(${PROJECT_NAME}
 )
 
 # 引入安装函数
-include(${CMAKE_CURRENT_SOURCE_DIR}/../cmake/DecoderSDKInstall.cmake)
+include(${CMAKE_CURRENT_SOURCE_DIR}/../cmake/decoder_sdk_install.cmake)
 
 # 设置子项目安装路径
 if(NOT DECODER_SDK_IS_MAIN_PROJECT)
@@ -313,12 +318,12 @@ if(DECODER_SDK_IS_MAIN_PROJECT)
     # 生成和安装版本文件
     include(CMakePackageConfigHelpers)
     write_basic_package_version_file(
-        "${CMAKE_BINARY_DIR}/DecoderSDKConfigVersion.cmake"
+        "${CMAKE_BINARY_DIR}/decoder_sdk_config_version.cmake"
         VERSION "${DECODER_SDK_VERSION_MAJOR}.${DECODER_SDK_VERSION_MINOR}.${DECODER_SDK_VERSION_PATCH}"
         COMPATIBILITY SameMajorVersion
     )
     install(FILES
-        "${CMAKE_BINARY_DIR}/DecoderSDKConfigVersion.cmake"
+        "${CMAKE_BINARY_DIR}/decoder_sdk_config_version.cmake"
         DESTINATION lib/cmake/DecoderSDK
     )
 else()
