@@ -41,6 +41,52 @@ const char *fsrc = R"(
         gl_FragColor = texture2D(rgbTexture, textureOut);
     }
 )";
+
+// 根据纹理描述设置视频处理器颜色空间参数
+void setColorSpaceFromFormat(DXGI_FORMAT format, bool isInput,
+                             D3D11_VIDEO_PROCESSOR_COLOR_SPACE &colorSpace)
+{
+    // 清零
+    memset(&colorSpace, 0, sizeof(colorSpace));
+    colorSpace.Usage = isInput ? 1 : 0; // 1 用于视频处理； 0用于播放
+
+    switch (format) {
+        // 常见YUV格式，BT.709标准（高清电视）
+        case DXGI_FORMAT_NV12:
+        case DXGI_FORMAT_P010:
+        case DXGI_FORMAT_YUY2:
+        case DXGI_FORMAT_Y210:
+        case DXGI_FORMAT_Y216:
+        case DXGI_FORMAT_AYUV:
+            colorSpace.YCbCr_Matrix = 1;
+            colorSpace.Nominal_Range = D3D11_VIDEO_PROCESSOR_NOMINAL_RANGE_16_235;
+            colorSpace.YCbCr_xvYCC = FALSE;
+            break;
+
+        // 标清电视通常用BT.601，视情况可判断
+        case DXGI_FORMAT_NV11:
+            colorSpace.YCbCr_Matrix = 0;
+            colorSpace.Nominal_Range = D3D11_VIDEO_PROCESSOR_NOMINAL_RANGE_16_235;
+            colorSpace.YCbCr_xvYCC = FALSE;
+            break;
+
+        // RGB格式
+        case DXGI_FORMAT_R8G8B8A8_UNORM:
+        case DXGI_FORMAT_B8G8R8A8_UNORM:
+        case DXGI_FORMAT_R10G10B10A2_UNORM:
+        case DXGI_FORMAT_R16G16B16A16_FLOAT:
+            colorSpace.RGB_Range = D3D11_VIDEO_PROCESSOR_NOMINAL_RANGE_0_255;
+            colorSpace.Nominal_Range = D3D11_VIDEO_PROCESSOR_NOMINAL_RANGE_0_255;
+            break;
+
+        default:
+            // 默认设置
+            colorSpace.YCbCr_Matrix = 1;
+            colorSpace.Nominal_Range = D3D11_VIDEO_PROCESSOR_NOMINAL_RANGE_16_235;
+            colorSpace.YCbCr_xvYCC = FALSE;
+            break;
+    }
+}
 } // namespace
 
 Nv12Render_D3d11va::Nv12Render_D3d11va() : VideoRender()
@@ -111,6 +157,14 @@ bool Nv12Render_D3d11va::initInteropsResource(const decoder_sdk::Frame &frame)
         if (mfxSurface) {
             sourceTexture = reinterpret_cast<ID3D11Texture2D *>(
                 reinterpret_cast<mfxHDLPair *>(mfxSurface->Data.MemId)->first);
+        }
+    }
+#endif
+#ifdef AMF_AVAILABLE
+    else if (curPixelForamt == decoder_sdk::ImageFormat::kAmf) {
+        auto *const amfSurface = reinterpret_cast<amf::AMFSurface *>(frame.data(0));
+        if (amfSurface) {
+            sourceTexture = amf_utils::getPackedSurfaceDX11(amfSurface);
         }
     }
 #endif
@@ -288,6 +342,7 @@ void Nv12Render_D3d11va::cleanup()
 {
     // 确保WGL对象正确注销
     if (wglTextureHandle_ && wglD3DDevice_.isValid()) {
+        wglD3DDevice_.wglDXUnlockObjectsNV(1, &wglTextureHandle_);
         if (!wglD3DDevice_.wglDXUnregisterObjectNV(wglTextureHandle_)) {
             qWarning() << QStringLiteral("[Nv12Render_D3d11va] Failed to unregister WGL object!");
         }
@@ -367,6 +422,14 @@ bool Nv12Render_D3d11va::processNV12ToRGB(const decoder_sdk::Frame &frame)
         }
     }
 #endif
+#ifdef AMF_AVAILABLE
+    else if (curPixelForamt == decoder_sdk::ImageFormat::kAmf) {
+        auto *const amfSurface = reinterpret_cast<amf::AMFSurface *>(frame.data(0));
+        if (amfSurface) {
+            sourceTexture = amf_utils::getPackedSurfaceDX11(amfSurface);
+        }
+    }
+#endif
 
     if (!sourceTexture || !videoProcessor_ || !videoContext_) {
         qWarning() << QStringLiteral("[Nv12Render_D3d11va] Missing required resources!");
@@ -411,43 +474,27 @@ bool Nv12Render_D3d11va::processNV12ToRGB(const decoder_sdk::Frame &frame)
         }
     }
 
-    // 设置颜色空间
-    D3D11_VIDEO_PROCESSOR_COLOR_SPACE inputColorSpace = {};
-    inputColorSpace.YCbCr_Matrix = 1; // BT.709
-    inputColorSpace.YCbCr_xvYCC = 0;
-    inputColorSpace.Nominal_Range = D3D11_VIDEO_PROCESSOR_NOMINAL_RANGE_16_235;
-    inputColorSpace.Usage = 0; // 视频内容
-
-    D3D11_VIDEO_PROCESSOR_COLOR_SPACE outputColorSpace = {};
-    outputColorSpace.YCbCr_Matrix = 0; // RGB矩阵
-    outputColorSpace.RGB_Range = D3D11_VIDEO_PROCESSOR_NOMINAL_RANGE_0_255;
-    outputColorSpace.Nominal_Range = D3D11_VIDEO_PROCESSOR_NOMINAL_RANGE_0_255;
-    outputColorSpace.Usage = 0; // 视频内容
-
-    videoContext_->VideoProcessorSetStreamColorSpace(videoProcessor_.Get(), 0, &inputColorSpace);
-    videoContext_->VideoProcessorSetOutputColorSpace(videoProcessor_.Get(), &outputColorSpace);
-
-    // 添加源矩形和目标矩形设置
     // 获取源纹理描述
     D3D11_TEXTURE2D_DESC sourceDesc;
     entry.inputTexture->GetDesc(&sourceDesc);
 
-    // 获取输出纹理描述
-    D3D11_TEXTURE2D_DESC outputDesc;
-    outputRGBTexture_->GetDesc(&outputDesc);
+    // 设置颜色空间
+    if (sourceDesc.Format != prevInputFormat_) {
+        D3D11_VIDEO_PROCESSOR_COLOR_SPACE inputColorSpace = {};
+        setColorSpaceFromFormat(sourceDesc.Format, true, inputColorSpace);
+        videoContext_->VideoProcessorSetStreamColorSpace(videoProcessor_.Get(), 0,
+                                                         &inputColorSpace);
+        prevInputFormat_ = sourceDesc.Format;
+    }
 
     // 设置源矩形（实际视频内容区域）
-    RECT sourceRect = {
-        0, 0,
-        static_cast<LONG>(frame.width()), // 使用实际视频宽度
-        static_cast<LONG>(frame.height()) // 使用实际视频高度
-    };
-    videoContext_->VideoProcessorSetStreamSourceRect(videoProcessor_.Get(), 0, TRUE, &sourceRect);
-
-    // 设置目标矩形（输出纹理区域）
-    RECT destRect = {0, 0, static_cast<LONG>(outputDesc.Width),
-                     static_cast<LONG>(outputDesc.Height)};
-    videoContext_->VideoProcessorSetStreamDestRect(videoProcessor_.Get(), 0, TRUE, &destRect);
+    if (sourceDesc.Width != prevInputRect_.right || sourceDesc.Height != prevInputRect_.bottom) {
+        RECT sourceRect = {0, 0, static_cast<LONG>(sourceDesc.Width),
+                           static_cast<LONG>(sourceDesc.Height)};
+        videoContext_->VideoProcessorSetStreamSourceRect(videoProcessor_.Get(), 0, TRUE,
+                                                         &sourceRect);
+        prevInputRect_ = sourceRect;
+    }
 
     // 执行颜色空间转换
     D3D11_VIDEO_PROCESSOR_STREAM stream = {};
@@ -504,6 +551,15 @@ bool Nv12Render_D3d11va::registerTextureWithOpenGL(int width, int height)
                    << Qt::hex << hr;
         return false;
     }
+
+    // 设置输出颜色空间
+    D3D11_VIDEO_PROCESSOR_COLOR_SPACE outputColorSpace;
+    setColorSpaceFromFormat(DXGI_FORMAT_B8G8R8A8_UNORM, false, outputColorSpace);
+    videoContext_->VideoProcessorSetOutputColorSpace(videoProcessor_.Get(), &outputColorSpace);
+
+    // 设置目标矩形（输出纹理区域）
+    RECT destRect = {0, 0, width, height};
+    videoContext_->VideoProcessorSetStreamDestRect(videoProcessor_.Get(), 0, TRUE, &destRect);
 
     // 获取共享句柄
     ComPtr<IDXGIResource> dxgiResource;

@@ -103,6 +103,14 @@ bool Nv12Render_Dxva2::initInteropsResource(const decoder_sdk::Frame &frame)
         }
     }
 #endif
+#ifdef AMF_AVAILABLE
+    else if (curPixelForamt == decoder_sdk::ImageFormat::kAmf) {
+        auto *const amfSurface = reinterpret_cast<amf::AMFSurface *>(frame.data(0));
+        if (amfSurface) {
+            sourceSurface = amf_utils::getPackedSurfaceDX9(amfSurface);
+        }
+    }
+#endif
 
     if (!sourceSurface) {
         qWarning() << QStringLiteral("[Nv12Render_Dxva2] Missing required resources!");
@@ -161,6 +169,14 @@ bool Nv12Render_Dxva2::renderFrame(const decoder_sdk::Frame &frame)
         if (mfxSurface) {
             sourceSurface = reinterpret_cast<LPDIRECT3DSURFACE9>(
                 reinterpret_cast<mfxHDLPair *>(mfxSurface->Data.MemId)->first);
+        }
+    }
+#endif
+#ifdef AMF_AVAILABLE
+    else if (curPixelForamt == decoder_sdk::ImageFormat::kAmf) {
+        auto *const amfSurface = reinterpret_cast<amf::AMFSurface *>(frame.data(0));
+        if (amfSurface) {
+            sourceSurface = amf_utils::getPackedSurfaceDX9(amfSurface);
         }
     }
 #endif
@@ -223,6 +239,7 @@ bool Nv12Render_Dxva2::checkWGLInterop()
 void Nv12Render_Dxva2::cleanup()
 {
     if (wglTextureHandle_ && wglD3DDevice_.isValid()) {
+        wglD3DDevice_.wglDXUnlockObjectsNV(1, &wglTextureHandle_);
         wglD3DDevice_.wglDXUnregisterObjectNV(wglTextureHandle_);
         wglTextureHandle_ = nullptr;
     }

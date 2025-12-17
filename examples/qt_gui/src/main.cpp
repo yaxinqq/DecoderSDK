@@ -11,7 +11,6 @@ __declspec(dllexport) int AmdPowerXpressRequestHighPerformance = 1; // AMD
 }
 #endif
 
-
 int main(int argc, char *argv[])
 {
     // 禁用高 DPI 缩放

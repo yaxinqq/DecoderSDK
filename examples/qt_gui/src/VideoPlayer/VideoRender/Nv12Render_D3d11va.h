@@ -134,6 +134,10 @@ private:
     // 输入NV12纹理
     ComPtr<ID3D11Texture2D> inputNV12Texture_ = nullptr;
     ComPtr<ID3D11VideoProcessorInputView> inputView_ = nullptr;
+    // 前一次输入纹理的格式
+    DXGI_FORMAT prevInputFormat_ = DXGI_FORMAT_UNKNOWN;
+    // 前一次输入纹理的矩形区域
+    RECT prevInputRect_ = {0, 0, 0, 0};
 
     // 输出RGB纹理
     ComPtr<ID3D11Texture2D> outputRGBTexture_ = nullptr;

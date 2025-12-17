@@ -110,10 +110,6 @@ void clearGPUResource()
 #ifdef DXVA2_AVAILABLE
     dxva2_utils::shutdown();
 #endif
-
-#ifdef VULKAN_AVAILABLE
-    vulkan_utils::shutdown();
-#endif
 }
 
 #ifdef CUDA_AVAILABLE

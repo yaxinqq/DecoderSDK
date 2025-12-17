@@ -170,3 +170,41 @@ decoder_sdk::VulkanDeviceContext *getDeviceContext();
 void shutdown();
 } // namespace vulkan_utils
 #endif
+
+#ifdef AMF_AVAILABLE
+#include "AMF/Core/Surface.h"
+namespace amf_utils {
+template <typename Native_T>
+Native_T *getNativePackedSurface(amf::AMFSurface *pSurface, amf::AMF_MEMORY_TYPE memoryType)
+{
+    if (pSurface == nullptr) {
+        return nullptr;
+    }
+
+    if (memoryType != amf::AMF_MEMORY_UNKNOWN) {
+        AMF_RESULT res = pSurface->Convert(memoryType);
+        if (res != AMF_OK) {
+            return nullptr;
+        }
+    }
+
+    amf::AMFPlane *pPlane = pSurface->GetPlane(amf::AMF_PLANE_PACKED);
+    if (pPlane == nullptr) {
+        return nullptr;
+    }
+
+    Native_T *pNativeSurface = (Native_T *)pPlane->GetNative();
+    return pNativeSurface;
+}
+
+inline IDirect3DSurface9 *getPackedSurfaceDX9(amf::AMFSurface *pSurface)
+{
+    return getNativePackedSurface<IDirect3DSurface9>(pSurface, amf::AMF_MEMORY_DX9);
+}
+
+inline ID3D11Texture2D *getPackedSurfaceDX11(amf::AMFSurface *pSurface)
+{
+    return getNativePackedSurface<ID3D11Texture2D>(pSurface, amf::AMF_MEMORY_DX11);
+}
+} // namespace amf_utils
+#endif

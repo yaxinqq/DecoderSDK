@@ -45,12 +45,16 @@ void DecoderThread::run()
             // 视频，需要验证视频帧有效，且（是关键帧 或 decodeKeyFrame_为true）
             std::shared_ptr pFrame = std::make_shared<decoder_sdk::Frame>();
             if (pDecoder_ && pDecoder_->controller_.videoQueue().tryPop(*pFrame) &&
-                pFrame->isValid() && (pFrame->keyFrame() == 1 || decodeKeyFrame_)) {
-                emit pDecoder_->videoFrameReady(pFrame);
-                if (!decodeKeyFrame_)
-                    decodeKeyFrame_ = true;
+                pFrame->isValid()) {
+                // AMF硬解，暂不检测关键帧
+                if (pFrame->pixelFormat() == decoder_sdk::ImageFormat::kAmf ||
+                    (pFrame->keyFrame() == 1 || decodeKeyFrame_)) {
+                    emit pDecoder_->videoFrameReady(pFrame);
+                    if (!decodeKeyFrame_)
+                        decodeKeyFrame_ = true;
 
-                shouldSleep = false;
+                    shouldSleep = false;
+                }
             }
         }
 

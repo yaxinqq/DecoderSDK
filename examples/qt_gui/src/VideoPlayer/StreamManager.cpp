@@ -291,6 +291,7 @@ void StreamManager::initDefaultDecoderConfig()
 {
     defaultDecoderConfig_.enableFrameRateControl = true;
     defaultDecoderConfig_.hwAccelType = decoder_sdk::HWAccelType::kAuto;
+    defaultDecoderConfig_.backendHwAccelType = decoder_sdk::HWAccelType::kD3d11va;
     defaultDecoderConfig_.swVideoOutFormat = decoder_sdk::ImageFormat::kYUV420P;
     defaultDecoderConfig_.requireFrameInSystemMemory = false;
     defaultDecoderConfig_.decodeMediaType = decoder_sdk::Config::DecodeMediaType::kAll;

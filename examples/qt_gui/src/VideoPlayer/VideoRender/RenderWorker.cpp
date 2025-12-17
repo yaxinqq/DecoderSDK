@@ -25,6 +25,10 @@
 #include "mfxstructures.h"
 #endif
 
+#ifdef AMF_AVAILABLE
+#include "AMF/Core/Surface.h"
+#endif
+
 #include <QDebug>
 #include <QOpenGLContext>
 #include <QThread>
@@ -244,27 +248,31 @@ QSharedPointer<VideoRender> RenderWorker::createRenderer(
         case decoder_sdk::ImageFormat::kVulkan:
             return QSharedPointer<VideoRender>(new Nv12Render_Vulkan);
 #endif
+#ifdef QSV_AVAILABLE
         case decoder_sdk::ImageFormat::kQsv: {
 #ifdef Q_OS_WIN
-            // 判断当前的解码后端是D3D11Va还是Dxva2
-            auto *const mfxSurface = reinterpret_cast<mfxFrameSurface1 *>(videoFrame->data(3));
-            // 验证是否为D3D11的Texture
-            ID3D11Texture2D *sourceTexture = reinterpret_cast<ID3D11Texture2D *>(
-                reinterpret_cast<mfxHDLPair *>(mfxSurface->Data.MemId)->first);
-
-            // COM 层验证
-            ComPtr<ID3D11Texture2D> verifiedTexture;
-            const auto hr =
-                sourceTexture->QueryInterface(__uuidof(ID3D11Texture2D), (void **)&verifiedTexture);
-            verifiedTexture.Reset();
-
-            if (SUCCEEDED(hr)) {
+            if (videoFrame->backendHwType() == decoder_sdk::HWAccelType::kD3d11va) {
                 return QSharedPointer<VideoRender>(new Nv12Render_D3d11va);
             } else {
                 return QSharedPointer<VideoRender>(new Nv12Render_Dxva2);
             }
 #else
             return QSharedPointer<VideoRender>(new Nv12Render_Vaapi(context_));
+#endif
+#endif
+        }
+#ifdef AMF_AVAILABLE
+        case decoder_sdk::ImageFormat::kAmf: {
+#ifdef Q_OS_WIN
+            // 判断当前的解码后端是D3D11Va还是Dxva2
+            if (videoFrame->backendHwType() == decoder_sdk::HWAccelType::kD3d11va) {
+                return QSharedPointer<VideoRender>(new Nv12Render_D3d11va);
+            } else {
+                return QSharedPointer<VideoRender>(new Nv12Render_Dxva2);
+            }
+#else
+            return nullptr;
+#endif
 #endif
         }
         default:
