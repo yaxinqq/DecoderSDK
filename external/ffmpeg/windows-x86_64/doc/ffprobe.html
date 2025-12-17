@@ -366,6 +366,12 @@ and the &quot;Last message repeated n times&quot; line will be omitted.
 line. This can be used as an alternative to log coloring, e.g. when dumping the
 log to file.
 </p></dd>
+<dt>&lsquo;<samp class="samp">time</samp>&rsquo;</dt>
+<dd><p>Indicates that log lines should be prefixed with time information.
+</p></dd>
+<dt>&lsquo;<samp class="samp">datetime</samp>&rsquo;</dt>
+<dd><p>Indicates that log lines should be prefixed with date and time information.
+</p></dd>
 </dl>
 <p>Flags can also be used alone by adding a &rsquo;+&rsquo;/&rsquo;-&rsquo; prefix to set/reset a single
 flag without affecting other <var class="var">flags</var> or changing <var class="var">loglevel</var>. When
@@ -693,14 +699,6 @@ stream.
 name &quot;FORMAT&quot;.
 </p>
 </dd>
-<dt><samp class="option">-show_format_entry <var class="var">name</var></samp></dt>
-<dd><p>Like <samp class="option">-show_format</samp>, but only prints the specified entry of the
-container format information, rather than all. This option may be given more
-than once, then all specified entries will be shown.
-</p>
-<p>This option is deprecated, use <code class="code">show_entries</code> instead.
-</p>
-</dd>
 <dt><samp class="option">-show_entries <var class="var">section_entries</var></samp></dt>
 <dd><p>Set list of entries to show.
 </p>
@@ -918,6 +916,20 @@ while other writers always print them. This option enables one to control this b
 Valid values are <code class="code">always</code>/<code class="code">1</code>, <code class="code">never</code>/<code class="code">0</code> and <code class="code">auto</code>/<code class="code">-1</code>.
 Default is <var class="var">auto</var>.
 </p>
+</dd>
+<dt><samp class="option">-analyze_frames</samp></dt>
+<dd><p>Analyze frames and/or their side data up to the provided read interval,
+providing additional information that may be useful at a stream level.
+Must be paired with the <samp class="option">-show_streams</samp> option or it will have no effect.
+</p>
+<p>Currently, the additional fields provided by this option when enabled are the
+<code class="code">closed_captions</code> and <code class="code">film_grain</code> fields.
+</p>
+<p>For example, to analyze the first 20 seconds and populate these fields:
+</p><div class="example">
+<pre class="example-preformatted">ffprobe -show_streams -analyze_frames -read_intervals &quot;%+20&quot; INPUT
+</pre></div>
+
 </dd>
 <dt><samp class="option">-bitexact</samp></dt>
 <dd><p>Force bitexact output, useful to produce output which is not dependent

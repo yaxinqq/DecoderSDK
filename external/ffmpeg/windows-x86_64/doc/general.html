@@ -255,7 +255,7 @@ Then pass <code class="code">--enable-libmp3lame</code> to configure to enable i
 <a name="LCEVCdec"></a>
 <h3 class="section">1.13 LCEVCdec<span class="pull-right"><a class="anchor hidden-xs" href="#LCEVCdec" aria-hidden="true">#</a> <a class="anchor hidden-xs"href="#toc-LCEVCdec" aria-hidden="true">TOC</a></span></h3>
 
-<p>FFmpeg can make use of the liblcevc_dec library for LCEVC enhacement layer
+<p>FFmpeg can make use of the liblcevc_dec library for LCEVC enhancement layer
 decoding on supported bitstreams.
 </p>
 <p>Go to <a class="url" href="https://github.com/v-novaltd/LCEVCdec">https://github.com/v-novaltd/LCEVCdec</a> and follow the instructions
@@ -662,6 +662,7 @@ library:
 <tr><td width="40%">raw AMR-NB</td><td width="10%"></td><td width="10%">X</td></tr>
 <tr><td width="40%">raw AMR-WB</td><td width="10%"></td><td width="10%">X</td></tr>
 <tr><td width="40%">raw APAC</td><td width="10%"></td><td width="10%">X</td></tr>
+<tr><td width="40%">raw APV</td><td width="10%">X</td><td width="10%">X</td></tr>
 <tr><td width="40%">raw aptX</td><td width="10%">X</td><td width="10%">X</td></tr>
 <tr><td width="40%">raw aptX HD</td><td width="10%">X</td><td width="10%">X</td></tr>
 <tr><td width="40%">raw Bonk</td><td width="10%"></td><td width="10%">X</td></tr>
@@ -674,6 +675,7 @@ library:
 <tr><td width="40%">raw E-AC-3</td><td width="10%">X</td><td width="10%">X</td></tr>
 <tr><td width="40%">raw EVC</td><td width="10%">X</td><td width="10%">X</td></tr>
 <tr><td width="40%">raw FLAC</td><td width="10%">X</td><td width="10%">X</td></tr>
+<tr><td width="40%">raw G.728</td><td width="10%"></td><td width="10%">X</td></tr>
 <tr><td width="40%">raw GSM</td><td width="10%"></td><td width="10%">X</td></tr>
 <tr><td width="40%">raw H.261</td><td width="10%">X</td><td width="10%">X</td></tr>
 <tr><td width="40%">raw H.263</td><td width="10%">X</td><td width="10%">X</td></tr>
@@ -868,6 +870,7 @@ following image formats are supported:
 <tr><td width="40%">Apple Pixlet</td><td width="10%"></td><td width="10%">X</td></tr>
 <tr><td width="40%">Apple ProRes</td><td width="10%">X</td><td width="10%">X</td><td width="40%">fourcc: apch,apcn,apcs,apco,ap4h,ap4x</td></tr>
 <tr><td width="40%">Apple QuickDraw</td><td width="10%"></td><td width="10%">X</td><td width="40%">fourcc: qdrw</td></tr>
+<tr><td width="40%">APV</td><td width="10%"></td><td width="10%">X</td></tr>
 <tr><td width="40%">Argonaut Video</td><td width="10%"></td><td width="10%">X</td><td width="40%">Used in some Argonaut games.</td></tr>
 <tr><td width="40%">Asus v1</td><td width="10%">X</td><td width="10%">X</td><td width="40%">fourcc: ASV1</td></tr>
 <tr><td width="40%">Asus v2</td><td width="10%">X</td><td width="10%">X</td><td width="40%">fourcc: ASV2</td></tr>
@@ -1011,6 +1014,7 @@ following image formats are supported:
 <tr><td width="40%">RealVideo 2.0</td><td width="10%">X</td><td width="10%">X</td></tr>
 <tr><td width="40%">RealVideo 3.0</td><td width="10%"></td><td width="10%">X</td><td width="40%">still far from ideal</td></tr>
 <tr><td width="40%">RealVideo 4.0</td><td width="10%"></td><td width="10%">X</td></tr>
+<tr><td width="40%">RealVideo 6.0</td><td width="10%"></td><td width="10%">X</td></tr>
 <tr><td width="40%">Renderware TXD (TeXture Dictionary)</td><td width="10%"></td><td width="10%">X</td><td width="40%">Texture dictionaries used by the Renderware Engine.</td></tr>
 <tr><td width="40%">RivaTuner Video</td><td width="10%"></td><td width="10%">X</td><td width="40%">fourcc: &rsquo;RTV1&rsquo;</td></tr>
 <tr><td width="40%">RL2 video</td><td width="10%"></td><td width="10%">X</td><td width="40%">used in some games by Entertainment Software Partners</td></tr>
@@ -1106,6 +1110,7 @@ following image formats are supported:
 <tr><td width="40%">ADPCM IMA Duck DK3</td><td width="10%"></td><td width="10%">X</td><td width="40%">Used in some Sega Saturn console games.</td></tr>
 <tr><td width="40%">ADPCM IMA Duck DK4</td><td width="10%"></td><td width="10%">X</td><td width="40%">Used in some Sega Saturn console games.</td></tr>
 <tr><td width="40%">ADPCM IMA Radical</td><td width="10%"></td><td width="10%">X</td></tr>
+<tr><td width="40%">ADPCM IMA Xbox</td><td width="10%"></td><td width="10%">X</td></tr>
 <tr><td width="40%">ADPCM Microsoft</td><td width="10%">X</td><td width="10%">X</td></tr>
 <tr><td width="40%">ADPCM MS IMA</td><td width="10%">X</td><td width="10%">X</td></tr>
 <tr><td width="40%">ADPCM Nintendo Gamecube AFC</td><td width="10%"></td><td width="10%">X</td></tr>
@@ -1113,6 +1118,7 @@ following image formats are supported:
 <tr><td width="40%">ADPCM Nintendo THP</td><td width="10%"></td><td width="10%">X</td></tr>
 <tr><td width="40%">ADPCM Playstation</td><td width="10%"></td><td width="10%">X</td></tr>
 <tr><td width="40%">ADPCM QT IMA</td><td width="10%">X</td><td width="10%">X</td></tr>
+<tr><td width="40%">ADPCM Sanyo</td><td width="10%"></td><td width="10%">X</td></tr>
 <tr><td width="40%">ADPCM SEGA CRI ADX</td><td width="10%">X</td><td width="10%">X</td><td width="40%">Used in Sega Dreamcast games.</td></tr>
 <tr><td width="40%">ADPCM Shockwave Flash</td><td width="10%">X</td><td width="10%">X</td></tr>
 <tr><td width="40%">ADPCM Sound Blaster Pro 2-bit</td><td width="10%"></td><td width="10%">X</td></tr>
@@ -1167,6 +1173,7 @@ following image formats are supported:
 <tr><td width="40%">FLAC (Free Lossless Audio Codec)</td><td width="10%">X</td><td width="10%">IX</td></tr>
 <tr><td width="40%">FTR Voice</td><td width="10%"></td><td width="10%">X</td></tr>
 <tr><td width="40%">G.723.1</td><td width="10%">X</td><td width="10%">X</td></tr>
+<tr><td width="40%">G.728</td><td width="10%"></td><td width="10%">X</td></tr>
 <tr><td width="40%">G.729</td><td width="10%"></td><td width="10%">X</td></tr>
 <tr><td width="40%">GSM</td><td width="10%">E</td><td width="10%">X</td><td width="40%">encoding supported through external library libgsm</td></tr>
 <tr><td width="40%">GSM Microsoft variant</td><td width="10%">E</td><td width="10%">X</td><td width="40%">encoding supported through external library libgsm</td></tr>
