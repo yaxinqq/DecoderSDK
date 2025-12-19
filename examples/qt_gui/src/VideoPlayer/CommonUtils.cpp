@@ -1783,10 +1783,10 @@ bool VulkanManager::selectPhysicalDevice()
                          .add_required_extension(VK_KHR_SAMPLER_YCBCR_CONVERSION_EXTENSION_NAME)
                          .add_required_extension(VK_KHR_BIND_MEMORY_2_EXTENSION_NAME)
                          .add_required_extension(VK_KHR_GET_MEMORY_REQUIREMENTS_2_EXTENSION_NAME)
-#ifdef _WIN32
+#if defined(Q_OS_WIN)
                          .add_required_extension(VK_KHR_EXTERNAL_MEMORY_WIN32_EXTENSION_NAME)
                          .add_required_extension(VK_KHR_EXTERNAL_SEMAPHORE_WIN32_EXTENSION_NAME)
-#elif
+#elif defined(Q_OS_LINUX)
                          .add_required_extension(VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME)
                          .add_required_extension(VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME)
 #endif

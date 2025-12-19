@@ -558,40 +558,40 @@ std::shared_ptr<VulkanFrame> Frame::lockVulkanFrame() const
     size_t count = (maxDstImages < srcImages) ? maxDstImages : srcImages;
 
     // 拷贝 VkImage 数组
-    std::memcpy(dst->img, pVkFrame->img, count * sizeof(VkImage));
+    memcpy(dst->img, pVkFrame->img, count * sizeof(VkImage));
 
     // 拷贝 tiling
     dst->tiling = pVkFrame->tiling;
 
     // 拷贝 VkDeviceMemory 数组
-    std::memcpy(dst->mem, pVkFrame->mem, count * sizeof(VkDeviceMemory));
+    memcpy(dst->mem, pVkFrame->mem, count * sizeof(VkDeviceMemory));
 
     // 拷贝 size 数组
-    std::memcpy(dst->size, pVkFrame->size, count * sizeof(size_t));
+    memcpy(dst->size, pVkFrame->size, count * sizeof(size_t));
 
     // 拷贝 flags
     dst->flags = pVkFrame->flags;
 
     // 拷贝 access 数组
-    std::memcpy(dst->access, pVkFrame->access, count * sizeof(VkAccessFlagBits));
+    memcpy(dst->access, pVkFrame->access, count * sizeof(VkAccessFlagBits));
 
     // 拷贝 layout 数组
-    std::memcpy(dst->layout, pVkFrame->layout, count * sizeof(VkImageLayout));
+    memcpy(dst->layout, pVkFrame->layout, count * sizeof(VkImageLayout));
 
     // 拷贝信号量数组
-    std::memcpy(dst->sem, pVkFrame->sem, count * sizeof(VkSemaphore));
+    memcpy(dst->sem, pVkFrame->sem, count * sizeof(VkSemaphore));
 
     // 拷贝 sem_value 数组
-    std::memcpy(dst->sem_value, pVkFrame->sem_value, count * sizeof(uint64_t));
+    memcpy(dst->sem_value, pVkFrame->sem_value, count * sizeof(uint64_t));
 
     // 拷贝 offset 数组
-    std::memcpy(dst->offset, pVkFrame->offset, count * sizeof(ptrdiff_t));
+    memcpy(dst->offset, pVkFrame->offset, count * sizeof(ptrdiff_t));
 
     // 拷贝 queue_family 数组
-    std::memcpy(dst->queue_family, pVkFrame->queue_family, count * sizeof(uint32_t));
+    memcpy(dst->queue_family, pVkFrame->queue_family, count * sizeof(uint32_t));
 
     // 拷贝 format 数组
-    std::memcpy(dst->format, vk->format, count * sizeof(VkFormat));
+    memcpy(dst->format, vk->format, count * sizeof(VkFormat));
 
     // 拷贝 nb_layers
     dst->nb_layers = vk->nb_layers;
@@ -620,37 +620,37 @@ void Frame::unlockVulkanFrame(const std::shared_ptr<VulkanFrame> &frame) const
         size_t count = (maxSrcImages < dstImages) ? maxSrcImages : dstImages;
 
         // 拷贝 VkImage 数组
-        std::memcpy(pVkFrame->img, frame->img, count * sizeof(VkImage));
+        memcpy(pVkFrame->img, frame->img, count * sizeof(VkImage));
 
         // 拷贝 tiling
         pVkFrame->tiling = frame->tiling;
 
         // 拷贝 VkDeviceMemory 数组
-        std::memcpy(pVkFrame->mem, frame->mem, count * sizeof(VkDeviceMemory));
+        memcpy(pVkFrame->mem, frame->mem, count * sizeof(VkDeviceMemory));
 
         // 拷贝 size 数组
-        std::memcpy(pVkFrame->size, frame->size, count * sizeof(size_t));
+        memcpy(pVkFrame->size, frame->size, count * sizeof(size_t));
 
         // 拷贝 flags
         pVkFrame->flags = frame->flags;
 
         // 拷贝 access 数组
-        std::memcpy(pVkFrame->access, frame->access, count * sizeof(VkAccessFlagBits));
+        memcpy(pVkFrame->access, frame->access, count * sizeof(VkAccessFlagBits));
 
         // 拷贝 layout 数组
-        std::memcpy(pVkFrame->layout, frame->layout, count * sizeof(VkImageLayout));
+        memcpy(pVkFrame->layout, frame->layout, count * sizeof(VkImageLayout));
 
         // 拷贝信号量数组
-        std::memcpy(pVkFrame->sem, frame->sem, count * sizeof(VkSemaphore));
+        memcpy(pVkFrame->sem, frame->sem, count * sizeof(VkSemaphore));
 
         // 拷贝 sem_value 数组
-        std::memcpy(pVkFrame->sem_value, frame->sem_value, count * sizeof(uint64_t));
+        memcpy(pVkFrame->sem_value, frame->sem_value, count * sizeof(uint64_t));
 
         // 拷贝 offset 数组
-        std::memcpy(pVkFrame->offset, frame->offset, count * sizeof(ptrdiff_t));
+        memcpy(pVkFrame->offset, frame->offset, count * sizeof(ptrdiff_t));
 
         // 拷贝 queue_family 数组
-        std::memcpy(pVkFrame->queue_family, frame->queue_family, count * sizeof(uint32_t));
+        memcpy(pVkFrame->queue_family, frame->queue_family, count * sizeof(uint32_t));
     }
 
     vk->unlock_frame(frames, pVkFrame);

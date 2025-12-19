@@ -606,8 +606,6 @@ bool HardwareAccel::initHWDevice(AVHWDeviceType &deviceType, AVHWDeviceType back
     char deviceName[32] = {0};
     if (deviceIndex > 0) {
         snprintf(deviceName, sizeof(deviceName), "%d", deviceIndex);
-    } else {
-        snprintf(deviceName, sizeof(deviceName), "auto");
     }
 
     // 尝试通过用户回调获取硬件设备上下文
@@ -620,10 +618,10 @@ bool HardwareAccel::initHWDevice(AVHWDeviceType &deviceType, AVHWDeviceType back
             // 如果是vulkan，且userHwContext为空或不合规，则按照DXVA2或VAAPI进行回退
             if (sdkType == HWAccelType::kVulkan &&
                 (!userHwContext || !validateUserHWContext(userHwContext, deviceType))) {
-#ifdef OS_WINDOWS
+#if defined(OS_WINDOWS)
                 sdkType = HWAccelType::kDxva2;
                 deviceType = AV_HWDEVICE_TYPE_DXVA2;
-#elif OS_LINUX
+#elif defined(OS_LINUX)
                 sdkType = HWAccelType::kVaapi;
                 deviceType = AV_HWDEVICE_TYPE_VAAPI;
 #else
@@ -700,7 +698,7 @@ AVHWDeviceType HardwareAccel::findBestHWAccelType()
     // 优先级顺序：
     // Windows: CUDA > QSV > D3D11VA > DXVA2 > Vulkan (目前暂时只有Windows和FFmpeg
     // >= 5.0时，才支持QSV) Linux: CUDA > VAAPI
-#ifdef OS_WINDOWS
+#if defined(OS_WINDOWS)
     const std::vector<AVHWDeviceType> priorityList = {
         AV_HWDEVICE_TYPE_CUDA,
 #ifdef QSV_AVAILABLE
@@ -710,7 +708,7 @@ AVHWDeviceType HardwareAccel::findBestHWAccelType()
         AV_HWDEVICE_TYPE_AMF,
 #endif
         AV_HWDEVICE_TYPE_D3D11VA, AV_HWDEVICE_TYPE_DXVA2, AV_HWDEVICE_TYPE_VULKAN};
-#elif OS_LINUX
+#elif defined(OS_LINUX)
     const std::vector<AVHWDeviceType> priorityList = {
         AV_HWDEVICE_TYPE_CUDA,
         AV_HWDEVICE_TYPE_VAAPI,
@@ -947,6 +945,7 @@ int HardwareAccel::tryDerivedHwContext(AVHWDeviceType deviceType, AVHWDeviceType
     ret = av_hwdevice_ctx_create_derived(&hwDeviceCtx_, deviceType, hwChildDeviceCtx_, 0);
 
     if (ret < 0) {
+        clearHwCtx();
         LOG_WARN(
             "Failed to create FFmpeg hwdevice_ctx from derived context, falling back to "
             "default creation! Error: {}",

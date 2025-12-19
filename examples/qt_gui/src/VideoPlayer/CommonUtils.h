@@ -150,9 +150,9 @@ bool isVAAPIAvailable();
 #endif
 
 #ifdef VULKAN_AVAILABLE
-#ifdef Q_OS_WIN
+#if defined(Q_OS_WIN)
 #define VK_USE_PLATFORM_WIN32_KHR
-#elif Q_OS_LINUX
+#elif defined(Q_OS_LINUX)
 #define VK_USE_PLATFORM_XCB_KHR
 #endif
 #include "VkBootstrap.h"

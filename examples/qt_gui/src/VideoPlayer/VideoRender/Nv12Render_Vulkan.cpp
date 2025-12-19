@@ -39,38 +39,6 @@ const char *fsrc = R"(
     }
 )";
 
-typedef void(APIENTRYP PFNGLDELETEMEMORYOBJECTSEXTPROC)(GLsizei, const GLuint *);
-typedef void(APIENTRYP PFNGLGENSEMAPHORESEXTPROC)(GLsizei n, GLuint *semaphores);
-typedef void(APIENTRYP PFNGLIMPORTSEMAPHOREWIN32HANDLEEXTPROC)(GLuint semaphore, GLenum handleType,
-                                                               HANDLE handle);
-typedef void(APIENTRYP PFNGLWAITSEMAPHOREEXTPROC)(GLuint semaphore, GLuint numBufferBarriers,
-                                                  const GLuint *buffers, GLuint numTextureBarriers,
-                                                  const GLuint *textures, const GLenum *srcLayouts);
-typedef void(APIENTRYP PFNGLCREATEMEMORYOBJECTSEXTPROC)(GLsizei n, GLuint *memoryObjects);
-typedef void(APIENTRYP PFNGLDELETEMEMORYOBJECTSEXTPROC)(GLsizei n, const GLuint *memoryObjects);
-typedef void(APIENTRYP PFNGLIMPORTMEMORYWIN32HANDLEEXTPROC)(GLuint memory, GLuint64 size,
-                                                            GLenum handleType, HANDLE handle);
-typedef void(APIENTRYP PFNGLNAMEDBUFFERSTORAGEMEMEXTPROC)(GLuint buffer, GLuint64 size,
-                                                          GLuint memory, GLuint64 offset);
-typedef void(APIENTRYP PFNGLTEXTURESTORAGE2DPROC)(GLuint texture, GLsizei levels,
-                                                  GLenum internalformat, GLsizei width,
-                                                  GLsizei height);
-typedef void(APIENTRYP PFNGLTEXTURESUBIMAGE2DPROC)(GLuint texture, GLint level, GLint xoffset,
-                                                   GLint yoffset, GLsizei width, GLsizei height,
-                                                   GLenum format, GLenum type, const void *pixels);
-typedef void(APIENTRYP PFNGLTEXTUREPARAMETERIPROC)(GLuint texture, GLenum pname, GLint param);
-typedef void(APIENTRYP PFNGLSIGNALSEMAPHOREEXTPROC)(GLuint semaphore, GLuint numBufferBarriers,
-                                                    const GLuint *buffers,
-                                                    GLuint numTextureBarriers,
-                                                    const GLuint *textures,
-                                                    const GLenum *srcLayouts);
-typedef void(APIENTRYP PFNGLCREATETEXTURESPROC)(GLenum target, GLsizei n, GLuint *textures);
-typedef void(APIENTRYP PFNGLDELETESEMAPHORESEXTPROC)(GLsizei n, const GLuint *semaphores);
-typedef void(APIENTRYP PFNGLTEXTURESTORAGEMEM2DEXTPROC)(GLuint texture, GLsizei levels,
-                                                        GLenum internalformat, GLsizei width,
-                                                        GLsizei height, GLuint memory,
-                                                        GLuint64 offset);
-
 // 全局锁
 static std::mutex g_mutex;
 
@@ -80,14 +48,20 @@ static bool g_extLoadTried = false;
 
 // 扩展函数指针
 static PFNGLGENSEMAPHORESEXTPROC glGenSemaphoresEXT = nullptr;
-static PFNGLIMPORTSEMAPHOREWIN32HANDLEEXTPROC glImportSemaphoreWin32HandleEXT = nullptr;
 static PFNGLWAITSEMAPHOREEXTPROC glWaitSemaphoreEXT = nullptr;
 static PFNGLCREATEMEMORYOBJECTSEXTPROC glCreateMemoryObjectsEXT = nullptr;
 static PFNGLDELETEMEMORYOBJECTSEXTPROC glDeleteMemoryObjectsEXT = nullptr;
-static PFNGLIMPORTMEMORYWIN32HANDLEEXTPROC glImportMemoryWin32HandleEXT = nullptr;
 static PFNGLSIGNALSEMAPHOREEXTPROC glSignalSemaphoreEXT = nullptr;
 static PFNGLDELETESEMAPHORESEXTPROC glDeleteSemaphoresEXT = nullptr;
 static PFNGLTEXTURESTORAGEMEM2DEXTPROC glTextureStorageMem2DEXT = nullptr;
+
+#if defined(Q_OS_WIN)
+static PFNGLIMPORTSEMAPHOREWIN32HANDLEEXTPROC glImportSemaphoreWin32HandleEXT = nullptr;
+static PFNGLIMPORTMEMORYWIN32HANDLEEXTPROC glImportMemoryWin32HandleEXT = nullptr;
+#elif defined(Q_OS_LINUX)
+static PFNGLIMPORTSEMAPHOREFDEXTPROC glImportSemaphoreFdEXT = nullptr;
+static PFNGLIMPORTMEMORYFDEXTPROC glImportMemoryFdEXT = nullptr;
+#endif
 
 static bool loadExtFunctions(QOpenGLContext *ctx)
 {
@@ -110,7 +84,7 @@ static bool loadExtFunctions(QOpenGLContext *ctx)
 
     auto loadFunc = [&](auto &func, const char *name) {
         if (!func) {
-            void *addr = ctx->getProcAddress(name);
+            auto addr = ctx->getProcAddress(name);
 
             // 部分驱动用 no-underscore，大部分是正确大小写
             if (!addr) {
@@ -134,14 +108,20 @@ static bool loadExtFunctions(QOpenGLContext *ctx)
     bool ok = true;
 
     ok &= loadFunc(glGenSemaphoresEXT, "glGenSemaphoresEXT");
-    ok &= loadFunc(glImportSemaphoreWin32HandleEXT, "glImportSemaphoreWin32HandleEXT");
     ok &= loadFunc(glWaitSemaphoreEXT, "glWaitSemaphoreEXT");
     ok &= loadFunc(glCreateMemoryObjectsEXT, "glCreateMemoryObjectsEXT");
     ok &= loadFunc(glDeleteMemoryObjectsEXT, "glDeleteMemoryObjectsEXT");
-    ok &= loadFunc(glImportMemoryWin32HandleEXT, "glImportMemoryWin32HandleEXT");
     ok &= loadFunc(glSignalSemaphoreEXT, "glSignalSemaphoreEXT");
     ok &= loadFunc(glDeleteSemaphoresEXT, "glDeleteSemaphoresEXT");
     ok &= loadFunc(glTextureStorageMem2DEXT, "glTextureStorageMem2DEXT");
+
+#if defined(Q_OS_WIN)
+    ok &= loadFunc(glImportSemaphoreWin32HandleEXT, "glImportSemaphoreWin32HandleEXT");
+    ok &= loadFunc(glImportMemoryWin32HandleEXT, "glImportMemoryWin32HandleEXT");
+#elif defined(Q_OS_LINUX)
+    ok &= loadFunc(glImportSemaphoreFdEXT, "glImportSemaphoreFdEXT");
+    ok &= loadFunc(glImportMemoryFdEXT, "glImportMemoryFdEXT");
+#endif
 
     g_extLoaded = ok;
     return ok;
@@ -851,7 +831,12 @@ bool Nv12Render_Vulkan::initInteropResources(uint32_t width, uint32_t height)
     }
 
     // 导出Vulkan内存到OpenGL
+#if defined(Q_OS_WIN)
+    // Windows平台使用HANDLE
     HANDLE memoryHandle = nullptr;
+#else
+    int memoryHandle = -1;
+#endif
     if (!exportMemoryHandle(rgbaMemory_, memoryHandle)) {
         qWarning() << QStringLiteral("[Nv12Render_Vulkan] Failed to export Vulkan memory handle.");
         return false;
@@ -859,8 +844,12 @@ bool Nv12Render_Vulkan::initInteropResources(uint32_t width, uint32_t height)
 
     // 在OpenGL中导入内存和创建纹理
     glCreateMemoryObjectsEXT(1, &glMemoryObject_);
+#if defined(Q_OS_WIN)
     glImportMemoryWin32HandleEXT(glMemoryObject_, memReqs.size, GL_HANDLE_TYPE_OPAQUE_WIN32_EXT,
                                  memoryHandle);
+#elif defined(Q_OS_LINUX)
+    glImportMemoryFdEXT(glMemoryObject_, memReqs.size, GL_HANDLE_TYPE_OPAQUE_FD_EXT, memoryHandle);
+#endif
 
     glGenTextures(1, &glRGBATexture_);
     glBindTexture(GL_TEXTURE_2D, glRGBATexture_);

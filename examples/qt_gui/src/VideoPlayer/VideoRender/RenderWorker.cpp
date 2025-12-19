@@ -250,7 +250,7 @@ QSharedPointer<VideoRender> RenderWorker::createRenderer(
 #endif
 #ifdef QSV_AVAILABLE
         case decoder_sdk::ImageFormat::kQsv: {
-#ifdef Q_OS_WIN
+#if defined(Q_OS_WIN)
             if (videoFrame->backendHwType() == decoder_sdk::HWAccelType::kD3d11va) {
                 return QSharedPointer<VideoRender>(new Nv12Render_D3d11va);
             } else {
@@ -259,11 +259,11 @@ QSharedPointer<VideoRender> RenderWorker::createRenderer(
 #else
             return QSharedPointer<VideoRender>(new Nv12Render_Vaapi(context_));
 #endif
-#endif
         }
+#endif
 #ifdef AMF_AVAILABLE
         case decoder_sdk::ImageFormat::kAmf: {
-#ifdef Q_OS_WIN
+#if defined(Q_OS_WIN)
             // 判断当前的解码后端是D3D11Va还是Dxva2
             if (videoFrame->backendHwType() == decoder_sdk::HWAccelType::kD3d11va) {
                 return QSharedPointer<VideoRender>(new Nv12Render_D3d11va);
@@ -273,8 +273,8 @@ QSharedPointer<VideoRender> RenderWorker::createRenderer(
 #else
             return nullptr;
 #endif
-#endif
         }
+#endif
         default:
             // 对于软解格式，使用软解渲染器作为默认选择
             return QSharedPointer<VideoRender>(new SoftwareRender);
