@@ -24,7 +24,7 @@ DECODER_SDK_NAMESPACE_BEGIN
 INTERNAL_NAMESPACE_BEGIN
 
 namespace {
-const std::string kVideoDecoderName = "Video Decoder";
+constexpr char kVideoDecoderName[] = "Video Decoder";
 
 // 硬解出错，降级到软解的容忍时间
 constexpr int kDefaultFallbackToleranceTime = 2000; // 单位：毫秒
@@ -579,6 +579,24 @@ double VideoDecoder::getFrameRate() const
     return av_q2d(frameRate);
 }
 
+std::optional<DecoderInfo> VideoDecoder::decoderInfo() const
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!isOpened_ || !codecCtx_)
+        return std::nullopt;
+
+    DecoderInfo info;
+    info.codecName = codecCtx_->codec->name;
+    info.mediaType = MediaType::kMediaTypeVideo;
+    info.hwAccelType = hwAccel_ ? hwAccel_->getType() : HWAccelType::kNone;
+    return info;
+}
+
+const char *const VideoDecoder::decoderName() const
+{
+    return kVideoDecoderName;
+}
+
 void VideoDecoder::decodeLoop()
 {
     // 解码帧
@@ -586,8 +604,7 @@ void VideoDecoder::decodeLoop()
     frame.ensureAllocated();
     if (!frame.isValid()) {
         LOG_ERROR("Video Decoder decodeLoop error: Failed to allocate frame!");
-        handleDecodeError(kVideoDecoderName, MediaType::kMediaTypeVideo, AVERROR(ENOMEM),
-                          "Failed to allocate frame!");
+        handleDecodeError(AVERROR(ENOMEM));
     }
 
     auto packetQueue = demuxer_->packetQueue(type());
@@ -595,9 +612,7 @@ void VideoDecoder::decodeLoop()
         LOG_ERROR(
             "Video Decoder decodeLoop error: Can not find packet queue from "
             "demuxer!");
-        handleDecodeError(kVideoDecoderName, MediaType::kMediaTypeVideo, AVERROR_UNKNOWN,
-                          "Can not find packet queue from "
-                          "demuxer!");
+        handleDecodeError(AVERROR_DEMUXER_NOT_FOUND);
         return;
     }
 
@@ -731,6 +746,9 @@ void VideoDecoder::decodeLoop()
             LOG_WARN("{} send packet error, error code: {}, error string: {}", demuxer_->url(), ret,
                      utils::avErr2Str(ret));
 
+            // 处理解码错误
+            handleDecodeError(ret);
+
             // 是否需要退化到软解
             const auto shouldFallback = !readFirstFrame && shouldFallbackToSoftware(ret);
 
@@ -816,8 +834,7 @@ void VideoDecoder::decodeLoop()
                     break;
                 } else {
                     // 其他错误（如EOF），处理错误
-                    if (handleDecodeError(kVideoDecoderName, MediaType::kMediaTypeVideo, ret,
-                                          "Decoder error: ")) {
+                    if (handleDecodeError(ret)) {
                         occuredError = true;
 
                         // 如果是I帧，等待下一个I帧过来
@@ -840,6 +857,7 @@ void VideoDecoder::decodeLoop()
                                                    avFrame->decode_error_flags != 0) {
                 // 提示坏包
                 LOG_WARN("{} Frame decode corrupt", demuxer_->url());
+                handleDecodeError(ret);
 
                 // 如果是I帧，等待下一个I帧过来
                 if (isKeyFrame) {
@@ -886,13 +904,13 @@ void VideoDecoder::decodeLoop()
             if (!readFirstFrame) {
                 readFirstFrame = true;
                 errorStartTime.reset(); // 重置错误计时
-                handleFirstFrame(kVideoDecoderName, MediaType::kMediaTypeVideo);
+                handleFirstFrame();
             }
 
             // 如果恢复，则发出事件
             if (occuredError) {
                 occuredError = false;
-                handleDecodeRecovery(kVideoDecoderName, MediaType::kMediaTypeVideo);
+                handleDecodeRecovery();
             }
 
             // 外部时钟和当前的视频帧pts进行比对，如果差值大于1帧，更新外部时钟
@@ -1126,9 +1144,9 @@ Frame VideoDecoder::transferHardwareFrame(const Frame &hwFrame)
         memoryFrame_.ensureAllocated();
     }
 
-    if (!hwAccel_->transferFrameToHost(hwFrame.get(), memoryFrame_.get())) {
-        handleDecodeError(kVideoDecoderName, MediaType::kMediaTypeVideo, AVERROR_UNKNOWN,
-                          "TransferFrameToHost failed!");
+    int ret = 0;
+    if (!hwAccel_->transferFrameToHost(hwFrame.get(), memoryFrame_.get(), &ret)) {
+        handleDecodeTransError(ret);
         return Frame();
     }
 
@@ -1150,8 +1168,7 @@ Frame VideoDecoder::convertSoftwareFrame(const Frame &frame)
                                    nullptr, nullptr, nullptr);
 
     if (!swsCtx_) {
-        handleDecodeError(kVideoDecoderName, MediaType::kMediaTypeVideo, AVERROR_UNKNOWN,
-                          "SwsContext alloc failed!");
+        handleDecodeTransError(AVERROR_INVALIDDATA);
         return Frame();
     }
 
@@ -1165,8 +1182,7 @@ Frame VideoDecoder::convertSoftwareFrame(const Frame &frame)
     // 分配缓冲区
     int ret = av_frame_get_buffer(swsFrame_.get(), 0);
     if (ret < 0) {
-        handleDecodeError(kVideoDecoderName, MediaType::kMediaTypeVideo, AVERROR_UNKNOWN,
-                          "Frame buffer alloc failed!");
+        handleDecodeTransError(ret);
         return Frame();
     }
 
@@ -1175,8 +1191,7 @@ Frame VideoDecoder::convertSoftwareFrame(const Frame &frame)
                     frame.height(), swsFrame_.get()->data, swsFrame_.get()->linesize);
 
     if (ret <= 0) {
-        handleDecodeError(kVideoDecoderName, MediaType::kMediaTypeVideo, AVERROR_UNKNOWN,
-                          "SwsContext scale failed!");
+        handleDecodeTransError(ret);
         return Frame();
     }
 

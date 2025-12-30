@@ -218,4 +218,14 @@ bool DecoderController::resetLoopCount()
 {
     return impl_ ? impl_->resetLoopCount() : false;
 }
+
+const std::optional<StreamInfo> &DecoderController::streamInfo() const
+{
+    return impl_ ? impl_->streamInfo() : std::nullopt;
+}
+
+std::optional<DecoderInfo> DecoderController::decoderInfo(MediaType mediaType) const
+{
+    return impl_ ? impl_->decoderInfo(mediaType) : std::nullopt;
+}
 } // namespace decoder_sdk

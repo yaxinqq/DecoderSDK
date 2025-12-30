@@ -50,6 +50,20 @@ public:
      */
     double getFrameRate() const;
 
+    /**
+     * @brief 得到解码器信息
+     *
+     * @return 解码器信息
+     */
+    std::optional<DecoderInfo> decoderInfo() const override;
+
+    /**
+     * @brief 获得解码器名称
+     *
+     * @return 解码器名称
+     */
+    const char *const decoderName() const override;
+
 protected:
     /**
      * @brief 解码循环

@@ -1,4 +1,5 @@
 #include "include/decodersdk/common_define.h"
+#include "decoder/hardware_accel.h"
 #include "version.h"
 
 #ifdef MAGIC_ENUM_SUPPORTED
@@ -6,6 +7,11 @@
 #endif
 
 namespace decoder_sdk {
+std::string getHwAccelTypeDesc(HWAccelType type)
+{
+    return internal::HardwareAccel::getHWAccelTypeDescription(type);
+}
+
 const char *getVersionString()
 {
     return internal::getVersionString();
@@ -59,6 +65,7 @@ std::vector<EventType> allEventTypes()
         EventType::kDecodeFirstFrame,     // 解出第一帧数据
         EventType::kDecodeError,          // 解码错误
         EventType::kDecodeRecovery,       // 解码恢复
+        EventType::kDecodeTransError,     // 解码转换错误
         EventType::kSeekStarted,          // 开始seek,
         EventType::kSeekSuccess,          // seek成功
         EventType::kSeekFailed,           // seek失败
@@ -118,6 +125,8 @@ std::string getEventTypeName(EventType type)
             return "kDecodeError";
         case EventType::kDecodeRecovery:
             return "kDecodeRecovery";
+        case EventType::kDecodeTransError:
+            return "kDecodeTransError";
         case EventType::kSeekStarted:
             return "kSeekStarted";
         case EventType::kSeekSuccess:

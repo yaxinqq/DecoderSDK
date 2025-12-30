@@ -69,6 +69,12 @@ std::string rtspTransport2Str(Config::RtspTransport transport);
 // 传入的AVPacket是否是有效的
 bool isValidPacket(const AVPacket *const pkt);
 
+// 根据 Event Type，获得相应的Description
+std::string eventType2Desc(EventType type);
+
+// 根据AVColorRange，获得相应的Description
+std::string avColorRange2Desc(AVColorRange range);
+
 // 原子变量更新函数
 template <typename T>
 bool atomicUpdateIfNotEqual(std::atomic<T> &atomicVar, T newValue, int maxRetry = 100)

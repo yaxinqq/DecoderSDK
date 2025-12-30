@@ -167,6 +167,13 @@ public:
      */
     void resetLoopCount();
 
+    /**
+     * @brief 得到流信息
+     *
+     * @return 流信息
+     */
+    const std::optional<StreamInfo> &streamInfo() const;
+
 protected:
     /**
      * @brief 解复用线程
@@ -294,6 +301,14 @@ private:
      */
     void stop();
 
+    /**
+     * @brief 组装流信息
+     * 
+     * @param url 流地址
+     * @param decodeMediaType 解码媒体类型
+     */
+    void setupStreamInfo(const std::string_view &url, Config::DecodeMediaType decodeMediaType);
+
 private:
     // 解复用器状态
     bool isOpened_ = false;
@@ -348,6 +363,9 @@ private:
     std::atomic<LoopMode> loopMode_{LoopMode::kNone};
     std::atomic<int> maxLoops_{-1};
     std::atomic<int> currentLoopCount_{0};
+
+    // 流信息
+    std::optional<StreamInfo> streamInfo_;
 };
 
 INTERNAL_NAMESPACE_END

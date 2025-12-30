@@ -12,6 +12,10 @@ extern "C" {
 DECODER_SDK_NAMESPACE_BEGIN
 INTERNAL_NAMESPACE_BEGIN
 
+namespace {
+constexpr char kModuleName[] = "Real Time Stream Recorder";
+}
+
 RealTimeStreamRecorder::RealTimeStreamRecorder(std::shared_ptr<EventDispatcher> eventDispatcher)
     : eventDispatcher_(eventDispatcher)
 {
@@ -81,8 +85,9 @@ bool RealTimeStreamRecorder::startRecording(const std::string &outputPath,
 
     // 发送录制开始事件
     const auto &formatInfo = getFormatInfoMap().at(currentFormat_);
-    auto event = std::make_shared<RecordingEventArgs>(
-        outputPath_, formatInfo.extension, "RealTimeStreamRecorder", "Recording Started");
+    auto event =
+        std::make_shared<RecordingEventArgs>(outputPath_, formatInfo.extension, kModuleName,
+                                             utils::eventType2Desc(EventType::kRecordingStarted));
     eventDispatcher_->triggerEvent(EventType::kRecordingStarted, event);
 
     LOG_INFO("Recording started: {} (Format: {})", outputPath_, formatInfo.description);
@@ -118,8 +123,10 @@ bool RealTimeStreamRecorder::stopRecording()
     isRecording_.store(false);
 
     // 发送录制停止事件
-    auto event = std::make_shared<RecordingEventArgs>(outputPath_, "mp4", "RealTimeStreamRecorder",
-                                                      "Recording Stopped");
+    const auto &formatInfo = getFormatInfoMap().at(currentFormat_);
+    auto event =
+        std::make_shared<RecordingEventArgs>(outputPath_, formatInfo.extension, kModuleName,
+                                             utils::eventType2Desc(EventType::kRecordingStopped));
     eventDispatcher_->triggerEvent(EventType::kRecordingStopped, event);
 
     LOG_INFO("Recording stopped: {}", outputPath_);
@@ -596,8 +603,10 @@ bool RealTimeStreamRecorder::processPacket(const Packet &packet, AVMediaType med
         av_packet_unref(tempPacket);
         av_packet_free(&tempPacket);
 
+        const auto &formatInfo = getFormatInfoMap().at(currentFormat_);
         const auto event = std::make_shared<RecordingEventArgs>(
-            outputPath_, "mp4", "RealTimeStreamRecorder", "Recording Error", ret, errStr);
+            outputPath_, formatInfo.extension, kModuleName,
+            utils::eventType2Desc(EventType::kRecordingError), ret, errStr);
         eventDispatcher_->triggerEvent(EventType::kRecordingError, event);
 
         return false;

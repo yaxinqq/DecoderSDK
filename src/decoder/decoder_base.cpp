@@ -198,45 +198,50 @@ double DecoderBase::calculatePts(const Frame &frame) const
     return utils::greaterAndEqual(time, 0.0) ? time : 0.0;
 }
 
-bool DecoderBase::handleFirstFrame(const std::string &decoderName, MediaType mediaType,
-                                   const std::string &description)
+bool DecoderBase::handleFirstFrame()
 {
-    auto event = std::make_shared<DecoderEventArgs>(decoderName, streamIndex_, mediaType,
-                                                    codecCtx_->hw_device_ctx != nullptr,
-                                                    decoderName, description);
+    auto event =
+        std::make_shared<DecoderEventArgs>(utils::avMediaType2MediaType(type()), decoderName(),
+                                           utils::eventType2Desc(EventType::kDecodeFirstFrame));
+    event->decoderInfo = decoderInfo();
     eventDispatcher_->triggerEvent(EventType::kDecodeFirstFrame, event);
 
     return true;
 }
 
-bool DecoderBase::handleDecodeError(const std::string &decoderName, MediaType mediaType,
-                                    int errorCode, const std::string &description)
+bool DecoderBase::handleDecodeError(int errorCode)
 {
     if (errorCode == AVERROR(EOF) || errorCode == AVERROR(EAGAIN))
         return false;
 
     statistics_.errorsCount.fetch_add(1);
     LOG_WARN("{} Decoder occurred an error, code: {}", demuxer_->url(), errorCode);
-    auto event = std::make_shared<DecoderEventArgs>(decoderName, streamIndex_, mediaType,
-                                                    codecCtx_->hw_device_ctx != nullptr,
-                                                    decoderName, description);
+    auto event = std::make_shared<DecoderEventArgs>(
+        utils::avMediaType2MediaType(type()), decoderName(),
+        utils::eventType2Desc(EventType::kDecodeError), errorCode, utils::avErr2Str(errorCode));
     eventDispatcher_->triggerEvent(EventType::kDecodeError, event);
-
-    // 重置解码器
-    avcodec_flush_buffers(codecCtx_);
-
-    // 休眠，等待恢复
-    std::this_thread::sleep_for(std::chrono::milliseconds(recoveryInterval_));
 
     return true;
 }
 
-bool DecoderBase::handleDecodeRecovery(const std::string &decoderName, MediaType mediaType,
-                                       const std::string &description)
+bool DecoderBase::handleDecodeTransError(int errorCode)
 {
-    auto event = std::make_shared<DecoderEventArgs>(decoderName, streamIndex_, mediaType,
-                                                    codecCtx_->hw_device_ctx != nullptr,
-                                                    decoderName, description);
+    statistics_.errorsCount.fetch_add(1);
+    LOG_WARN("{} Decoder trans format occurred an error, code: {}", demuxer_->url(), errorCode);
+    auto event =
+        std::make_shared<DecoderEventArgs>(utils::avMediaType2MediaType(type()), decoderName(),
+                                           utils::eventType2Desc(EventType::kDecodeTransError),
+                                           errorCode, utils::avErr2Str(errorCode));
+    eventDispatcher_->triggerEvent(EventType::kDecodeTransError, event);
+
+    return true;
+}
+
+bool DecoderBase::handleDecodeRecovery()
+{
+    auto event =
+        std::make_shared<DecoderEventArgs>(utils::avMediaType2MediaType(type()), decoderName(),
+                                           utils::eventType2Desc(EventType::kDecodeRecovery));
     eventDispatcher_->triggerEvent(EventType::kDecodeRecovery, event);
 
     return true;
@@ -306,8 +311,8 @@ bool DecoderBase::openInternal()
 
     const auto sendFailedEvent = [this]() {
         auto event = std::make_shared<DecoderEventArgs>(
-            codecCtx_ ? codecCtx_->codec->name : "", streamIndex_,
-            utils::avMediaType2MediaType(type()), false, "Decoder", "Decode Created Failed");
+            utils::avMediaType2MediaType(type()), decoderName(),
+            utils::eventType2Desc(EventType::kCreateDecoderFailed));
         eventDispatcher_->triggerEvent(EventType::kCreateDecoderFailed, event);
     };
 
@@ -372,9 +377,9 @@ bool DecoderBase::openInternal()
     frameQueue_->init();
 
     // 发送解码器创建成功的事件
-    auto event = std::make_shared<DecoderEventArgs>(codecCtx_->codec->name, streamIndex_,
-                                                    utils::avMediaType2MediaType(type()), useHw,
-                                                    "Decoder", "Decode Created Success");
+    auto event =
+        std::make_shared<DecoderEventArgs>(utils::avMediaType2MediaType(type()), decoderName(),
+                                           utils::eventType2Desc(EventType::kCreateDecoderSuccess));
     eventDispatcher_->triggerEvent(EventType::kCreateDecoderSuccess, event);
 
     isOpened_ = true;
@@ -387,9 +392,6 @@ void DecoderBase::closeInternal()
     stopInternal();
     if (!isOpened_)
         return;
-
-    const auto codecName = codecCtx_ ? codecCtx_->codec->name : "";
-    const bool useHw = codecCtx_ ? codecCtx_->hw_device_ctx != nullptr : false;
 
     if (codecCtx_) {
         // 显式释放硬件设备上下文
@@ -419,9 +421,9 @@ void DecoderBase::closeInternal()
     isOpened_ = false;
 
     // 发送解码已销毁的事件
-    auto event = std::make_shared<DecoderEventArgs>(codecName, streamIndex_,
-                                                    utils::avMediaType2MediaType(type()), useHw,
-                                                    "Decoder", "Decode Destroyed");
+    auto event =
+        std::make_shared<DecoderEventArgs>(utils::avMediaType2MediaType(type()), decoderName(),
+                                           utils::eventType2Desc(EventType::kDestoryDecoder));
     eventDispatcher_->triggerEvent(EventType::kDestoryDecoder, event);
 }
 
@@ -448,9 +450,9 @@ void DecoderBase::startInternal()
     isStarted_ = true;
 
     // 发送解码已开始的事件
-    auto event = std::make_shared<DecoderEventArgs>(
-        codecCtx_->codec->name, streamIndex_, utils::avMediaType2MediaType(type()),
-        codecCtx_->hw_device_ctx != nullptr, "Decoder", "Decode Started");
+    auto event =
+        std::make_shared<DecoderEventArgs>(utils::avMediaType2MediaType(type()), decoderName(),
+                                           utils::eventType2Desc(EventType::kDecodeStarted));
     eventDispatcher_->triggerEvent(EventType::kDecodeStarted, event);
 }
 
@@ -472,9 +474,9 @@ void DecoderBase::stopInternal()
     isStarted_ = false;
 
     // 发送解码已停止的事件
-    auto event = std::make_shared<DecoderEventArgs>(
-        codecCtx_->codec->name, streamIndex_, utils::avMediaType2MediaType(type()),
-        codecCtx_->hw_device_ctx != nullptr, "Decoder", "Decode Stopped");
+    auto event =
+        std::make_shared<DecoderEventArgs>(utils::avMediaType2MediaType(type()), decoderName(),
+                                           utils::eventType2Desc(EventType::kDecodeStopped));
     eventDispatcher_->triggerEvent(EventType::kDecodeStopped, event);
 }
 
@@ -486,9 +488,9 @@ void DecoderBase::pauseInternal()
     isPaused_.store(true);
 
     // 发送解码已暂停的事件
-    auto event = std::make_shared<DecoderEventArgs>(
-        codecCtx_->codec->name, streamIndex_, utils::avMediaType2MediaType(type()),
-        codecCtx_->hw_device_ctx != nullptr, "Decoder", "Decode Paused");
+    auto event =
+        std::make_shared<DecoderEventArgs>(utils::avMediaType2MediaType(type()), decoderName(),
+                                           utils::eventType2Desc(EventType::kDecodePaused));
     eventDispatcher_->triggerEvent(EventType::kDecodePaused, event);
 }
 
@@ -501,9 +503,9 @@ void DecoderBase::resumeInternal()
     pauseCv_.notify_all();
 
     // 发送解码已开始的事件
-    auto event = std::make_shared<DecoderEventArgs>(
-        codecCtx_->codec->name, streamIndex_, utils::avMediaType2MediaType(type()),
-        codecCtx_->hw_device_ctx != nullptr, "Decoder", "Decode Started");
+    auto event =
+        std::make_shared<DecoderEventArgs>(utils::avMediaType2MediaType(type()), decoderName(),
+                                           utils::eventType2Desc(EventType::kDecodeStarted));
     eventDispatcher_->triggerEvent(EventType::kDecodeStarted, event);
 }
 

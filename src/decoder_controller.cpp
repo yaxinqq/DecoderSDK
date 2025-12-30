@@ -10,6 +10,10 @@ extern "C" {
 DECODER_SDK_NAMESPACE_BEGIN
 INTERNAL_NAMESPACE_BEGIN
 
+namespace {
+constexpr char kModuleName[] = "DecoderController";
+}
+
 DecoderController::DecoderController()
     : eventDispatcher_(std::make_shared<EventDispatcher>()),
       syncController_(std::make_shared<StreamSyncManager>()),
@@ -354,13 +358,15 @@ bool DecoderController::seek(double position)
     std::lock_guard<std::mutex> lock(mutex_);
 
     // 发送开始seek的事件
-    auto event = std::make_shared<SeekEventArgs>(syncController_->getMasterClock(), position,
-                                                 "DecoderController", "Seek Started");
+    auto event =
+        std::make_shared<SeekEventArgs>(syncController_->getMasterClock(), position, kModuleName,
+                                        utils::eventType2Desc(EventType::kSeekStarted));
     eventDispatcher_->triggerEvent(EventType::kSeekStarted, event);
 
     const auto sendFailedEvent = [this, position]() {
         auto event = std::make_shared<SeekEventArgs>(syncController_->getMasterClock(), position,
-                                                     "DecoderController", "Seek Failed");
+                                                     kModuleName,
+                                                     utils::eventType2Desc(EventType::kSeekFailed));
         eventDispatcher_->triggerEvent(EventType::kSeekFailed, event);
     };
 
@@ -418,8 +424,9 @@ bool DecoderController::seek(double position)
     }
 
     // 发送seek成功的事件
-    event = std::make_shared<SeekEventArgs>(syncController_->getMasterClock(), position,
-                                            "DecoderController", "Seek Success");
+    event =
+        std::make_shared<SeekEventArgs>(syncController_->getMasterClock(), position, kModuleName,
+                                        utils::eventType2Desc(EventType::kSeekSuccess));
     eventDispatcher_->triggerEvent(EventType::kSeekSuccess, event);
 
     return result;
@@ -709,6 +716,27 @@ PreBufferProgress DecoderController::getPreBufferProgress() const
               progress.videoRequiredFrames, progress.audioBufferedPackets,
               progress.audioRequiredPackets);
     return progress;
+}
+
+const std::optional<StreamInfo> &DecoderController::streamInfo() const
+{
+    static std::optional<StreamInfo> emptyInfo = std::nullopt;
+    if (!demuxer_)
+        return emptyInfo;
+
+    return demuxer_->streamInfo();
+}
+
+std::optional<DecoderInfo> DecoderController::decoderInfo(MediaType mediaType) const
+{
+    if (mediaType == MediaType::kMediaTypeVideo && videoDecoder_) {
+        return videoDecoder_->decoderInfo();
+    }
+    if (mediaType == MediaType::kMediaTypeAudio && audioDecoder_) {
+        return audioDecoder_->decoderInfo();
+    }
+
+    return std::nullopt;
 }
 
 bool DecoderController::openInternal(const std::string &url, const Config &config)

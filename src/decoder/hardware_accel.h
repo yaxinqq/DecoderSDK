@@ -69,9 +69,10 @@ public:
      * @brief 将硬件帧转换为软件帧
      * @param hwFrame 硬件帧
      * @param swFrame 软件帧
+     * @param ret 转换结果码
      * @return 是否转换成功
      */
-    bool transferFrameToHost(AVFrame *hwFrame, AVFrame *swFrame);
+    bool transferFrameToHost(AVFrame *hwFrame, AVFrame *swFrame, int *ret = nullptr);
 
     /**
      * @brief 获取硬件加速类型

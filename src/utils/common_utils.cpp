@@ -374,6 +374,87 @@ bool isValidPacket(const AVPacket *const pkt)
 
     return true;
 }
+
+// 根据 Event Type，获得相应的Description
+std::string eventType2Desc(EventType type)
+{
+    switch (type) {
+        case EventType::kStreamOpened: // 流已打开（调用open成功）
+            return "Stream Opened";
+        case EventType::kStreamClosed: // 流已关闭（调用close成功）
+            return "Stream Closed";
+        case EventType::kStreamOpening: // 流正在打开
+            return "Stream Opening";
+        case EventType::kStreamOpenFailed: // 流打开失败
+            return "Stream Open Failed";
+        case EventType::kStreamClose: // 关闭
+            return "Stream Close";
+        case EventType::kStreamReadData: // 读到第一帧数据
+            return "Stream Read Data";
+        case EventType::kStreamReadError: // 读取数据失败
+            return "Stream Read Error";
+        case EventType::kStreamReadRecovery: // 读取恢复
+            return "Stream Read Recovery";
+        case EventType::kStreamEnded: // 流结束
+            return "Stream Ended";
+        case EventType::kStreamLooped: // 流循环播放（新增）
+            return "Stream Looped";
+            // 解码相关事件
+        case EventType::kDecodeStarted: // 解码已开始
+            return "Decode Started";
+        case EventType::kDecodeStopped: // 解码已停止
+            return "Decode Stopped";
+        case EventType::kDecodePaused: // 解码已暂停
+            return "Decode Paused";
+        case EventType::kCreateDecoderSuccess: // 创建解码器成功
+            return "Create Decoder Success";
+        case EventType::kCreateDecoderFailed: // 创建解码器失败
+            return "Create Decoder Failed";
+        case EventType::kDestoryDecoder: // 销毁解码器
+            return "Destory Decoder";
+        case EventType::kDecodeFirstFrame: // 解出第一帧数据
+            return "Decode First Frame";
+        case EventType::kDecodeError: // 解码错误
+            return "Decode Error";
+        case EventType::kDecodeRecovery: // 解码恢复
+            return "Decode Recovery";
+        case EventType::kDecodeTransError: // 解码器数据帧格式转换失败
+            return "Decode Trans Error";
+            // seek相关事件
+        case EventType::kSeekStarted: // 开始seek,
+            return "Seek Started";
+        case EventType::kSeekSuccess: // seek成功
+            return "Seek Success";
+        case EventType::kSeekFailed: // seek失败
+            return "Seek Failed";
+            // 录制相关事件
+        case EventType::kRecordingStarted: // 开始录制
+            return "Recording Started";
+        case EventType::kRecordingStopped: // 停止录制
+            return "Recording Stopped";
+        case EventType::kRecordingError: // 录制错误
+            return "Recording Error";
+        default:
+            break;
+    }
+
+    return "Unknown Event Type";
+}
+
+std::string avColorRange2Desc(AVColorRange range)
+{
+    switch (range) {
+        case AVCOL_RANGE_UNSPECIFIED:
+            return "Unspecified";
+        case AVCOL_RANGE_MPEG:
+            return "MPEG";
+        case AVCOL_RANGE_JPEG:
+            return "JPEG";
+        default:
+            break;
+    }
+    return "Unknown";
+}
 } // namespace utils
 
 INTERNAL_NAMESPACE_END

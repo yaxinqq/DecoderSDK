@@ -12,7 +12,7 @@ extern "C" {
 #include "utils/common_utils.h"
 
 namespace {
-const std::string kAudioDecoderName = "Audio Decoder";
+constexpr char kAudioDecoderName[] = "Audio Decoder";
 }
 
 DECODER_SDK_NAMESPACE_BEGIN
@@ -44,6 +44,23 @@ AVMediaType AudioDecoder::type() const
     return AVMEDIA_TYPE_AUDIO;
 }
 
+std::optional<DecoderInfo> AudioDecoder::decoderInfo() const
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!isOpened_ || !codecCtx_)
+        return std::nullopt;
+
+    DecoderInfo info;
+    info.codecName = codecCtx_->codec->name;
+    info.mediaType = MediaType::kMediaTypeAudio;
+    return info;
+}
+
+const char *const AudioDecoder::decoderName() const
+{
+    return kAudioDecoderName;
+}
+
 void AudioDecoder::decodeLoop()
 {
     // 解码帧
@@ -51,8 +68,7 @@ void AudioDecoder::decodeLoop()
     frame.ensureAllocated();
     if (!frame.isValid()) {
         LOG_ERROR("Audio Decoder decodeLoop error: Failed to allocate frame!");
-        handleDecodeError(kAudioDecoderName, MediaType::kMediaTypeAudio, AVERROR(ENOMEM),
-                          "Failed to allocate frame!");
+        handleDecodeError(AVERROR(ENOMEM));
     }
 
     auto packetQueue = demuxer_->packetQueue(type());
@@ -60,9 +76,7 @@ void AudioDecoder::decodeLoop()
         LOG_ERROR(
             "Audio Decoder decodeLoop error: Can not find packet queue from "
             "demuxer!");
-        handleDecodeError(kAudioDecoderName, MediaType::kMediaTypeAudio, AVERROR_UNKNOWN,
-                          "Can not find packet queue from "
-                          "demuxer!");
+        handleDecodeError(AVERROR_DEMUXER_NOT_FOUND);
         return;
     }
 
@@ -144,8 +158,7 @@ void AudioDecoder::decodeLoop()
                     break;
                 } else {
                     // 其他错误（如EOF），处理错误
-                    if (handleDecodeError(kAudioDecoderName, MediaType::kMediaTypeAudio, ret,
-                                          "Decoder error: ")) {
+                    if (handleDecodeError(ret)) {
                         occuredError = true;
                     }
                     break;
@@ -166,8 +179,7 @@ void AudioDecoder::decodeLoop()
                 ret = 0;
                 outputFrame = resampleFrame(frame, ret);
                 if (!outputFrame.isValid()) {
-                    handleDecodeError(kAudioDecoderName, MediaType::kMediaTypeAudio, ret,
-                                      "Resample frame failed!");
+                    handleDecodeTransError(ret);
                     frame.unref();
                     continue;
                 }
@@ -286,13 +298,13 @@ void AudioDecoder::decodeLoop()
             // 如果是第一帧，发出事件
             if (!readFirstFrame) {
                 readFirstFrame = true;
-                handleFirstFrame(kAudioDecoderName, MediaType::kMediaTypeAudio);
+                handleFirstFrame();
             }
 
             // 如果恢复，则发出事件
             if (occuredError) {
                 occuredError = false;
-                handleDecodeRecovery(kAudioDecoderName, MediaType::kMediaTypeAudio);
+                handleDecodeRecovery();
             }
 
             // 获取一个可写入的帧
@@ -688,6 +700,7 @@ bool AudioDecoder::convertAudioFormat(Frame &frame, AVSampleFormat targetFormat)
     int ret = swr_convert(formatConvertCtx_, formatConvertFrame_.get()->data, outSamples,
                           (const uint8_t **)avFrame->data, avFrame->nb_samples);
     if (ret < 0) {
+        handleDecodeTransError(ret);
         return false;
     }
 

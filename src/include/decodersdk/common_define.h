@@ -34,6 +34,12 @@ enum class HWAccelType : uint8_t {
     kQsv,     // Intel Quick Sync Video
     kAmf,     // AMD Accelerated Media Framework（FFMpeg 8.0及以上才支持）
 };
+/**
+ * @brief 获取硬件加速类型的描述字符串
+ * @param type 硬件加速类型
+ * @return 硬件加速类型的描述字符串
+ */
+DECODER_SDK_API std::string getHwAccelTypeDesc(HWAccelType type);
 
 // 图像格式枚举（部分）
 enum class ImageFormat : uint8_t {
@@ -143,6 +149,7 @@ enum class EventType : uint32_t {
     kDecodeFirstFrame,     // 解出第一帧数据
     kDecodeError,          // 解码错误
     kDecodeRecovery,       // 解码恢复
+    kDecodeTransError,     // 解码器数据帧格式转换失败
 
     // seek相关事件
     kSeekStarted = 40, // 开始seek,
@@ -165,6 +172,39 @@ std::vector<EventType> DECODER_SDK_API allEventTypes();
  * @return std::string 事件名称
  */
 std::string DECODER_SDK_API getEventTypeName(EventType type);
+
+// 流信息
+struct StreamInfo {
+    // 媒体文件地址
+    std::string url;
+    // 文件总时长(s)，实时流时有可能为空
+    std::optional<int> totalTime;
+    // 流的封装格式
+    std::string inputFormat;
+
+    struct VideoInfo {
+        int height;
+        int width;
+        int frameRate;
+        std::string colorRange;
+    };
+    std::optional<VideoInfo> videoInfo;
+
+    struct AudioInfo {
+        int sampleRate;
+        int channels;
+    };
+    std::optional<AudioInfo> audioInfo;
+};
+
+// 解码器信息
+struct DecoderInfo {
+    std::string codecName;                              // 编解码器名称
+    MediaType mediaType = MediaType::kMediaTypeUnknown; // 媒体类型
+
+    // 视频解码器独有信息
+    HWAccelType hwAccelType = HWAccelType::kNone; // 硬件加速类型
+};
 
 // 事件参数基类
 struct EventArgs {
@@ -201,29 +241,24 @@ public:
 
     std::string filePath; // 文件路径
 
-    std::optional<int> totalTime; // 文件总时长(s)，只会在kStreamOpened事件中携带，但也有可能为空
+    // 只会在kDecodeFirstFrame事件中携带，其它事件中为空，因为有可能硬解失败回退到软解
+    std::optional<StreamInfo> streamInfo;
 };
 
 // 解码器事件参数
 struct DecoderEventArgs : public EventArgs {
 public:
-    DecoderEventArgs(const std::string &codecName = "", int streamIndex = -1,
-                     MediaType mediaType = MediaType::kMediaTypeUnknown,
-                     bool isHardwareAccel = false, const std::string &source = "",
-                     const std::string &description = "", int errcode = 0,
-                     const std::string &errorMessage = "")
-        : EventArgs(source, description, errcode, errorMessage),
-          codecName(codecName),
-          streamIndex(streamIndex),
-          mediaType(mediaType),
-          isHardwareAccel(isHardwareAccel)
+    DecoderEventArgs(MediaType mediaType = MediaType::kMediaTypeUnknown,
+                     const std::string &source = "", const std::string &description = "",
+                     int errcode = 0, const std::string &errorMessage = "")
+        : EventArgs(source, description, errcode, errorMessage), mediaType(mediaType)
     {
     }
 
-    std::string codecName;        // 编解码器名称
-    int streamIndex;              // 流索引
-    MediaType mediaType;          // 媒体类型
-    bool isHardwareAccel = false; // 是否硬件加速
+    MediaType mediaType; // 媒体类型
+
+    // 只会在kDecodeFirstFrame事件中携带，其它事件中为空
+    std::optional<DecoderInfo> decoderInfo;
 };
 
 // Seek事件参数

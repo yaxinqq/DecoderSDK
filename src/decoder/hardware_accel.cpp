@@ -258,15 +258,21 @@ AVFrame *HardwareAccel::getHWFrame(AVFrame *frame)
     return hwFrame;
 }
 
-bool HardwareAccel::transferFrameToHost(AVFrame *hwFrame, AVFrame *swFrame)
+bool HardwareAccel::transferFrameToHost(AVFrame *hwFrame, AVFrame *swFrame, int *ret)
 {
     if (!hwFrame || !swFrame || !initialized_) {
+        if (ret) {
+            *ret = AVERROR_EXTERNAL;
+        }
         return false;
     }
 
     // 如果不是硬件帧，直接返回
     if (hwFrame->format != hwPixFmt_) {
         LOG_WARN("Not a hardware frame");
+        if (ret) {
+            *ret = AVERROR_EXTERNAL;
+        }
         return false;
     }
 
@@ -279,20 +285,22 @@ bool HardwareAccel::transferFrameToHost(AVFrame *hwFrame, AVFrame *swFrame)
     swFrame->format = AV_PIX_FMT_NV12; // 大多数硬件解码器输出NV12格式
 
     // 分配软件帧缓冲区
-    int ret = av_frame_get_buffer(swFrame, 0);
-    if (ret < 0) {
-        char errBuf[AV_ERROR_MAX_STRING_SIZE];
-        av_strerror(ret, errBuf, sizeof(errBuf));
-        LOG_WARN("Failed to allocate software frame buffer: {}", errBuf);
+    int rCode = av_frame_get_buffer(swFrame, 0);
+    if (rCode < 0) {
+        LOG_WARN("Failed to allocate software frame buffer: {}", utils::avErr2Str(rCode));
+        if (ret) {
+            *ret = rCode;
+        }
         return false;
     }
 
     // 将硬件帧数据传输到软件帧
-    ret = av_hwframe_transfer_data(swFrame, hwFrame, 0);
-    if (ret < 0) {
-        char errBuf[AV_ERROR_MAX_STRING_SIZE];
-        av_strerror(ret, errBuf, sizeof(errBuf));
-        LOG_WARN("Failed to transfer frame data to host: {}", errBuf);
+    rCode = av_hwframe_transfer_data(swFrame, hwFrame, 0);
+    if (rCode < 0) {
+        LOG_WARN("Failed to transfer frame data to host: {}", utils::avErr2Str(rCode));
+        if (ret) {
+            *ret = rCode;
+        }
         return false;
     }
 
@@ -304,8 +312,21 @@ bool HardwareAccel::transferFrameToHost(AVFrame *hwFrame, AVFrame *swFrame)
 
 HWAccelType HardwareAccel::getBackendType() const
 {
-    if ((type_ != HWAccelType::kQsv && type_ != HWAccelType::kAmf) || !hwChildDeviceCtx_) {
+    if (type_ != HWAccelType::kQsv && type_ != HWAccelType::kAmf) {
         return HWAccelType::kNone;
+    }
+
+    // 使用的默认创建方式时，返回特定的解码后端类型
+    if (!hwChildDeviceCtx_) {
+#if defined(OS_WINDOWS)
+#if LIBAVUTIL_VERSION_MAJOR >= 57
+        return HWAccelType::kD3d11va;
+#else
+        return HWAccelType::kDxva2;
+#endif
+#else
+        return HWAccelType::kVaapi;
+#endif
     }
 
     AVHWDeviceContext *hwContext = (AVHWDeviceContext *)hwChildDeviceCtx_->data;
@@ -583,9 +604,9 @@ AVPixelFormat HardwareAccel::getHWPixelFormat(AVCodecContext *codecCtx,
                 }
             }
 #endif
-            if (hwPixFmt == AV_PIX_FMT_VULKAN) {
-                return vulkan_helper::getPixelFormat(codecCtx, pix_fmts);
-            }
+            // if (hwPixFmt == AV_PIX_FMT_VULKAN) {
+            //     return vulkan_helper::getPixelFormat(codecCtx, pix_fmts);
+            // }
 
             return hwPixFmt;
         }

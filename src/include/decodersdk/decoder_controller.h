@@ -265,6 +265,19 @@ public:
      */
     bool resetLoopCount();
 
+    /**
+     * @brief 得到流信息
+     *
+     * @return 流信息
+     */
+    const std::optional<StreamInfo> &streamInfo() const;
+    /**
+     * @brief 得到解码器信息
+     *
+     * @return 解码器信息
+     */
+    std::optional<DecoderInfo> decoderInfo(MediaType mediaType) const;
+
 private:
     std::unique_ptr<internal::DecoderController> impl_;
 };

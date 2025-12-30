@@ -16,6 +16,9 @@ namespace {
 constexpr int kMaxReadFailedCount = 5;
 // 包堆积个数
 constexpr int kAccumulatedPacketCount = 25;
+
+// 模块名称
+constexpr char kModuleName[] = "Demuxer";
 } // namespace
 
 DECODER_SDK_NAMESPACE_BEGIN
@@ -246,6 +249,12 @@ void Demuxer::resetLoopCount()
     utils::atomicUpdateIfNotEqual<int>(currentLoopCount_, 0);
 }
 
+const std::optional<StreamInfo> &Demuxer::streamInfo() const
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    return streamInfo_;
+}
+
 void Demuxer::demuxLoop()
 {
     AVPacket *pkt = av_packet_alloc();
@@ -350,7 +359,8 @@ void Demuxer::fileStreamDemuxLoop(AVPacket *pkt)
             // 文件结束
             if ((!videoPacketQueue_ || videoPacketQueue_->isEmpty()) &&
                 (!audioPacketQueue_ || audioPacketQueue_->isEmpty()) && isEof.value_or(false)) {
-                auto event = std::make_shared<StreamEventArgs>(url_, "Demuxer", "Stream Ended");
+                auto event = std::make_shared<StreamEventArgs>(
+                    url_, kModuleName, utils::eventType2Desc(EventType::kStreamEnded));
                 eventDispatcher_->triggerEvent(EventType::kStreamEnded, event);
 
                 // 检查是否需要循环播放（仅对文件流有效）
@@ -499,7 +509,8 @@ int Demuxer::readAndProcessPacket(AVPacket *pkt, bool &readFirstPacket, int &rea
 
         if (!readFirstPacket) {
             readFirstPacket = true;
-            auto event = std::make_shared<StreamEventArgs>(url_, "Demuxer", "Stream Read Data");
+            auto event = std::make_shared<StreamEventArgs>(
+                url_, kModuleName, utils::eventType2Desc(EventType::kStreamReadData));
             eventDispatcher_->triggerEvent(EventType::kStreamReadData, event);
         }
 
@@ -630,8 +641,8 @@ bool Demuxer::handleLoopPlayback()
     currentLoopCount_.fetch_add(1);
 
     // 触发循环播放事件
-    auto loopEvent =
-        std::make_shared<LoopEventArgs>(currentLoopCount_, maxLoops_, "Demuxer", "Stream Looped");
+    auto loopEvent = std::make_shared<LoopEventArgs>(
+        currentLoopCount_, maxLoops_, kModuleName, utils::eventType2Desc(EventType::kStreamLooped));
     eventDispatcher_->triggerEvent(EventType::kStreamLooped, loopEvent);
 
     LOG_INFO("Stream looped: current={}, max={}", currentLoopCount_.load(), maxLoops_.load());
@@ -640,7 +651,8 @@ bool Demuxer::handleLoopPlayback()
 
 int Demuxer::handleReadError()
 {
-    auto event = std::make_shared<StreamEventArgs>(url_, "Demuxer", "Stream Read Error");
+    auto event = std::make_shared<StreamEventArgs>(
+        url_, kModuleName, utils::eventType2Desc(EventType::kStreamReadError));
     eventDispatcher_->triggerEvent(EventType::kStreamReadError, event);
     return -2; // 严重错误
 }
@@ -748,11 +760,13 @@ bool Demuxer::openInternal(const std::string &url, const Config &config,
     }
 
     // 上报流正在打开事件
-    auto event = std::make_shared<StreamEventArgs>(url, "Demuxer", "Stream Opening");
+    auto event = std::make_shared<StreamEventArgs>(
+        url, kModuleName, utils::eventType2Desc(EventType::kStreamOpening));
     eventDispatcher_->triggerEvent(EventType::kStreamOpening, event);
 
     const auto sendFailedEvent = [this, url]() {
-        auto event = std::make_shared<StreamEventArgs>(url, "Demuxer", "Stream Open Failed");
+        auto event = std::make_shared<StreamEventArgs>(
+            url, kModuleName, utils::eventType2Desc(EventType::kStreamOpenFailed));
         eventDispatcher_->triggerEvent(EventType::kStreamOpenFailed, event);
     };
 
@@ -813,6 +827,9 @@ bool Demuxer::openInternal(const std::string &url, const Config &config,
         audioPacketQueue_ = std::make_shared<PacketQueue>(1000);
     }
 
+    // 组装流信息
+    setupStreamInfo(url, config.decodeMediaType);
+
     // 设置状态
     url_ = url;
     isRealTime_ = isRealTime;
@@ -831,16 +848,10 @@ bool Demuxer::openInternal(const std::string &url, const Config &config,
     // 启动解复用器
     start();
 
-    // 获取流总时长（以秒为单位）
-    std::optional<int> totalTime;
-    if (formatContext_ && formatContext_->duration != AV_NOPTS_VALUE) {
-        // 将时长从微秒转换为秒
-        totalTime = static_cast<int>(formatContext_->duration / AV_TIME_BASE);
-    }
-
     // 上报成功事件
-    event = std::make_shared<StreamEventArgs>(url, "Demuxer", "Stream Opened");
-    event->totalTime = totalTime;
+    event = std::make_shared<StreamEventArgs>(url, kModuleName,
+                                              utils::eventType2Desc(EventType::kStreamOpened));
+    event->streamInfo = streamInfo_;
     eventDispatcher_->triggerEvent(EventType::kStreamOpened, event);
 
     LOG_INFO("Successfully opened: {}", url);
@@ -874,8 +885,12 @@ bool Demuxer::closeInternal()
     isRealTime_ = false;
     isOpened_ = false;
 
+    // 清空流信息
+    streamInfo_.reset();
+
     // 上报流关闭事件
-    const auto event = std::make_shared<StreamEventArgs>(url_, "Demuxer", "Stream Close");
+    const auto event = std::make_shared<StreamEventArgs>(
+        url_, kModuleName, utils::eventType2Desc(EventType::kStreamClose));
     eventDispatcher_->triggerEvent(EventType::kStreamClose, event);
 
     return true;
@@ -971,6 +986,52 @@ void Demuxer::stop()
 
     isStarted_ = false;
     LOG_INFO("{} demuxer stopped!", url_);
+}
+
+void Demuxer::setupStreamInfo(const std::string_view &url, Config::DecodeMediaType decodeMediaType)
+{
+    if (!formatContext_)
+        return;
+
+    // 获取流总时长（以秒为单位）
+    std::optional<int> totalTime;
+    if (formatContext_ && formatContext_->duration != AV_NOPTS_VALUE) {
+        // 将时长从微秒转换为秒
+        totalTime = static_cast<int>(formatContext_->duration / AV_TIME_BASE);
+    }
+
+    // 组装流信息
+    streamInfo_ = StreamInfo();
+    streamInfo_->url = url;
+    streamInfo_->totalTime = totalTime;
+    streamInfo_->inputFormat = formatContext_->iformat->name;
+    if (videoStreamIndex_ >= 0 && (decodeMediaType & Config::DecodeMediaType::kVideo)) {
+        auto *const stream = formatContext_->streams[videoStreamIndex_];
+        streamInfo_->videoInfo = StreamInfo::VideoInfo();
+        streamInfo_->videoInfo->width = stream->codecpar->width;
+        streamInfo_->videoInfo->height = stream->codecpar->height;
+
+        auto frameRateRational = stream->avg_frame_rate;
+        if (frameRateRational.den <= 0) {
+            frameRateRational = av_guess_frame_rate(formatContext_, stream, NULL);
+        }
+        if (frameRateRational.den <= 0) {
+            frameRateRational = stream->r_frame_rate;
+        }
+        if (frameRateRational.den <= 0) {
+            frameRateRational = stream->codecpar->framerate;
+        }
+        streamInfo_->videoInfo->frameRate = frameRateRational.num / frameRateRational.den;
+
+        streamInfo_->videoInfo->colorRange =
+            utils::avColorRange2Desc(stream->codecpar->color_range);
+    }
+    if (audioStreamIndex_ >= 0 && (decodeMediaType & Config::DecodeMediaType::kAudio)) {
+        auto *const stream = formatContext_->streams[audioStreamIndex_];
+        streamInfo_->audioInfo = StreamInfo::AudioInfo();
+        streamInfo_->audioInfo->sampleRate = stream->codecpar->sample_rate;
+        streamInfo_->audioInfo->channels = stream->codecpar->ch_layout.nb_channels;
+    }
 }
 
 INTERNAL_NAMESPACE_END

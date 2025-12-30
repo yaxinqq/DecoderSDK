@@ -172,6 +172,20 @@ public:
      */
     bool isWaitingForPreBuffer() const;
 
+    /**
+     * @brief 得到解码器信息
+     * 
+     * @return 解码器信息
+     */
+    virtual std::optional<DecoderInfo> decoderInfo() const = 0;
+
+    /**
+     * @brief 获得解码器名称
+     * 
+     * @return 解码器名称
+     */
+    virtual const char *const decoderName() const = 0;
+
 protected:
     /**
      * @brief 解码循环
@@ -204,32 +218,33 @@ protected:
     // 公共的错误处理方法
     /**
      * @brief 处理第一个解码成功的帧
-     * @param decoderName 解码器名称
      * @param mediaType 媒体类型
-     * @param description 描述信息
      * @return true 成功，false 失败
      */
-    bool handleFirstFrame(const std::string &decoderName, MediaType mediaType,
-                          const std::string &description = "First frame ready!");
+    bool handleFirstFrame();
     /**
      * @brief 处理解码错误
-     * @param decoderName 解码器名称
      * @param mediaType 媒体类型
      * @param errorCode 错误码
-     * @param description 描述信息
      * @return true 成功，false 失败
      */
-    bool handleDecodeError(const std::string &decoderName, MediaType mediaType, int errorCode,
-                           const std::string &description = "Decoder error!");
+    bool handleDecodeError(int errorCode);
+
+    /**
+     * @brief 处理解码数据帧格式转换错误
+     * @param mediaType 媒体类型
+     * @param errorCode 错误码
+     * @return true 成功，false 失败
+     */
+    bool handleDecodeTransError(int errorCode);
+
     /**
      * @brief 处理解码恢复
-     * @param decoderName 解码器名称
      * @param mediaType 媒体类型
      * @param description 描述信息
      * @return true 成功，false 失败
      */
-    bool handleDecodeRecovery(const std::string &decoderName, MediaType mediaType,
-                              const std::string &description = "Decoder Recovery!");
+    bool handleDecodeRecovery();
 
     /**
      * @brief 计算帧显示时间（单位 ms）
@@ -240,8 +255,7 @@ protected:
      * @return double 帧显示时间（单位 ms）
      */
     double calculateFrameDisplayTime(
-        double pts, double duration,
-        const std::chrono::system_clock::time_point &currentTime,
+        double pts, double duration, const std::chrono::system_clock::time_point &currentTime,
         std::optional<std::chrono::system_clock::time_point> &lastFrameTime) const;
 
     /**
@@ -293,7 +307,7 @@ protected:
     // 解码最大连续错误容忍次数
     std::atomic_uint16_t maxConsecutiveErrors_{5};
     // 解码错误后，恢复的时间间隔（ms）
-    std::atomic_uint16_t recoveryInterval_{3};
+    std::atomic_uint16_t recoveryInterval_{1};
 
     // 同步控制器
     std::shared_ptr<StreamSyncManager> syncController_;
