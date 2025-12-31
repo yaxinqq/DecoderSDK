@@ -21,6 +21,13 @@ public:
     SoftwareRender();
     ~SoftwareRender() override;
 
+    /**
+     * @brief 得到渲染器名称
+     *
+     * @return 渲染器名称
+     */
+    QString renderName() const override;
+
 protected:
     /**
      * @brief 初始化VBO

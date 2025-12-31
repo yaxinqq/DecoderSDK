@@ -16,6 +16,13 @@ public:
     Nv12Render_Vaapi(QOpenGLContext *ctx);
     ~Nv12Render_Vaapi() override;
 
+    /**
+     * @brief 得到渲染器名称
+     *
+     * @return 渲染器名称
+     */
+    QString renderName() const override;
+
 protected:
     /**
      * @brief 初始化VBO

@@ -10,35 +10,6 @@
 #include <mutex>
 
 namespace {
-const char *vsrc = R"(
-#ifdef GL_ES
-    precision mediump float;
-#endif
-	
-    attribute vec4 vertexIn;
-    attribute vec2 textureIn;
-    varying vec2 textureOut;
-    void main(void)
-    {
-        gl_Position = vertexIn;
-        textureOut = textureIn;
-    }
-)";
-
-const char *fsrc = R"(
-#ifdef GL_ES
-    precision mediump float;
-#endif
-
-    uniform sampler2D texture;
-    varying vec2 textureOut;
-
-    void main(void)
-    {
-        gl_FragColor = texture2D(texture, textureOut);
-    }
-)";
-
 // 全局锁
 static std::mutex g_mutex;
 
@@ -341,22 +312,22 @@ Nv12Render_Vulkan::~Nv12Render_Vulkan()
 {
     cleanupVulkanResources();
     cleanupOpenGLResources();
+}
 
-    vbo_.destroy();
+QString Nv12Render_Vulkan::renderName() const
+{
+    return QStringLiteral("Vulkan Interop To OpenGL Render");
 }
 
 bool Nv12Render_Vulkan::initRenderVbo(const bool horizontal, const bool vertical)
 {
-    initDefaultVBO(vbo_, horizontal, vertical);
+    horizontalMirror_ = horizontal;
+    verticalMirror_ = vertical;
     return true;
 }
 
 bool Nv12Render_Vulkan::initRenderShader(const decoder_sdk::Frame &frame)
 {
-    program_.addCacheableShaderFromSourceCode(QOpenGLShader::Vertex, vsrc);
-    program_.addCacheableShaderFromSourceCode(QOpenGLShader::Fragment, fsrc);
-    program_.link();
-
     return true;
 }
 
@@ -384,9 +355,56 @@ bool Nv12Render_Vulkan::renderFrame(const decoder_sdk::Frame &frame)
         return false;
     }
 
-    // OpenGL渲染共享的RGBA纹理
-    drawFrame(glRGBATexture_);
+    return blitToCurrentFbo(frame.width(), frame.height());
+}
 
+bool Nv12Render_Vulkan::ensureInteropReadFbo()
+{
+    if (!glRGBATexture_) {
+        return false;
+    }
+
+    if (!glInteropReadFbo_) {
+        glGenFramebuffers(1, &glInteropReadFbo_);
+        if (!glInteropReadFbo_) {
+            return false;
+        }
+    }
+
+    GLint prevFbo = 0;
+    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prevFbo);
+
+    glBindFramebuffer(GL_FRAMEBUFFER, glInteropReadFbo_);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, glRGBATexture_, 0);
+    const GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+    glBindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(prevFbo));
+    return status == GL_FRAMEBUFFER_COMPLETE;
+}
+
+bool Nv12Render_Vulkan::blitToCurrentFbo(int width, int height)
+{
+    if (!ensureInteropReadFbo()) {
+        return false;
+    }
+
+    GLint prevReadFbo = 0;
+    GLint prevDrawFbo = 0;
+    glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &prevReadFbo);
+    glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &prevDrawFbo);
+
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, glInteropReadFbo_);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, static_cast<GLuint>(prevDrawFbo));
+
+    const int srcX0 = horizontalMirror_ ? width : 0;
+    const int srcX1 = horizontalMirror_ ? 0 : width;
+    const int srcY0 = verticalMirror_ ? 0 : height;
+    const int srcY1 = verticalMirror_ ? height : 0;
+
+    glBlitFramebuffer(srcX0, srcY0, srcX1, srcY1, 0, 0, width, height, GL_COLOR_BUFFER_BIT,
+                      GL_LINEAR);
+
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, static_cast<GLuint>(prevReadFbo));
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, static_cast<GLuint>(prevDrawFbo));
     return true;
 }
 
@@ -1134,32 +1152,6 @@ bool Nv12Render_Vulkan::convertNV12ToRGBA(const decoder_sdk::Frame &frame)
     return true;
 }
 
-void Nv12Render_Vulkan::drawFrame(GLuint rgbaTexture)
-{
-    if (rgbaTexture == 0) {
-        qWarning() << QStringLiteral("[Nv12Render_Vulkan] Invalid RGBA texture.");
-        return;
-    }
-
-    program_.bind();
-    vbo_.bind();
-    program_.enableAttributeArray("vertexIn");
-    program_.enableAttributeArray("textureIn");
-    program_.setAttributeBuffer("vertexIn", GL_FLOAT, 0, 2, 0);
-    program_.setAttributeBuffer("textureIn", GL_FLOAT, 2 * 4 * sizeof(GLfloat), 2, 0);
-
-    glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, rgbaTexture);
-    program_.setUniformValue("texture", 0);
-
-    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-
-    program_.disableAttributeArray("vertexIn");
-    program_.disableAttributeArray("textureIn");
-    vbo_.release();
-    program_.release();
-}
-
 #ifdef _WIN32
 bool Nv12Render_Vulkan::exportMemoryHandle(VkDeviceMemory memory, HANDLE &outHandle)
 {
@@ -1367,6 +1359,10 @@ void Nv12Render_Vulkan::cleanupOpenGLResources()
     if (glRGBATexture_) {
         glDeleteTextures(1, &glRGBATexture_);
         glRGBATexture_ = 0;
+    }
+    if (glInteropReadFbo_) {
+        glDeleteFramebuffers(1, &glInteropReadFbo_);
+        glInteropReadFbo_ = 0;
     }
     if (glMemoryObject_) {
         if (glDeleteMemoryObjectsEXT)

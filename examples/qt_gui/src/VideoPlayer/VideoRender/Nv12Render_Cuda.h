@@ -17,6 +17,13 @@ public:
     Nv12Render_Cuda();
     ~Nv12Render_Cuda() override;
 
+    /**
+     * @brief 得到渲染器名称
+     *
+     * @return 渲染器名称
+     */
+    QString renderName() const override;
+
 protected:
     /**
      * @brief 初始化VBO

@@ -5,15 +5,20 @@
 #include "VideoRender.h"
 
 #include <QMutex>
-#include <QOpenGLBuffer>
 #include <QOpenGLFramebufferObject>
 #include <QOpenGLFunctions>
-#include <QOpenGLShaderProgram>
 
 class Nv12Render_Vulkan : public VideoRender {
 public:
     Nv12Render_Vulkan();
     ~Nv12Render_Vulkan() override;
+
+    /**
+     * @brief 得到渲染器名称
+     *
+     * @return 渲染器名称
+     */
+    QString renderName() const override;
 
 protected:
     /**
@@ -76,12 +81,21 @@ private:
      */
     bool convertNV12ToRGBA(const decoder_sdk::Frame &frame);
 
-    /*
-     * @brief 绘制视频帧
+    /**
+     * @brief 确保用来互操作的可读取FBO已初始化完成
      *
-     * @param rgbaTexture openGL纹理ID
+     * @return 是否初始化成功
      */
-    void drawFrame(GLuint rgbaTexture);
+    bool ensureInteropReadFbo();
+
+    /**
+     * @brief 拷贝当前的FBO
+     *
+     * @param width 纹理宽度
+     * @param height 纹理高度
+     * @return 拷贝是否完成
+     */
+    bool blitToCurrentFbo(int width, int height);
 
 #ifdef _WIN32
     /*
@@ -149,10 +163,6 @@ private:
     const vkb::InstanceDispatchTable &vkInstanceDispatchTable_;
     const vkb::DispatchTable &vkDispatchTable_;
 
-    // OpenGL的相关对象
-    QOpenGLShaderProgram program_;
-    QOpenGLBuffer vbo_;
-
     // Vulkan渲染管线
     VkPipeline graphicsPipeline_ = VK_NULL_HANDLE;
     VkPipelineLayout graphicsPipelineLayout_ = VK_NULL_HANDLE;
@@ -183,6 +193,9 @@ private:
     // OpenGL导入的RGBA纹理
     GLuint glRGBATexture_ = 0;
     GLuint glMemoryObject_ = 0;
+    GLuint glInteropReadFbo_ = 0;
+    bool horizontalMirror_ = false;
+    bool verticalMirror_ = false;
 
     // 标记是否初始化成功
     bool isInteropInitialized_ = false;

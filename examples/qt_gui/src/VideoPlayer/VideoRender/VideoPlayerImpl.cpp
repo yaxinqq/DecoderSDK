@@ -354,10 +354,11 @@ void VideoPlayerImpl::onDecoderEventChanged(decoder_sdk::EventType type,
 
             streamOpenTimeout_.store(false);
 
-			if (auto *const streamEvent =
-                    dynamic_cast<decoder_sdk::StreamEventArgs *>(event.get())) {
-                emit totalTimeRecved(streamEvent->totalTime.value_or(-1));
-			}
+			if (auto *const streamEvent = dynamic_cast<decoder_sdk::StreamEventArgs *>(event.get());
+                streamEvent && streamEvent->streamInfo.has_value()) {
+
+                 emit totalTimeRecved(streamEvent->streamInfo->totalTime.value_or(-1));
+            }
             break;
 		}
         case decoder_sdk::EventType::kCreateDecoderFailed:

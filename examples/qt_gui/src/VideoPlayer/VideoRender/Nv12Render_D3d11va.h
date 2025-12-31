@@ -3,10 +3,8 @@
 #include "CommonUtils.h"
 #include "VideoRender.h"
 
-#include <QOpenGLBuffer>
 #include <QOpenGLFramebufferObject>
 #include <QOpenGLFunctions>
-#include <QOpenGLShaderProgram>
 
 #ifdef _WIN32
 #include <Windows.h>
@@ -31,6 +29,13 @@ public:
      * @return 是否需要重建
      */
     bool shouldRebuild() const;
+
+    /**
+     * @brief 得到渲染器名称
+     *
+     * @return 渲染器名称
+     */
+    QString renderName() const override;
 
 protected:
     /**
@@ -85,7 +90,7 @@ private:
      * @param width 视频帧宽
      * @param height 视频帧高
      */
-    bool initializeVideoProcessor(int width, int height);
+    bool initializeNv12Converter();
     /*
      * @brief 清理申请的资源
      */
@@ -100,69 +105,90 @@ private:
      * @param frame 帧数据
      */
     bool processNV12ToRGB(const decoder_sdk::Frame &frame);
+
+    /**
+     * @brief 确保输出纹理和互操作资源初始化完成
+     *
+     * @param width 纹理宽度
+     * @param height 纹理高度
+     * @return 是否初始化成功
+     */
+    bool ensureOutputTextureAndInterop(int width, int height);
+
+    /**
+     * @brief 确保输入的着色器资源已初始化完成
+     *
+     * @param cmdContext D3D11设备上下文
+     * @param sourceTexture 源纹理
+     * @param arraySlice 纹理队列索引
+     * @param outYSrv 输出的Y平面着色器资源视图
+     * @param outUVSrv 输出的UV平面着色器资源视图
+     * @return 是否初始化成功
+     */
+    bool ensureInputShaderResources(ID3D11DeviceContext *cmdContext, ID3D11Texture2D *sourceTexture,
+                                    UINT arraySlice,
+                                    ComPtr<ID3D11ShaderResourceView> &outYSrv,
+                                    ComPtr<ID3D11ShaderResourceView> &outUVSrv);
+
+    /**
+     * @brief 确保用来互操作的可读取FBO已初始化完成
+     *
+     * @return 是否初始化成功
+     */
+    bool ensureInteropReadFbo();
+
+    /**
+     * @brief 拷贝当前的FBO
+     *
+     * @param width 纹理宽度
+     * @param height 纹理高度
+     * @return 拷贝是否完成
+     */
+    bool blitToCurrentFbo(int width, int height);
+
     /*
-     * @brief D3D Texture 和 OpenGL Texture 互注册（Zero-copy）
+     * @brief D3D Texture 和 OpenGL Texture 互注册
+     *
+     * @param width 纹理宽度
+     * @param height 纹理高度
      */
     bool registerTextureWithOpenGL(int width, int height);
-
-    /*
-     * @brief 等待D3D11 GPU操作完成的同步函数
-     */
-    bool waitForGPUCompletion();
-
-    /*
-     * @brief 绘制视频帧
-     *
-     * @prarm id RGB纹理
-     */
-    bool drawFrame(GLuint id);
 
 private:
     // D3D11设备和上下文
     ComPtr<ID3D11Device> d3d11Device_;
     ComPtr<ID3D11DeviceContext> d3d11Context_;
+    ComPtr<ID3D11DeviceContext> d3d11DeferredContext_;
 
-    // VideoProcessor相关
-    ComPtr<ID3D11VideoDevice> videoDevice_;
-    ComPtr<ID3D11VideoContext> videoContext_;
-    ComPtr<ID3D11VideoProcessor> videoProcessor_;
-    ComPtr<ID3D11VideoProcessorEnumerator> videoProcessorEnum_;
+    ComPtr<ID3D11VertexShader> nv12VertexShader_;
+    ComPtr<ID3D11PixelShader> nv12PixelShader_;
+    ComPtr<ID3D11PixelShader> p010PixelShader_;
+    ComPtr<ID3D11SamplerState> nv12Sampler_;
+    ComPtr<ID3D11Buffer> texScaleCb_;
 
     // WGL设备句柄
     wgl::WglDeviceRef wglD3DDevice_;
 
-    // 输入NV12纹理
-    ComPtr<ID3D11Texture2D> inputNV12Texture_ = nullptr;
-    ComPtr<ID3D11VideoProcessorInputView> inputView_ = nullptr;
-    // 前一次输入纹理的格式
-    DXGI_FORMAT prevInputFormat_ = DXGI_FORMAT_UNKNOWN;
-    // 前一次输入纹理的矩形区域
-    RECT prevInputRect_ = {0, 0, 0, 0};
+    int outputWidth_ = 0;
+    int outputHeight_ = 0;
 
     // 输出RGB纹理
     ComPtr<ID3D11Texture2D> outputRGBTexture_ = nullptr;
-    ComPtr<ID3D11VideoProcessorOutputView> outputView_ = nullptr;
-    HANDLE rgbSharedHandle_ = nullptr;
+    ComPtr<ID3D11RenderTargetView> outputRTV_ = nullptr;
 
     // OpenGL纹理
     GLuint glRGBTexture_ = 0;
     HANDLE wglTextureHandle_ = nullptr;
 
-    // OpenGL资源
-    QOpenGLShaderProgram program_;
-    QOpenGLBuffer vbo_;
+    // 用于交换的FBO
+    GLuint glInteropReadFbo_ = 0;
+    bool horizontalMirror_ = false;
+    bool verticalMirror_ = false;
 
-    // 资源缓存结构
-    struct ResourceCacheEntry {
-        ComPtr<ID3D11Texture2D> inputTexture;
-        ComPtr<ID3D11VideoProcessorInputView> inputView;
-    };
-
-    std::map<std::pair<uintptr_t, UINT>, ResourceCacheEntry> resourceCache_;
-
-    // 同步机制相关
-    ComPtr<ID3D11Query> eventQuery_ = nullptr; // D3D11事件查询对象
-    bool enableSyncWorkaround_ = true;         // 是否启用同步解决方案
+    // 不同逻辑设备
+    ComPtr<ID3D11Texture2D> inputCopyTexture_ = nullptr;
+    ComPtr<ID3D11ShaderResourceView> inputCopyYSrv_ = nullptr;
+    ComPtr<ID3D11ShaderResourceView> inputCopyUVSrv_ = nullptr;
 
     // 是否需要重建
     bool shouldReBuild_ = false;

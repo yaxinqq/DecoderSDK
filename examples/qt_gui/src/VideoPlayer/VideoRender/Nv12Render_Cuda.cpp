@@ -8,7 +8,7 @@
 #include "../CommonUtils.h"
 
 namespace {
-const char *vsrc = R"(
+    const char *vsrc = R"(
 #ifdef GL_ES
     precision mediump float;
 #endif
@@ -23,7 +23,7 @@ const char *vsrc = R"(
 	}
 )";
 
-const char *fsrc = R"(
+    const char *fsrc = R"(
 #ifdef GL_ES
     precision mediump float;
 #endif
@@ -71,7 +71,9 @@ inline bool check(CUresult e, int iLine, const char *szFile)
 
 #define ck(call) check(call, __LINE__, __FILE__)
 
-Nv12Render_Cuda::Nv12Render_Cuda() : VideoRender(), context_(cuda_utils::getCudaContext())
+Nv12Render_Cuda::Nv12Render_Cuda()
+    : VideoRender()
+    , context_(cuda_utils::getCudaContext())
 {
     cuda_utils::cuCtxSetCurrent(context_);
 }
@@ -97,9 +99,14 @@ Nv12Render_Cuda::~Nv12Render_Cuda()
     }
 
     vbo_.destroy();
-    for (auto *id : {&idY_, &idUV_}) {
+    for (auto *id : { &idY_, &idUV_ }) {
         glDeleteTextures(1, id);
     }
+}
+
+QString Nv12Render_Cuda::renderName() const
+{
+    return QStringLiteral("Cuda Interop To OpenGL Render");
 }
 
 bool Nv12Render_Cuda::initRenderVbo(const bool horizontal, const bool vertical)
@@ -189,7 +196,7 @@ bool Nv12Render_Cuda::renderFrame(const decoder_sdk::Frame &frame)
     }
 
     // Y通道处理
-    CUDA_MEMCPY2D mY = {0};
+    CUDA_MEMCPY2D mY = { 0 };
     mY.srcMemoryType = CU_MEMORYTYPE_DEVICE;
     mY.srcDevice = reinterpret_cast<CUdeviceptr>(frame.data(0));
     mY.srcPitch = frame.linesize(0);
@@ -200,7 +207,7 @@ bool Nv12Render_Cuda::renderFrame(const decoder_sdk::Frame &frame)
     ck(cuda_utils::cuMemcpy2DAsync(&mY, copyYStream_));
 
     // UV 通道处理
-    CUDA_MEMCPY2D mUV = {0};
+    CUDA_MEMCPY2D mUV = { 0 };
     mUV.srcMemoryType = CU_MEMORYTYPE_DEVICE;
     mUV.srcDevice = reinterpret_cast<CUdeviceptr>(frame.data(1));
     mUV.srcPitch = frame.linesize(1);

@@ -1,4 +1,4 @@
-﻿#ifdef DXVA2_AVAILABLE
+#ifdef DXVA2_AVAILABLE
 #include "Nv12Render_Dxva2.h"
 
 #ifdef QSV_AVAILABLE
@@ -12,38 +12,10 @@
 #endif
 
 namespace {
-// 顶点着色器源码
-const char *vsrc = R"(
-#ifdef GL_ES
-    precision mediump float;
-#endif
-
-    attribute vec4 vertexIn;
-    attribute vec2 textureIn;
-    varying vec2 textureOut;
-    void main(void)
-    {
-        gl_Position = vertexIn;
-        textureOut = textureIn;
-    }
-)";
-
-// RGB纹理渲染的片段着色器
-const char *fsrc = R"(
-#ifdef GL_ES
-    precision mediump float;
-#endif
-
-    uniform sampler2D texture0;
-    varying vec2 textureOut;
-    void main(void)
-    {
-        gl_FragColor = texture2D(texture0, textureOut);
-    }
-)";
 } // namespace
 
-Nv12Render_Dxva2::Nv12Render_Dxva2() : VideoRender()
+Nv12Render_Dxva2::Nv12Render_Dxva2()
+    : VideoRender()
 {
     initializeD3DResource(dxva2_utils::getDXVA2Device(), dxva2_utils::getWglDeviceRef());
 }
@@ -52,9 +24,6 @@ Nv12Render_Dxva2::~Nv12Render_Dxva2()
 {
     cleanup();
     d3d9Device_.Reset();
-
-    // 清理VBO
-    vbo_.destroy();
 }
 
 bool Nv12Render_Dxva2::shouldRebuild() const
@@ -62,18 +31,20 @@ bool Nv12Render_Dxva2::shouldRebuild() const
     return shouldReBuild_;
 }
 
+QString Nv12Render_Dxva2::renderName() const
+{
+    return QStringLiteral("DXVA2 Interop To OpenGL Render");
+}
+
 bool Nv12Render_Dxva2::initRenderVbo(const bool horizontal, const bool vertical)
 {
-    initDefaultVBO(vbo_, horizontal, vertical);
+    horizontalMirror_ = horizontal;
+    verticalMirror_ = vertical;
     return true;
 }
 
 bool Nv12Render_Dxva2::initRenderShader(const decoder_sdk::Frame &frame)
 {
-    program_.addCacheableShaderFromSourceCode(QOpenGLShader::Vertex, vsrc);
-    program_.addCacheableShaderFromSourceCode(QOpenGLShader::Fragment, fsrc);
-    program_.link();
-
     return true;
 }
 
@@ -192,8 +163,7 @@ bool Nv12Render_Dxva2::renderFrame(const decoder_sdk::Frame &frame)
         return false;
     }
 
-    // 绘制
-    return drawFrame(sharedTexture_);
+    return blitToCurrentFbo(frame.width(), frame.height());
 }
 
 bool Nv12Render_Dxva2::initializeD3DResource(const ComPtr<IDirect3DDevice9Ex> &d3d9Device,
@@ -249,6 +219,11 @@ void Nv12Render_Dxva2::cleanup()
         sharedTexture_ = 0;
     }
 
+    if (glInteropReadFbo_) {
+        glDeleteFramebuffers(1, &glInteropReadFbo_);
+        glInteropReadFbo_ = 0;
+    }
+
     if (rgbRenderTarget_) {
         rgbRenderTarget_.Reset();
     }
@@ -298,7 +273,7 @@ bool Nv12Render_Dxva2::convertNv12ToRgbStretchRect(LPDIRECT3DSURFACE9 nv12Surfac
     };
 
     // 设置目标矩形（输出纹理区域）
-    RECT destRect = {0, 0, static_cast<LONG>(frame.width()), static_cast<LONG>(frame.height())};
+    RECT destRect = { 0, 0, static_cast<LONG>(frame.width()), static_cast<LONG>(frame.height()) };
 
     // 使用StretchRect进行格式转换和拷贝
     // 注意：这个方法依赖于D3D9驱动程序的内部转换能力
@@ -370,6 +345,10 @@ bool Nv12Render_Dxva2::registerTextureWithOpenGL(int width, int height)
     }
 
     // 注册RGB渲染目标表面
+    glBindTexture(GL_TEXTURE_2D, sharedTexture_);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+    glBindTexture(GL_TEXTURE_2D, 0);
+
     wglTextureHandle_ = wglD3DDevice_.wglDXRegisterObjectNV(rgbRenderTarget_.Get(), sharedTexture_,
                                                             GL_TEXTURE_2D, WGL_ACCESS_READ_ONLY_NV);
     if (!wglTextureHandle_) {
@@ -384,37 +363,57 @@ bool Nv12Render_Dxva2::registerTextureWithOpenGL(int width, int height)
     return true;
 }
 
-bool Nv12Render_Dxva2::drawFrame(GLuint id)
+bool Nv12Render_Dxva2::ensureInteropReadFbo()
 {
-    if (!sharedTexture_ || !program_.isLinked() || !wglTextureHandle_) {
-        qWarning() << QStringLiteral("[Nv12Render_Dxva2] Not ready for drawing!");
+    if (!sharedTexture_) {
         return false;
     }
 
-    // 使用着色器程序
-    program_.bind();
+    if (!glInteropReadFbo_) {
+        glGenFramebuffers(1, &glInteropReadFbo_);
+        if (!glInteropReadFbo_) {
+            return false;
+        }
+    }
 
-    // 绑定纹理
-    glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, sharedTexture_);
-    program_.setUniformValue("texture0", 0);
+    GLint prevFbo = 0;
+    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prevFbo);
 
-    // 绑定顶点缓冲区
-    vbo_.bind();
-    program_.enableAttributeArray("vertexIn");
-    program_.enableAttributeArray("textureIn");
-    program_.setAttributeBuffer("vertexIn", GL_FLOAT, 0, 2, 0);
-    program_.setAttributeBuffer("textureIn", GL_FLOAT, 2 * 4 * sizeof(GLfloat), 2, 0);
+    glBindFramebuffer(GL_FRAMEBUFFER, glInteropReadFbo_);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, sharedTexture_, 0);
+    const GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+    glBindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(prevFbo));
+    return status == GL_FRAMEBUFFER_COMPLETE;
+}
 
-    // 绘制
-    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+bool Nv12Render_Dxva2::blitToCurrentFbo(int width, int height)
+{
+    if (!wglTextureHandle_) {
+        return false;
+    }
 
-    // 清理
-    program_.disableAttributeArray("vertexIn");
-    program_.disableAttributeArray("textureIn");
-    vbo_.release();
-    glBindTexture(GL_TEXTURE_2D, 0);
-    program_.release();
+    if (!ensureInteropReadFbo()) {
+        return false;
+    }
+
+    GLint prevReadFbo = 0;
+    GLint prevDrawFbo = 0;
+    glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &prevReadFbo);
+    glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &prevDrawFbo);
+
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, glInteropReadFbo_);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, static_cast<GLuint>(prevDrawFbo));
+
+    const int srcX0 = horizontalMirror_ ? width : 0;
+    const int srcX1 = horizontalMirror_ ? 0 : width;
+    const int srcY0 = verticalMirror_ ? 0 : height;
+    const int srcY1 = verticalMirror_ ? height : 0;
+
+    glBlitFramebuffer(srcX0, srcY0, srcX1, srcY1, 0, 0, width, height, GL_COLOR_BUFFER_BIT,
+                      GL_LINEAR);
+
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, static_cast<GLuint>(prevReadFbo));
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, static_cast<GLuint>(prevDrawFbo));
 
     return true;
 }

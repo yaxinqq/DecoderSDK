@@ -65,6 +65,13 @@ public:
      */
     RenderBufferQueue::Statistics getStatistics() const;
 
+    /**
+     * @brief 得到渲染器名称
+     *
+     * @return 渲染器名称
+     */
+    virtual QString renderName() const = 0;
+
 protected:
     /**
      * @brief 初始化VBO

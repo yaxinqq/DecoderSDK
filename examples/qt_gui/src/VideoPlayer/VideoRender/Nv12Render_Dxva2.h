@@ -6,9 +6,7 @@
 #include "VideoRender.h"
 
 #include <QDebug>
-#include <QOpenGLBuffer>
 #include <QOpenGLFunctions>
-#include <QOpenGLShaderProgram>
 
 #ifdef _WIN32
 #include <Windows.h>
@@ -31,6 +29,13 @@ public:
      * @return 是否需要重建
      */
     bool shouldRebuild() const;
+
+    /**
+     * @brief 得到渲染器名称
+     *
+     * @return 渲染器名称
+     */
+    QString renderName() const override;
 
 protected:
     /**
@@ -102,12 +107,21 @@ private:
      */
     bool registerTextureWithOpenGL(int width, int height);
 
-    /*
-     * @brief 绘制视频帧
+    /**
+     * @brief 确保用来互操作的可读取FBO已初始化完成
      *
-     * @prarm id RGB纹理
+     * @return 是否初始化成功
      */
-    bool drawFrame(GLuint id);
+    bool ensureInteropReadFbo();
+
+    /**
+     * @brief 拷贝当前的FBO
+     *
+     * @param width 纹理宽度
+     * @param height 纹理高度
+     * @return 拷贝是否完成
+     */
+    bool blitToCurrentFbo(int width, int height);
 
 private:
     // D3D9 related
@@ -123,8 +137,9 @@ private:
 
     // OpenGL resources
     GLuint sharedTexture_ = 0;
-    QOpenGLShaderProgram program_;
-    QOpenGLBuffer vbo_;
+    GLuint glInteropReadFbo_ = 0;
+    bool horizontalMirror_ = false;
+    bool verticalMirror_ = false;
 
     // 是否需要重建
     bool shouldReBuild_ = false;
