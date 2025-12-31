@@ -49,11 +49,16 @@ set_target_properties(${EXAMPLE_TARGET} PROPERTIES
 # 包含目录
 target_include_directories(${EXAMPLE_TARGET} PRIVATE
     ${GLOBAL_INCLUDE_DIRS}
+    ${CMAKE_CURRENT_SOURCE_DIR}/../external/shaderc/include
 )
 
 # 链接库
+target_link_directories(${EXAMPLE_TARGET} PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../external/shaderc/lib
+)
 target_link_libraries(${EXAMPLE_TARGET} PRIVATE
     ${GLOBAL_LINK_LIBRARIES}
+    shaderc_shared
 )
 
 # 编译定义
@@ -92,6 +97,17 @@ if(WIN32)
         $<TARGET_FILE_DIR:${EXAMPLE_TARGET}>
         COMMENT "Copying DecoderSDK PDB to qt_gui example output directory"
     )
+
+    # 复制shaderc_shared.dll到输出目录（Vulkan Shader 编译依赖）
+    set(SHADERC_SHARED_DLL "${CMAKE_CURRENT_SOURCE_DIR}/../external/shaderc/bin/shaderc_shared.dll")
+    if(EXISTS "${SHADERC_SHARED_DLL}")
+        add_custom_command(TARGET ${EXAMPLE_TARGET} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${SHADERC_SHARED_DLL}"
+            $<TARGET_FILE_DIR:${EXAMPLE_TARGET}>
+            COMMENT "Copying shaderc_shared.dll to qt_gui example output directory"
+        )
+    endif()
 elseif(UNIX)
     # Linux/Unix特定设置
     set_target_properties(${EXAMPLE_TARGET} PROPERTIES

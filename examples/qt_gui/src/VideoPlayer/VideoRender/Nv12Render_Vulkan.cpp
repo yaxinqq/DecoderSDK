@@ -3,13 +3,37 @@
 #ifdef VULKAN_AVAILABLE
 #include <QApplication>
 #include <QByteArray>
+#include <QDir>
 #include <QFile>
+#include <QFileInfo>
 
 #include <vulkan/vulkan.h>
+#include <shaderc/shaderc.hpp>
 
 #include <mutex>
 
 namespace {
+const char *vulkanVsrc = R"(
+#version 450
+layout(location=0) out vec2 vUV;
+void main() {
+  vec2 pos = vec2(gl_VertexIndex == 2 ? 3.0 : -1.0,
+                  gl_VertexIndex == 1 ? 3.0 : -1.0);
+  vUV = (pos + 1.0) * 0.5;
+  gl_Position = vec4(pos, 0.0, 1.0);
+}
+)";
+
+const char *vulkanFsrc = R"(
+#version 450
+layout(set=0, binding=0) uniform sampler2D yuvTex;
+layout(location=0) in vec2 vUV;
+layout(location=0) out vec4 outColor;
+void main() {
+  outColor = texture(yuvTex, vUV);
+}
+)";
+
 // 全局锁
 static std::mutex g_mutex;
 
@@ -104,6 +128,89 @@ static QByteArray g_fragShaderSrc;
 static bool g_shaderLoaded = false;
 static bool g_shaderLoadTried = false;
 
+static bool compileVulkanShader(const QString &path, shaderc_shader_kind kind)
+{
+    // 当前支支持顶点和着色器
+    if (kind != shaderc_vertex_shader && kind != shaderc_fragment_shader) {
+        return false;
+    }
+
+    shaderc::Compiler compiler;
+    shaderc::CompileOptions options;
+    options.SetTargetEnvironment(shaderc_target_env_vulkan, shaderc_env_version_vulkan_1_0);
+    options.SetOptimizationLevel(shaderc_optimization_level_performance);
+    options.SetSourceLanguage(shaderc_source_language_glsl);
+
+    const char *const source = (kind == shaderc_vertex_shader) ? vulkanVsrc : vulkanFsrc;
+    const char *const name = (kind == shaderc_vertex_shader) ? "vulkan_vert" : "vulkan_frag";
+
+    // 编译着色器
+    const shaderc::SpvCompilationResult result = compiler.CompileGlslToSpv(source, // 着色器源代码
+                                                                           kind,   // 着色器类型
+                                                                           name,   // 着色器名称
+                                                                           options // 编译选项
+    );
+
+    // 检查编译结果
+    if (result.GetCompilationStatus() !=
+        shaderc_compilation_status::shaderc_compilation_status_success) {
+        qWarning() << QStringLiteral("[Nv12Render_Vulkan] Failed to compile shader %1: %2")
+                          .arg(path, QString::fromStdString(result.GetErrorMessage()));
+        return false;
+    }
+
+    // 打开文件，保存编译结果
+    QFileInfo fileInfo(path);
+    const QString dirPath = fileInfo.absolutePath();
+    if (!dirPath.isEmpty()) {
+        QDir dir(dirPath);
+        if (!dir.exists() && !dir.mkpath(QStringLiteral("."))) {
+            qWarning() << QStringLiteral("[Nv12Render_Vulkan] Failed to create directory: %1")
+                              .arg(dirPath);
+            return false;
+        }
+    }
+
+    QFile file(path);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        qWarning()
+            << QStringLiteral("[Nv12Render_Vulkan] Failed to open file for writing: %1").arg(path);
+        return false;
+    }
+
+    const auto *spvWords = result.cbegin();
+    const auto wordCount = static_cast<size_t>(result.cend() - result.cbegin());
+    const auto byteCount = static_cast<qint64>(wordCount * sizeof(uint32_t));
+    if (file.write(reinterpret_cast<const char *>(spvWords), byteCount) != byteCount) {
+        file.close();
+        qWarning()
+            << QStringLiteral("[Nv12Render_Vulkan] Failed to write shader file: %1").arg(path);
+        return false;
+    }
+    file.close();
+    return true;
+}
+
+static bool readVulkanShader(const QString &path, shaderc_shader_kind kind)
+{
+    // 当前支支持顶点和着色器
+    if (kind != shaderc_vertex_shader && kind != shaderc_fragment_shader) {
+        return false;
+    }
+
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly)) {
+        if (!compileVulkanShader(path, kind) || !file.open(QIODevice::ReadOnly)) {
+            return false;
+        }
+    }
+
+    QByteArray &src = (kind == shaderc_vertex_shader) ? g_vertShaderSrc : g_fragShaderSrc;
+    src = file.readAll();
+    file.close();
+    return true;
+}
+
 static bool loadShaderFunctions()
 {
     // 已经加载过就返回结果
@@ -118,16 +225,10 @@ static bool loadShaderFunctions()
     g_shaderLoadTried = true;
 
     const auto applicationDirPath = qApp->applicationDirPath();
-    QFile vertFile(QStringLiteral("%1/shaders/ycbcr_to_rgba.vert.spv").arg(applicationDirPath));
-    QFile fragFile(QStringLiteral("%1/shaders/ycbcr_to_rgba.frag.spv").arg(applicationDirPath));
-    if (vertFile.open(QIODevice::ReadOnly)) {
-        g_vertShaderSrc = vertFile.readAll();
-        vertFile.close();
-    }
-    if (fragFile.open(QIODevice::ReadOnly)) {
-        g_fragShaderSrc = fragFile.readAll();
-        fragFile.close();
-    }
+    readVulkanShader(QStringLiteral("%1/shaders/ycbcr_to_rgba.vert.spv").arg(applicationDirPath),
+                     shaderc_vertex_shader);
+    readVulkanShader(QStringLiteral("%1/shaders/ycbcr_to_rgba.frag.spv").arg(applicationDirPath),
+                     shaderc_fragment_shader);
 
     g_shaderLoaded = !g_vertShaderSrc.isEmpty() && !g_fragShaderSrc.isEmpty();
     return g_shaderLoaded;
