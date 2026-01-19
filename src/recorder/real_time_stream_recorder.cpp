@@ -40,21 +40,27 @@ bool RealTimeStreamRecorder::startRecording(const std::string &outputPath,
     }
 
     if (!inputFormatCtx) {
-        LOG_ERROR("Input format context is null.");
+        static char errStr[] = "Input format context is null.";
+        LOG_ERROR(errStr);
+        triggerErrorEvent(outputPath, ContainerFormat::UNKNOWN, -1, errStr);
         return false;
     }
 
     // 检测容器格式
     currentFormat_ = detectContainerFormat(outputPath);
     if (currentFormat_ == ContainerFormat::UNKNOWN) {
-        LOG_ERROR("Unsupported container format for file: {}", outputPath);
+        const std::string errStr = "Unsupported container format for file: " + outputPath;
+        LOG_ERROR(errStr.c_str());
+        triggerErrorEvent(outputPath, currentFormat_, -2, errStr);
         return false;
     }
 
     // 验证格式兼容性
     std::string errorMsg;
     if (!validateFormatCompatibility(currentFormat_, inputFormatCtx, errorMsg)) {
-        LOG_ERROR("Format compatibility validation failed: {}", errorMsg);
+        const std::string errStr = "Format compatibility validation failed: " + errorMsg;
+        LOG_ERROR(errStr.c_str());
+        triggerErrorEvent(outputPath, currentFormat_, -3, errStr);
         return false;
     }
 
@@ -62,13 +68,20 @@ bool RealTimeStreamRecorder::startRecording(const std::string &outputPath,
     inputFormatCtx_ = inputFormatCtx;
 
     // 初始化输出上下文
-    if (!initOutputContext(outputPath, inputFormatCtx)) {
+    if (int ret = initOutputContext(outputPath, inputFormatCtx); ret != 0) {
+        const std::string errStr = "Init output context failed: " + utils::avErr2Str(ret);
+        LOG_ERROR(errStr.c_str());
+        triggerErrorEvent(outputPath, currentFormat_, ret, errStr);
         return false;
     }
 
     // 创建流映射
     if (!createStreamMapping(inputFormatCtx)) {
         cleanup();
+        const std::string errStr =
+            "Init output context failed: " + utils::avErr2Str(AVERROR(ENOMEM));
+        LOG_ERROR(errStr.c_str());
+        triggerErrorEvent(outputPath, currentFormat_, AVERROR(ENOMEM), errStr);
         return false;
     }
 
@@ -117,19 +130,21 @@ bool RealTimeStreamRecorder::stopRecording()
         recordingThread_.join();
     }
 
+    // 记录当前的format info和输出路径
+    const auto &formatInfo = getFormatInfoMap().at(currentFormat_);
+    const std::string outputPath = outputPath_;
+
     // 清理资源
     cleanup();
 
     isRecording_.store(false);
 
     // 发送录制停止事件
-    const auto &formatInfo = getFormatInfoMap().at(currentFormat_);
     auto event =
-        std::make_shared<RecordingEventArgs>(outputPath_, formatInfo.extension, kModuleName,
+        std::make_shared<RecordingEventArgs>(outputPath, formatInfo.extension, kModuleName,
                                              utils::eventType2Desc(EventType::kRecordingStopped));
     eventDispatcher_->triggerEvent(EventType::kRecordingStopped, event);
-
-    LOG_INFO("Recording stopped: {}", outputPath_);
+    LOG_INFO("Recording stopped: {}", outputPath);
     return true;
 }
 
@@ -271,12 +286,6 @@ bool RealTimeStreamRecorder::validateFormatCompatibility(ContainerFormat format,
 
 void RealTimeStreamRecorder::recordingLoop()
 {
-    AVPacket *tempPacket = av_packet_alloc();
-    if (!tempPacket) {
-        LOG_ERROR("Failed to allocate temporary packet");
-        return;
-    }
-
     bool hasKeyFrame = false;
     while (!shouldStop_.load()) {
         bool hasData = false;
@@ -304,12 +313,10 @@ void RealTimeStreamRecorder::recordingLoop()
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
     }
-
-    av_packet_free(&tempPacket);
 }
 
-bool RealTimeStreamRecorder::initOutputContext(const std::string &outputPath,
-                                               AVFormatContext *inputFormatCtx)
+int RealTimeStreamRecorder::initOutputContext(const std::string &outputPath,
+                                              AVFormatContext *inputFormatCtx)
 {
     // 获取格式信息
     const auto &formatInfo = getFormatInfoMap().at(currentFormat_);
@@ -320,7 +327,7 @@ bool RealTimeStreamRecorder::initOutputContext(const std::string &outputPath,
     if (ret < 0 || !outputFormatCtx_) {
         LOG_ERROR("Failed to allocate output format context for {}: {}", formatInfo.description,
                   utils::avErr2Str(ret));
-        return false;
+        return ret;
     }
 
     // 复制流信息
@@ -356,14 +363,14 @@ bool RealTimeStreamRecorder::initOutputContext(const std::string &outputPath,
         AVStream *outStream = avformat_new_stream(outputFormatCtx_, nullptr);
         if (!outStream) {
             LOG_ERROR("Failed to allocate output stream");
-            return false;
+            return AVERROR(ENOMEM);
         }
 
         // 复制编解码器参数
         ret = avcodec_parameters_copy(outStream->codecpar, inStream->codecpar);
         if (ret < 0) {
             LOG_ERROR("Failed to copy codec parameters: {}", utils::avErr2Str(ret));
-            return false;
+            return ret;
         }
 
         outStream->codecpar->codec_tag = 0;
@@ -375,7 +382,7 @@ bool RealTimeStreamRecorder::initOutputContext(const std::string &outputPath,
                         AVIO_FLAG_WRITE);
         if (ret < 0) {
             LOG_ERROR("Failed to open output file {}: {}", outputPath, utils::avErr2Str(ret));
-            return false;
+            return ret;
         }
     }
 
@@ -383,11 +390,11 @@ bool RealTimeStreamRecorder::initOutputContext(const std::string &outputPath,
     ret = avformat_write_header(outputFormatCtx_, nullptr);
     if (ret < 0) {
         LOG_ERROR("Failed to write header: {}", utils::avErr2Str(ret));
-        return false;
+        return ret;
     }
 
     outputPath_ = outputPath;
-    return true;
+    return 0;
 }
 
 void RealTimeStreamRecorder::cleanup()
@@ -514,6 +521,8 @@ bool RealTimeStreamRecorder::processPacket(const Packet &packet, AVMediaType med
     // 创建临时数据包
     AVPacket *tempPacket = av_packet_alloc();
     if (!tempPacket) {
+        triggerErrorEvent(outputPath_, currentFormat_, AVERROR(ENOMEM),
+                          utils::avErr2Str(AVERROR(ENOMEM)));
         return false;
     }
 
@@ -521,6 +530,7 @@ bool RealTimeStreamRecorder::processPacket(const Packet &packet, AVMediaType med
     int ret = av_packet_ref(tempPacket, pkt);
     if (ret < 0) {
         av_packet_free(&tempPacket);
+        triggerErrorEvent(outputPath_, currentFormat_, ret, utils::avErr2Str(ret));
         return false;
     }
 
@@ -603,18 +613,24 @@ bool RealTimeStreamRecorder::processPacket(const Packet &packet, AVMediaType med
         av_packet_unref(tempPacket);
         av_packet_free(&tempPacket);
 
-        const auto &formatInfo = getFormatInfoMap().at(currentFormat_);
-        const auto event = std::make_shared<RecordingEventArgs>(
-            outputPath_, formatInfo.extension, kModuleName,
-            utils::eventType2Desc(EventType::kRecordingError), ret, errStr);
-        eventDispatcher_->triggerEvent(EventType::kRecordingError, event);
-
+        triggerErrorEvent(outputPath_, currentFormat_, ret, errStr);
         return false;
     }
 
     av_packet_unref(tempPacket);
     av_packet_free(&tempPacket);
     return true;
+}
+
+void RealTimeStreamRecorder::triggerErrorEvent(const std::string &outputPath,
+                                               ContainerFormat format, int ret,
+                                               const std::string &errStr)
+{
+    const auto &formatInfo = getFormatInfoMap().at(format);
+    const auto event = std::make_shared<RecordingEventArgs>(
+        outputPath, formatInfo.extension, kModuleName,
+        utils::eventType2Desc(EventType::kRecordingError), ret, errStr);
+    eventDispatcher_->triggerEvent(EventType::kRecordingError, event);
 }
 
 const std::unordered_map<ContainerFormat, ContainerFormatInfo> &

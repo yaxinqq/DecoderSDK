@@ -133,9 +133,9 @@ private:
      * @brief 初始化输出格式上下文
      * @param outputPath 输出文件路径
      * @param inputFormatCtx 输入格式上下文
-     * @return 是否成功初始化
+     * @return 是否成功初始化，返回错误码，0 - 初始化成功
      */
-    bool initOutputContext(const std::string &outputPath, AVFormatContext *inputFormatCtx);
+    int initOutputContext(const std::string &outputPath, AVFormatContext *inputFormatCtx);
 
     /**
      * @brief 清理资源
@@ -159,10 +159,20 @@ private:
     bool processPacket(const Packet &packet, AVMediaType mediaType, bool &hasKeyFrame);
 
     /**
+     * @brief 发送录制错误事件
+     *
+     * @param ret 错误码
+     * @param errStr 错误信息
+     * @return
+     */
+    void triggerErrorEvent(const std::string &outputPath, ContainerFormat format, int ret,
+                           const std::string &errStr);
+
+    /**
      * @brief 获取容器格式信息映射表
      * @return 格式信息映射表
      */
-    static const std::unordered_map<ContainerFormat, ContainerFormatInfo>& getFormatInfoMap();
+    static const std::unordered_map<ContainerFormat, ContainerFormatInfo> &getFormatInfoMap();
 
 private:
     // 事件分发器
