@@ -12,6 +12,12 @@
 
 #include <mutex>
 
+#if defined(Q_OS_WIN)
+#include <Windows.h>
+#elif defined(Q_OS_LINUX)
+#include <unistd.h>
+#endif
+
 namespace {
 const char *vulkanVsrc = R"(
 #version 450
@@ -130,7 +136,7 @@ static bool g_shaderLoadTried = false;
 
 static bool compileVulkanShader(const QString &path, shaderc_shader_kind kind)
 {
-    // 当前支支持顶点和着色器
+    // 当前只支持顶点和片段着色器
     if (kind != shaderc_vertex_shader && kind != shaderc_fragment_shader) {
         return false;
     }
@@ -160,7 +166,7 @@ static bool compileVulkanShader(const QString &path, shaderc_shader_kind kind)
     }
 
     // 打开文件，保存编译结果
-    QFileInfo fileInfo(path);
+    const QFileInfo fileInfo(path);
     const QString dirPath = fileInfo.absolutePath();
     if (!dirPath.isEmpty()) {
         QDir dir(dirPath);
@@ -848,7 +854,11 @@ bool Nv12Render_Vulkan::initInteropResources(uint32_t width, uint32_t height)
     // 创建RGBA输出图像（用于渲染管线离屏渲染）
     VkExternalMemoryImageCreateInfo externalImageInfo = {};
     externalImageInfo.sType = VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_IMAGE_CREATE_INFO;
+#if defined(Q_OS_WIN)
     externalImageInfo.handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_BIT;
+#elif defined(Q_OS_LINUX)
+    externalImageInfo.handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT;
+#endif
 
     VkImageCreateInfo imageCreateInfo = {};
     imageCreateInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
@@ -878,7 +888,11 @@ bool Nv12Render_Vulkan::initInteropResources(uint32_t width, uint32_t height)
 
     VkExportMemoryAllocateInfo exportMemoryInfo = {};
     exportMemoryInfo.sType = VK_STRUCTURE_TYPE_EXPORT_MEMORY_ALLOCATE_INFO;
+#if defined(Q_OS_WIN)
     exportMemoryInfo.handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_BIT;
+#elif defined(Q_OS_LINUX)
+    exportMemoryInfo.handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT;
+#endif
 
     // 根据实际设备，确定是否分配专用内存
     VkMemoryDedicatedAllocateInfo dedicatedAlloc{};
@@ -950,13 +964,7 @@ bool Nv12Render_Vulkan::initInteropResources(uint32_t width, uint32_t height)
     }
 
     // 导出Vulkan内存到OpenGL
-#if defined(Q_OS_WIN)
-    // Windows平台使用HANDLE
-    HANDLE memoryHandle = nullptr;
-#else
-    int memoryHandle = -1;
-#endif
-    if (!exportMemoryHandle(rgbaMemory_, memoryHandle)) {
+    if (!exportMemoryHandle(rgbaMemory_, memoryHandle_)) {
         qWarning() << QStringLiteral("[Nv12Render_Vulkan] Failed to export Vulkan memory handle.");
         return false;
     }
@@ -965,9 +973,9 @@ bool Nv12Render_Vulkan::initInteropResources(uint32_t width, uint32_t height)
     glCreateMemoryObjectsEXT(1, &glMemoryObject_);
 #if defined(Q_OS_WIN)
     glImportMemoryWin32HandleEXT(glMemoryObject_, memReqs.size, GL_HANDLE_TYPE_OPAQUE_WIN32_EXT,
-                                 memoryHandle);
+                                 memoryHandle_);
 #elif defined(Q_OS_LINUX)
-    glImportMemoryFdEXT(glMemoryObject_, memReqs.size, GL_HANDLE_TYPE_OPAQUE_FD_EXT, memoryHandle);
+    glImportMemoryFdEXT(glMemoryObject_, memReqs.size, GL_HANDLE_TYPE_OPAQUE_FD_EXT, memoryHandle_);
 #endif
 
     glGenTextures(1, &glRGBATexture_);
@@ -1384,6 +1392,8 @@ uint32_t Nv12Render_Vulkan::findMemoryTypeIndex(uint32_t typeFilter,
 
 void Nv12Render_Vulkan::cleanupVulkanResources()
 {
+    isInteropInitialized_ = false;
+
     // 渲染管线
     if (graphicsPipeline_ != VK_NULL_HANDLE) {
         vkDispatchTable_.fp_vkDestroyPipeline(vkDevice_.device, graphicsPipeline_, nullptr);
@@ -1433,6 +1443,7 @@ void Nv12Render_Vulkan::cleanupVulkanResources()
         vkDispatchTable_.fp_vkDestroyDescriptorPool(vkDevice_.device, descriptorPool_, nullptr);
         descriptorPool_ = VK_NULL_HANDLE;
     }
+    descriptorSet_ = VK_NULL_HANDLE;
     if (descriptorSetLayout_ != VK_NULL_HANDLE) {
         vkDispatchTable_.fp_vkDestroyDescriptorSetLayout(vkDevice_.device, descriptorSetLayout_,
                                                          nullptr);
@@ -1457,6 +1468,8 @@ void Nv12Render_Vulkan::cleanupVulkanResources()
 
 void Nv12Render_Vulkan::cleanupOpenGLResources()
 {
+    isInteropInitialized_ = false;
+
     if (glRGBATexture_) {
         glDeleteTextures(1, &glRGBATexture_);
         glRGBATexture_ = 0;
@@ -1470,6 +1483,18 @@ void Nv12Render_Vulkan::cleanupOpenGLResources()
             glDeleteMemoryObjectsEXT(1, &glMemoryObject_);
         glMemoryObject_ = 0;
     }
+
+#if defined(Q_OS_WIN)
+    if (memoryHandle_) {
+        CloseHandle(memoryHandle_);
+        memoryHandle_ = nullptr;
+    }
+#else
+    if (memoryHandle_ > 0) {
+        close(memoryHandle_);
+        memoryHandle_ = -1;
+    }
+#endif
 }
 
 #endif

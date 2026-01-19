@@ -25,32 +25,28 @@ const char *fsrc = R"(
     #endif
 
         uniform sampler2D texture;
+        uniform vec4 zoomRect;
         varying vec2 vTexCoord;
         void main() {
-            gl_FragColor = texture2D(texture, vTexCoord);
+            vec2 zoomOrigin = zoomRect.xy;
+            vec2 zoomSize   = zoomRect.zw;
+            vec2 zoomTexCoord = zoomOrigin + vTexCoord * zoomSize;
+
+            gl_FragColor = texture2D(texture, zoomTexCoord);
         }
     )";
 } // namespace
 
-VideoRender::VideoRender() : initialized_{false}, fboDrawResourcesInitialized_{false}
+VideoRender::VideoRender()
+    : initialized_{false}, fboDrawResourcesInitialized_{false}, digitalZoomRect_{0.0, 0.0, 1.0, 1.0}
 {
-    bufferQueue_ = std::make_unique<RenderBufferQueue>(3);
     forceGpuFinish_ = false;
 }
 
 VideoRender::~VideoRender()
 {
-    // 释放当前显示buffer
-    if (currentDisplayBuffer_) {
-        bufferQueue_->releaseDisplayBuffer(currentDisplayBuffer_);
-        currentDisplayBuffer_ = nullptr;
-    }
-
-    // 清理缓冲队列
-    if (bufferQueue_) {
-        bufferQueue_->cleanup();
-    }
-
+    curFbo_.reset();
+    nextFbo_.reset();
     fboDrawVbo_.destroy();
 }
 
@@ -64,11 +60,14 @@ void VideoRender::initialize(const std::shared_ptr<decoder_sdk::Frame> &frame,
 
     initializeOpenGLFunctions();
 
-    // 初始化循环缓冲队列
-    if (!bufferQueue_->initialize(QSize(frame->width(), frame->height()), {})) {
-        qWarning() << QStringLiteral("[VideoRender] Failed to initialize buffer queue");
-        return;
-    }
+    // 如果配置文件中没有明确需要glFinish，则根据显卡型号，去开启，目前发现Intel集显总是需要开启的
+    const QString vendor(reinterpret_cast<const char *>(glGetString(GL_VENDOR)));
+    isIntelGpu_ = vendor.compare(QStringLiteral("Intel"), Qt::CaseInsensitive) == 0;
+
+    // 初始化FBO
+    const QSize fboSize(frame->width(), frame->height());
+    curFbo_ = createFbo(fboSize, {});
+    nextFbo_ = createFbo(fboSize, {});
 
     // 初始化FBO绘制资源
     if (!fboDrawResourcesInitialized_.load()) {
@@ -106,66 +105,37 @@ void VideoRender::render(const std::shared_ptr<decoder_sdk::Frame> &frame)
         return;
     }
 
-    // 获取一个空闲的buffer用于渲染
-    const auto frameDurationMs = frame->durationByFps() * 1000;
-    RenderBuffer *buffer = bufferQueue_->acquireForRender(static_cast<int>(frameDurationMs * 0.5));
-    if (!buffer) {
-        // 没有可用buffer，丢弃此帧
-        return;
-    }
-
     // 绑定FBO并让子类渲染到其中
-    buffer->fbo->bind();
+    nextFbo_->bind();
     glViewport(0, 0, frame->width(), frame->height());
     const bool success = renderFrame(*frame);
-    buffer->fbo->release();
-    buffer->durationMs = frameDurationMs;
+    nextFbo_->release();
 
-    if (success) {
-        GLsync fence = nullptr;
-        if (forceGpuFinish_) {
-            glFinish();
-        } else {
-            // 如果支持fence，创建fence对象进行同步
-            if (supportsGlFence_) {
-                fence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
-                if (!fence) {
-                    qWarning() << QStringLiteral("[VideoRender] Failed to create fence");
-                } else {
-                    // 进行同步等待，期间让出CPU避免忙等。等待的时间为frame
-                    // duration的一半，避免sleep for的精度问题
-                    const auto halfDurationMicros =
-                        static_cast<int64_t>(frameDurationMs * 1000 * 0.5);
-                    const auto sleepInterval = std::min((int64_t)1000, halfDurationMicros);
-                    const auto finishTimePoint = std::chrono::steady_clock::now() +
-                                                 std::chrono::microseconds(halfDurationMicros);
-                    GLenum waitResult = GL_TIMEOUT_EXPIRED;
-                    do {
-                        // 睡眠，避免占满 CPU
-                        std::this_thread::sleep_for(std::chrono::microseconds(sleepInterval));
-                        // 轮询fence是否完成
-                        waitResult = glClientWaitSync(fence, 0, 0);
-
-                    } while (waitResult != GL_ALREADY_SIGNALED &&
-                             waitResult != GL_CONDITION_SATISFIED &&
-                             std::chrono::steady_clock::now() < finishTimePoint);
-                }
-            } else {
-                // 不支持fence时，使用glFlush确保命令提交
-                glFlush();
-            }
-        }
-
-        // 标记渲染完成，不阻塞等待
-        bufferQueue_->markRenderFinished(buffer, fence);
+    if (forceGpuFinish_ || isIntelGpu_) {
+        glFinish();
     } else {
-        // 渲染失败，释放buffer
-        buffer->inUse.store(false);
-        qWarning() << QStringLiteral("[VideoRender] Frame render failed");
+        GLsync fence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+        // 等待GPU侧完成
+        // const auto startTime = std::chrono::steady_clock::now();
+        const auto waitResult =
+            glClientWaitSync(fence, GL_SYNC_FLUSH_COMMANDS_BIT, GL_TIMEOUT_IGNORED);
+        if (waitResult == GL_WAIT_FAILED || waitResult == GL_TIMEOUT_EXPIRED) {
+            qWarning() << QStringLiteral("[VideoRender] glClientWaitSync failed!");
+        }
+        // const auto endTime = std::chrono::steady_clock::now();
+        // qInfo() << QStringLiteral("[VideoRender] glClientWaitSync cost time: ") <<
+        // std::chrono::duration_cast<std::chrono::microseconds>(endTime - startTime).count() <<
+        // "ns";
+        glDeleteSync(fence);
     }
 
     // 清理渲染资源
     cleanupRenderResources();
+
+    {
+        QMutexLocker lock(&mtx_);
+        std::swap(curFbo_, nextFbo_);
+    }
 }
 
 void VideoRender::draw()
@@ -174,46 +144,22 @@ void VideoRender::draw()
         return;
     }
 
-    // 获得新的展示Buffer
-    RenderBuffer *newDisplayBuffer = bufferQueue_->acquireForDisplay();
-
-    if (newDisplayBuffer && newDisplayBuffer->fbo && newDisplayBuffer->fbo->isValid()) {
-        // 有新的buffer可用
-        if (currentDisplayBuffer_ != newDisplayBuffer) {
-            // 释放旧buffer
-            if (currentDisplayBuffer_) {
-                bufferQueue_->releaseDisplayBuffer(currentDisplayBuffer_);
-            }
-            currentDisplayBuffer_ = newDisplayBuffer;
-        }
-    }
-
-    // 绘制当前buffer
-    if (currentDisplayBuffer_ && currentDisplayBuffer_->fbo &&
-        currentDisplayBuffer_->fbo->isValid()) {
-        drawFbo(currentDisplayBuffer_->fbo);
-    } else {
-        // 完全没有可用buffer时，清屏
-        clearGL();
-    }
+    QMutexLocker lock(&mtx_);
+    drawFbo(curFbo_);
 }
 
 QSharedPointer<QOpenGLFramebufferObject> VideoRender::getFrameBuffer()
 {
-    // 获取当前显示的buffer进行深拷贝
-    if (!currentDisplayBuffer_ || !currentDisplayBuffer_->fbo) {
-        return nullptr;
-    }
+    QMutexLocker lock(&mtx_);
 
     // 深拷贝当前FBO
-    auto copyFbo =
-        createFbo(currentDisplayBuffer_->fbo->size(), currentDisplayBuffer_->fbo->format());
+    auto copyFbo = createFbo(curFbo_->size(), curFbo_->format());
     if (!copyFbo) {
         return nullptr;
     }
 
     // 使用blit进行深拷贝
-    QOpenGLFramebufferObject::blitFramebuffer(copyFbo.get(), currentDisplayBuffer_->fbo.get());
+    QOpenGLFramebufferObject::blitFramebuffer(copyFbo.get(), curFbo_.get());
 
     return copyFbo;
 }
@@ -228,9 +174,20 @@ bool VideoRender::shouldRebuild() const
     return false;
 }
 
-RenderBufferQueue::Statistics VideoRender::getStatistics() const
+void VideoRender::setDigitalZoomRect(const QRectF &rect)
 {
-    return bufferQueue_->getStatistics();
+    if (rect == digitalZoomRect_)
+        return;
+
+    digitalZoomRect_ = rect;
+    fboDrawProgram_.bind();
+    fboDrawProgram_.setUniformValue("zoomRect", transToOpenGLUniform(digitalZoomRect_));
+    fboDrawProgram_.release();
+}
+
+QRectF VideoRender::digitalZoomRect() const
+{
+    return digitalZoomRect_;
 }
 
 void VideoRender::initDefaultVBO(QOpenGLBuffer &vbo, const bool horizontal,
@@ -278,6 +235,7 @@ bool VideoRender::initializeFboDrawResources(const QSize &size)
     fboDrawProgram_.link();
     fboDrawProgram_.bind();
     fboDrawProgram_.setUniformValue("texture", 0);
+    fboDrawProgram_.setUniformValue("zoomRect", transToOpenGLUniform(digitalZoomRect_));
     fboDrawProgram_.release();
 
     // 全屏quad的顶点数据（交错式布局）
@@ -326,4 +284,10 @@ QSharedPointer<QOpenGLFramebufferObject> VideoRender::createFbo(
         return nullptr;
     }
     return QSharedPointer<QOpenGLFramebufferObject>::create(size, fmt);
+}
+
+QVector4D VideoRender::transToOpenGLUniform(const QRectF &rect, bool needTrans) const
+{
+    return QVector4D(rect.x(), needTrans ? 1 - rect.y() - rect.height() : rect.y(), rect.width(),
+                     rect.height());
 }

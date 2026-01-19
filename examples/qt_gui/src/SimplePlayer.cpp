@@ -7,6 +7,26 @@
 
 #include <cmath>
 
+namespace {
+QMargins calculateVideoContainerSpacerMargin(const QSize &containerSize, double videoRatio)
+{
+    if (std::fabs(videoRatio - 0) < 1e-12)
+        return {0, 0, 0, 0};
+
+    const auto containerRatio = (double)containerSize.width() / containerSize.height();
+
+    if (containerRatio >= videoRatio && std::fabs(containerRatio - videoRatio) > 1e-12) {
+        int nOffset = (containerSize.width() - containerSize.height() * videoRatio) / 2;
+        nOffset = nOffset < 0 ? 0 : nOffset;
+        return {nOffset, 0, nOffset, 0};
+    } else {
+        int nOffset = (containerSize.height() - containerSize.width() * (1 / videoRatio)) / 2;
+        nOffset = nOffset < 0 ? 0 : nOffset;
+        return {0, nOffset, 0, nOffset};
+    }
+}
+} // namespace
+
 SimplePlayer::SimplePlayer(QWidget *parent) : QWidget(parent), ui{new Ui::SimplePlayer}
 {
     ui->setupUi(this);
@@ -79,7 +99,7 @@ void SimplePlayer::onPtsChanged(double pts)
 void SimplePlayer::onSliderValueChanged(int value)
 {
     if (isSliderPressed_) {
-        ui->startTimeLabel->setText(QString::number(value)); 
+        ui->startTimeLabel->setText(QString::number(value));
     }
 }
 
@@ -100,6 +120,25 @@ void SimplePlayer::onSpeedBtnClicked()
     ui->player->setSpeed(ui->speedEdit->text().toDouble());
 }
 
+void SimplePlayer::onVideoRectChanged(const QRect &rect)
+{
+    if (!digitalZoomCtrl_) {
+        return;
+    }
+
+    const auto isValid = rect.isValid();
+    digitalZoomCtrl_->setEnabled(isValid);
+    if (isValid) {
+        digitalZoomCtrl_->setActiveWidgetLogicContentMargins(calculateVideoContainerSpacerMargin(
+            ui->player->size(), static_cast<double>(rect.width()) / rect.height()));
+    }
+}
+
+void SimplePlayer::onDigitalZoomRectChanged(const QRectF &rect)
+{
+    ui->player->setDigitalZoomRect(rect);
+}
+
 void SimplePlayer::initUi()
 {
     ui->urlEdit->setText(QStringLiteral("D:/WorkSpace/test_video/test.mp4"));
@@ -107,6 +146,8 @@ void SimplePlayer::initUi()
     // 初始化滑块
     ui->ptsSlider->setMinimum(0);
     ui->ptsSlider->setValue(0);
+
+    digitalZoomCtrl_ = new WidgetDigitalZoomController(ui->player);
 }
 
 void SimplePlayer::initConnection()
@@ -122,6 +163,11 @@ void SimplePlayer::initConnection()
 
     connect(ui->player, &RtspStreamPlayer::totalTimeRecved, this, &SimplePlayer::onTotalTimeRecved);
     connect(ui->player, &RtspStreamPlayer::ptsChanged, this, &SimplePlayer::onPtsChanged);
+    connect(ui->player, &RtspStreamPlayer::videoRectChanged, this,
+            &SimplePlayer::onVideoRectChanged);
+
+    connect(digitalZoomCtrl_, &WidgetDigitalZoomController::zoomRectChanged, this,
+            &SimplePlayer::onDigitalZoomRectChanged);
 
     // 连接滑块信号
     connect(ui->ptsSlider, &QSlider::valueChanged, this, &SimplePlayer::onSliderValueChanged);

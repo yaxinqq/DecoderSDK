@@ -60,6 +60,16 @@ void VideoPlayer::renderToImage(QImage &image)
     return impl_->renderToImage(image);
 }
 
+void VideoPlayer::setDigitalZoomRect(const QRectF &rect)
+{
+    impl_->setDigitalZoomRect(rect);
+}
+
+QRectF VideoPlayer::digitalZoomRect() const
+{
+    return impl_->digitalZoomRect();
+}
+
 void VideoPlayer::setMasks(QList<QImage *> masks)
 {
     impl_->setMasks(masks);

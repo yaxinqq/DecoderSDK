@@ -41,6 +41,19 @@ public:
      */
     void renderToImage(QImage &image);
 
+    /**
+     * @brief 设置电子放大矩形
+     *
+     * @param rect 电子放大区域
+     */
+    void setDigitalZoomRect(const QRectF &rect);
+    /**
+     * @brief 获得当前电子放大的矩形区域
+     *
+     * @param rect 电子放大区域
+     */
+    QRectF digitalZoomRect() const;
+
 public:
     void setMasks(QList<QImage *> masks);
     void setShownScreenText(const QString &shownScreenText);
@@ -72,9 +85,6 @@ protected:
     // 设置播放状态（播放器内部使用），外部通过open、pause等接口设置播放状态
     void setPlayerState(Stream::PlayerState state);
 
-    // 用来过滤播放器的显示/隐藏事件
-    // bool event(QEvent* e) override;
-
 protected:
     VideoPlayerImpl *impl_ = nullptr;
 
@@ -82,9 +92,6 @@ private:
     void aboutToRenderFrame();
 
 private:
-    // 窗口隐藏之前的播放状态
-    Stream::PlayerState beforeHidePlayerState_;
-
     // 当前是否需要render frame
     std::atomic_bool needToRender_ = false;
 };

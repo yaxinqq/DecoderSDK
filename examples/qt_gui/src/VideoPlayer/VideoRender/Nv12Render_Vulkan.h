@@ -177,6 +177,12 @@ private:
     VkImage rgbaImage_ = VK_NULL_HANDLE;
     VkDeviceMemory rgbaMemory_ = VK_NULL_HANDLE;
     VkImageView rgbaImageView_ = VK_NULL_HANDLE;
+#if defined(Q_OS_WIN)
+    // Windows平台使用HANDLE
+    HANDLE memoryHandle_ = nullptr;
+#else
+    int memoryHandle_ = -1;
+#endif
 
     // Vulkan 描述符（用于渲染管线绑定资源）
     VkDescriptorPool descriptorPool_ = VK_NULL_HANDLE;

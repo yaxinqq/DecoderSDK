@@ -104,7 +104,7 @@ public:
     }
 
 public:
-    void videoFrameReady(const std::shared_ptr<decoder_sdk::Frame>& frame);
+    void videoFrameReady(const std::shared_ptr<decoder_sdk::Frame> &frame);
 
     void setMasks(QList<QImage *> masks)
     {
@@ -138,12 +138,25 @@ public:
         return painterFont_;
     }
 
+    /**
+     * @brief 设置电子放大矩形
+     *
+     * @param rect 电子放大区域
+     */
+    void setDigitalZoomRect(const QRectF &rect);
+    /**
+     * @brief 获得当前电子放大的矩形区域
+     *
+     * @param rect 电子放大区域
+     */
+    QRectF digitalZoomRect() const;
+
 public slots:
     void onDecoderEventChanged(decoder_sdk::EventType type,
                                const std::shared_ptr<decoder_sdk::EventArgs> &event);
 
 signals:
-    void renderRequested(const std::shared_ptr<decoder_sdk::Frame>& frame);
+    void renderRequested(const std::shared_ptr<decoder_sdk::Frame> &frame);
     void prepareStop();
     void preparePause();
     void preparePlaying();
@@ -218,6 +231,9 @@ private:
     QTimer *streamOpenErrorTimer_ = nullptr;
     // 流地址是否打开超时
     std::atomic_bool streamOpenTimeout_;
+
+    // 电子放大区域
+    QRectF digitalZoomRect_;
 
 private:
     Stream::PlayerState playerState_;

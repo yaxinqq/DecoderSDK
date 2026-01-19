@@ -1,7 +1,5 @@
 #ifndef VIDEORENDER_H
 #define VIDEORENDER_H
-
-#include "RenderBufferQueue.h"
 #include "decodersdk/frame.h"
 
 #include <QMutex>
@@ -61,16 +59,25 @@ public:
     virtual bool shouldRebuild() const;
 
     /**
-     * @brief 获取缓冲队列统计信息
-     */
-    RenderBufferQueue::Statistics getStatistics() const;
-
-    /**
      * @brief 得到渲染器名称
      *
      * @return 渲染器名称
      */
     virtual QString renderName() const = 0;
+
+public:
+    /**
+     * @brief 设置电子放大矩形
+     *
+     * @param rect 电子放大区域
+     */
+    void setDigitalZoomRect(const QRectF &rect);
+    /**
+     * @brief 获得当前电子放大的矩形区域
+     *
+     * @param rect 电子放大区域
+     */
+    QRectF digitalZoomRect() const;
 
 protected:
     /**
@@ -123,6 +130,9 @@ protected:
      */
     void clearGL();
 
+protected:
+    bool isIntelGpu_ = false;
+
 private:
     /**
      * @brief 初始化FBO绘制资源
@@ -146,12 +156,19 @@ private:
     QSharedPointer<QOpenGLFramebufferObject> createFbo(const QSize &size,
                                                        const QOpenGLFramebufferObjectFormat &fmt);
 
-private:
-    // 循环缓冲渲染队列
-    std::unique_ptr<RenderBufferQueue> bufferQueue_;
+    /**
+     * @brief 把给定的rect转换到OpenGL坐标系下，并保存为vec4，便于传给着色器
+     * 
+     * @param rect 给定的矩形区域
+     * @param needTrans 是否需要转换y值
+     * @return OpenGL坐标系下的vec4
+     */
+    QVector4D transToOpenGLUniform(const QRectF &rect, bool needTrans = true) const;
 
-    // 当前正在显示的buffer
-    RenderBuffer *currentDisplayBuffer_ = nullptr;
+private:
+    QMutex mtx_;
+    QSharedPointer<QOpenGLFramebufferObject> curFbo_;
+    QSharedPointer<QOpenGLFramebufferObject> nextFbo_;
 
     // 用于绘制FBO到屏幕的资源
     QOpenGLShaderProgram fboDrawProgram_;
@@ -162,8 +179,11 @@ private:
     std::atomic_bool initialized_;
     // 是否支持glFence
     bool supportsGlFence_ = false;
-    // 是否强制GPU等待，一些老旧型号的显卡，需要打开这个选项
+    // 是否强制GPU等待
     bool forceGpuFinish_ = false;
+
+    // 电子放大区域
+    QRectF digitalZoomRect_;
 };
 
 #endif // VIDEORENDER_H

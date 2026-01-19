@@ -28,7 +28,7 @@ QString StreamManager::openStream(VideoPlayerImpl *player, QString url, QString 
     worker->registerPlayer(player);
 
     // 开启解码
-    const auto config = defaultDecoderConfig();
+    const auto &config = defaultDecoderConfig();
     worker->open(url, config);
 
     return key;
@@ -112,7 +112,7 @@ bool StreamManager::startRecoding(VideoPlayerImpl *player, const QString &recodD
         return false; // 没有对应的解码器，返回false
 
     // 开启decoder的录像
-    worker->needToStartRecoding(recodDir);
+    emit worker->needToStartRecoding(recodDir);
     return true;
 }
 
@@ -124,7 +124,7 @@ bool StreamManager::stopRecoding(VideoPlayerImpl *player)
         return false; // 没有对应的解码器，返回false
 
     // 停止decoder的录像
-    worker->needToStopRecording();
+    emit worker->needToStopRecording();
     return true;
 }
 
