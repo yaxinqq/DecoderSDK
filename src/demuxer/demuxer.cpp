@@ -774,6 +774,7 @@ bool Demuxer::openInternal(const std::string &url, const Config &config,
     };
 
     const auto isRealTime = utils::isRealtime(url);
+    url_ = url;
 
     // 设置FFmpeg选项
     AVDictionary *options = nullptr;
@@ -784,7 +785,8 @@ bool Demuxer::openInternal(const std::string &url, const Config &config,
         av_dict_set(&options, "rtsp_transport",
                     utils::rtspTransport2Str(config.rtspTransport).c_str(), 0);
         av_dict_set(&options, "fflags", "nobuffer", 0);
-        av_dict_set(&options, "stimeout", "2000000", 0);
+        av_dict_set(&options, "stimeout", "3000000", 0);
+        av_dict_set(&options, "timeout", "3000000", 0);
     }
 
     // 开启外部时钟
@@ -834,7 +836,6 @@ bool Demuxer::openInternal(const std::string &url, const Config &config,
     setupStreamInfo(url, config.decodeMediaType);
 
     // 设置状态
-    url_ = url;
     isRealTime_ = isRealTime;
     isOpened_ = true;
 

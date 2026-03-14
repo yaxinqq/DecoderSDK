@@ -630,6 +630,18 @@ bool DecoderController::isRealTimeUrl() const
     return isRealTime;
 }
 
+std::string DecoderController::url() const
+{
+    if (!demuxer_) {
+        LOG_ERROR("Cannot get URL: demuxer is null");
+        return "";
+    }
+
+    const std::string url = demuxer_->url();
+    LOG_TRACE("Current URL: {}", url);
+    return url;
+}
+
 bool DecoderController::setLoopMode(LoopMode mode, int maxLoops)
 {
     LOG_INFO("Setting loop mode: {}, max loops: {}", static_cast<int>(mode), maxLoops);

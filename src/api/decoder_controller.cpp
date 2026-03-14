@@ -199,6 +199,11 @@ bool DecoderController::isRealTimeUrl() const
     return impl_ ? impl_->isRealTimeUrl() : false;
 }
 
+std::string DecoderController::url() const
+{
+    return impl_ ? impl_->url() : "";
+}
+
 bool DecoderController::setLoopMode(LoopMode mode, int maxLoops)
 {
     return impl_ ? impl_->setLoopMode(mode, maxLoops) : false;

@@ -247,6 +247,13 @@ public:
     bool isRealTimeUrl() const;
 
     /**
+     * @brief 获取当前播放URL
+     *
+     * @return 当前播放URL
+     */
+    std::string url() const;
+
+    /**
      * @brief 设置循环播放模式
      * @param mode 循环模式
      * @param maxLoops 最大循环次数（仅在kSingle模式下有效，-1表示无限循环）
