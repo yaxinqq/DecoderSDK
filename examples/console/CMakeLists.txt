@@ -29,6 +29,7 @@ set_target_properties(${EXAMPLE_TARGET} PROPERTIES
 target_include_directories(${EXAMPLE_TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../../src/include
     ${CMAKE_CURRENT_SOURCE_DIR}/../../src
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../external/vulkan/include
     ${FFMPEG_INCLUDE_DIR}
     ${SPDLOG_INCLUDE_DIR}
     ${FMT_INCLUDE_DIR}
@@ -57,19 +58,27 @@ if(WIN32)
     )
     
     # 复制必要的DLL文件到输出目录
-    add_custom_command(TARGET ${EXAMPLE_TARGET} POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_directory
-        ${FFMPEG_BIN_DIR}
-        $<TARGET_FILE_DIR:${EXAMPLE_TARGET}>
-        COMMENT "Copying FFmpeg DLLs to example output directory"
-    )
+    if(FFMPEG_BIN_DIR AND EXISTS "${FFMPEG_BIN_DIR}")
+        add_custom_command(TARGET ${EXAMPLE_TARGET} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+            ${FFMPEG_BIN_DIR}
+            $<TARGET_FILE_DIR:${EXAMPLE_TARGET}>
+            COMMENT "Copying FFmpeg DLLs to example output directory"
+        )
+    else()
+        message(WARNING "FFMPEG_BIN_DIR not set or does not exist. Skipping FFmpeg DLL copy.")
+    endif()
     
-    add_custom_command(TARGET ${EXAMPLE_TARGET} POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_directory
-        ${SPDLOG_BIN_DIR}
-        $<TARGET_FILE_DIR:${EXAMPLE_TARGET}>
-        COMMENT "Copying spdlog DLLs to example output directory"
-    )
+    if(DEFINED SPDLOG_BIN_DIR AND SPDLOG_BIN_DIR AND EXISTS "${SPDLOG_BIN_DIR}")
+        add_custom_command(TARGET ${EXAMPLE_TARGET} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+            ${SPDLOG_BIN_DIR}
+            $<TARGET_FILE_DIR:${EXAMPLE_TARGET}>
+            COMMENT "Copying spdlog DLLs to example output directory"
+        )
+    else()
+        message(STATUS "SPDLOG_BIN_DIR not set or does not exist. Skipping spdlog DLL copy.")
+    endif()
 
     # 复制DecoderSDK库DLL到输出目录
     add_custom_command(TARGET ${EXAMPLE_TARGET} POST_BUILD
@@ -87,18 +96,3 @@ if(WIN32)
         COMMENT "Copying DecoderSDK PDB to example output directory"
     )
 endif()
-
-# 创建images输出目录
-add_custom_command(TARGET ${EXAMPLE_TARGET} POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E make_directory
-    $<TARGET_FILE_DIR:${EXAMPLE_TARGET}>/images
-    COMMENT "Creating images directory for example output"
-)
-
-# 复制配置文件
-add_custom_command(TARGET ${EXAMPLE_TARGET} POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-    ${CMAKE_SOURCE_DIR}/resources/decoderSDK.json
-    $<TARGET_FILE_DIR:${EXAMPLE_TARGET}>/etc/decoderSDK.json
-    COMMENT "Copying configuration file to example output directory"
-)

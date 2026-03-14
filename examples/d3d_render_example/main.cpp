@@ -224,7 +224,7 @@ int main(int argc, char *argv[])
     // 配置解码器
     Config config;
     config.hwAccelType = HWAccelType::kD3d11va; // 使用D3D11VA硬件加速
-    config.decodeMediaType = Config::DecodeMediaType::kVideo;
+    config.decodeMediaType = Config::RequiredMediaType::kVideo;
     config.requireFrameInSystemMemory = false; // 不需要系统内存中的帧
 
     // 如果D3D11VA不可用，回退到软解码

@@ -13,7 +13,7 @@ const int kPenWidth = 4;
 const double kBrushAlpha = 0.05;
 } // namespace
 
-#pragma retion RubberBand
+#pragma region RubberBand
 class RubberBand : public QRubberBand {
 public:
     explicit RubberBand(Shape s, QWidget *parent = nullptr);
