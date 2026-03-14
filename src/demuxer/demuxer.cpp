@@ -165,7 +165,7 @@ bool Demuxer::startRecording(const std::string &outputPath)
         return false;
     }
 
-    return realTimeStreamRecorder_->startRecording(outputPath, formatContext_);
+    return realTimeStreamRecorder_->startRecording(outputPath, formatContext_, recordMediaType_);
 }
 
 bool Demuxer::stopRecording()
@@ -303,20 +303,10 @@ void Demuxer::distributePacket(AVPacket *pkt)
             packet.setSerial(videoPacketQueue_->serial());
             videoPacketQueue_->push(packet, -1);
         }
-
-        // 如果正在录制，写入录制器
-        if (realTimeStreamRecorder_->isRecording()) {
-            realTimeStreamRecorder_->writePacket(packet, AVMEDIA_TYPE_VIDEO);
-        }
     } else if (pkt->stream_index == audioStreamIndex_) {
         if (audioPacketQueue_ && !isPaused_.load()) {
             packet.setSerial(audioPacketQueue_->serial());
             audioPacketQueue_->push(packet, -1);
-        }
-
-        // 如果正在录制，写入录制器
-        if (realTimeStreamRecorder_->isRecording()) {
-            realTimeStreamRecorder_->writePacket(packet, AVMEDIA_TYPE_AUDIO);
         }
     }
 
@@ -437,6 +427,19 @@ void Demuxer::realTimeStreamDemuxLoop(AVPacket *pkt)
         // 读取并处理数据包
         const int result = readAndProcessPacket(pkt, readFirstPacket, readFailedCount);
         if (result == 0) {
+            // 如果正在录制，则将需要录制的流写入录制器
+            if (realTimeStreamRecorder_->isRecording()) {
+                AVMediaType mediaType = AVMEDIA_TYPE_UNKNOWN;
+                if ((recordMediaType_ & Config::RequiredMediaType::kVideo) &&
+                    pkt->stream_index == videoStreamIndex_) {
+                    mediaType = AVMEDIA_TYPE_VIDEO;
+                } else if ((recordMediaType_ & Config::RequiredMediaType::kAudio) &&
+                           pkt->stream_index == audioStreamIndex_) {
+                    mediaType = AVMEDIA_TYPE_AUDIO;
+                }
+                realTimeStreamRecorder_->writePacket(Packet(pkt), mediaType);
+            }
+
             if (!handleReadedVideoPacket(pkt, videoTimeBase, jitterDetector, streamStable,
                                          consecutiveFrameDrops)) {
                 av_packet_unref(pkt);
@@ -845,6 +848,9 @@ bool Demuxer::openInternal(const std::string &url, const Config &config,
     // 设置实时流模式
     enableJitterDetector_ = config.enableJitterDetector;
 
+    // 设置待录制的媒体类型
+    recordMediaType_ = config.recordMediaType;
+
     // 启动解复用器
     start();
 
@@ -884,6 +890,8 @@ bool Demuxer::closeInternal()
     url_.clear();
     isRealTime_ = false;
     isOpened_ = false;
+    recordMediaType_ = Config::RequiredMediaType::kAll;
+    enableJitterDetector_ = true;
 
     // 清空流信息
     streamInfo_.reset();

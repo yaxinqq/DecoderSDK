@@ -24,15 +24,15 @@ INTERNAL_NAMESPACE_BEGIN
  * @brief 支持的容器格式枚举
  */
 enum class ContainerFormat {
-    MP4,        // MP4容器
-    AVI,        // AVI容器
-    MKV,        // Matroska容器
-    MOV,        // QuickTime容器
-    FLV,        // Flash Video容器
-    TS,         // MPEG-TS容器
-    WEBM,       // WebM容器
-    OGV,        // Ogg Video容器
-    UNKNOWN     // 未知格式
+    MP4,    // MP4容器
+    AVI,    // AVI容器
+    MKV,    // Matroska容器
+    MOV,    // QuickTime容器
+    FLV,    // Flash Video容器
+    TS,     // MPEG-TS容器
+    WEBM,   // WebM容器
+    OGV,    // Ogg Video容器
+    UNKNOWN // 未知格式
 };
 
 /**
@@ -40,13 +40,13 @@ enum class ContainerFormat {
  */
 struct ContainerFormatInfo {
     ContainerFormat format;
-    std::string formatName;     // FFmpeg格式名称
-    std::string extension;      // 文件扩展名
-    std::string description;    // 格式描述
-    bool supportVideo;          // 是否支持视频
-    bool supportAudio;          // 是否支持音频
-    std::vector<std::string> supportedVideoCodecs;  // 支持的视频编解码器
-    std::vector<std::string> supportedAudioCodecs;  // 支持的音频编解码器
+    std::string formatName;                        // FFmpeg格式名称
+    std::string extension;                         // 文件扩展名
+    std::string description;                       // 格式描述
+    bool supportVideo;                             // 是否支持视频
+    bool supportAudio;                             // 是否支持音频
+    std::vector<std::string> supportedVideoCodecs; // 支持的视频编解码器
+    std::vector<std::string> supportedAudioCodecs; // 支持的音频编解码器
 };
 
 class RealTimeStreamRecorder {
@@ -69,9 +69,11 @@ public:
      * @brief 开始录制
      * @param outputPath 输出文件路径
      * @param inputFormatCtx 输入格式上下文
+     * @param recordMediaType 需要录制的媒体类型
      * @return 是否成功开始录制
      */
-    bool startRecording(const std::string &outputPath, AVFormatContext *inputFormatCtx);
+    bool startRecording(const std::string &outputPath, AVFormatContext *inputFormatCtx,
+                        Config::RequiredMediaType recordMediaType);
 
     /**
      * @brief 停止录制
@@ -116,12 +118,13 @@ public:
      * @brief 验证容器格式是否支持指定的编解码器
      * @param format 容器格式
      * @param inputFormatCtx 输入格式上下文
+     * @param recordMediaType 需要录制的媒体类型
      * @param errorMsg 错误信息输出
      * @return 是否支持
      */
-    static bool validateFormatCompatibility(ContainerFormat format, 
-                                          AVFormatContext *inputFormatCtx, 
-                                          std::string &errorMsg);
+    static bool validateFormatCompatibility(ContainerFormat format, AVFormatContext *inputFormatCtx,
+                                            Config::RequiredMediaType recordMediaType,
+                                            std::string &errorMsg);
 
 private:
     /**
@@ -135,7 +138,8 @@ private:
      * @param inputFormatCtx 输入格式上下文
      * @return 是否成功初始化，返回错误码，0 - 初始化成功
      */
-    int initOutputContext(const std::string &outputPath, AVFormatContext *inputFormatCtx);
+    int initOutputContext(const std::string &outputPath, AVFormatContext *inputFormatCtx,
+                          Config::RequiredMediaType recordMediaType);
 
     /**
      * @brief 清理资源
@@ -147,7 +151,8 @@ private:
      * @param inputFormatCtx 输入格式上下文
      * @return 是否成功创建
      */
-    bool createStreamMapping(AVFormatContext *inputFormatCtx);
+    bool createStreamMapping(AVFormatContext *inputFormatCtx,
+                             Config::RequiredMediaType recordMediaType);
 
     /**
      * @brief 处理数据包写入
@@ -191,7 +196,7 @@ private:
 
     // FFmpeg相关
     AVFormatContext *outputFormatCtx_ = nullptr;
-    AVFormatContext *inputFormatCtx_ = nullptr; 
+    AVFormatContext *inputFormatCtx_ = nullptr;
     std::string outputPath_;
 
     // 数据包队列 - 使用PacketQueue替代简单queue

@@ -581,6 +581,9 @@ struct Config {
 
     // 是否开启jitter检测
     bool enableJitterDetector = true;
+
+    // 需要录制的媒体类型
+    RequiredMediaType recordMediaType = RequiredMediaType::kAll;
 };
 
 // 预缓冲状态

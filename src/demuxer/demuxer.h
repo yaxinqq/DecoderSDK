@@ -342,6 +342,8 @@ private:
 
     // 录制器
     std::unique_ptr<RealTimeStreamRecorder> realTimeStreamRecorder_;
+    // 需要录制的媒体类型
+    Config::RequiredMediaType recordMediaType_ = Config::RequiredMediaType::kAll;
 
     // 事件分发器
     std::shared_ptr<EventDispatcher> eventDispatcher_;

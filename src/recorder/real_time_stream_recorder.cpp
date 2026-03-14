@@ -30,7 +30,8 @@ RealTimeStreamRecorder::~RealTimeStreamRecorder()
 }
 
 bool RealTimeStreamRecorder::startRecording(const std::string &outputPath,
-                                            AVFormatContext *inputFormatCtx)
+                                            AVFormatContext *inputFormatCtx,
+                                            Config::RequiredMediaType recordMediaType)
 {
     std::lock_guard<std::mutex> lock(mutex_);
 
@@ -57,7 +58,7 @@ bool RealTimeStreamRecorder::startRecording(const std::string &outputPath,
 
     // 验证格式兼容性
     std::string errorMsg;
-    if (!validateFormatCompatibility(currentFormat_, inputFormatCtx, errorMsg)) {
+    if (!validateFormatCompatibility(currentFormat_, inputFormatCtx, recordMediaType, errorMsg)) {
         const std::string errStr = "Format compatibility validation failed: " + errorMsg;
         LOG_ERROR(errStr.c_str());
         triggerErrorEvent(outputPath, currentFormat_, -3, errStr);
@@ -68,7 +69,7 @@ bool RealTimeStreamRecorder::startRecording(const std::string &outputPath,
     inputFormatCtx_ = inputFormatCtx;
 
     // 初始化输出上下文
-    if (int ret = initOutputContext(outputPath, inputFormatCtx); ret != 0) {
+    if (int ret = initOutputContext(outputPath, inputFormatCtx, recordMediaType); ret != 0) {
         const std::string errStr = "Init output context failed: " + utils::avErr2Str(ret);
         LOG_ERROR(errStr.c_str());
         triggerErrorEvent(outputPath, currentFormat_, ret, errStr);
@@ -76,7 +77,7 @@ bool RealTimeStreamRecorder::startRecording(const std::string &outputPath,
     }
 
     // 创建流映射
-    if (!createStreamMapping(inputFormatCtx)) {
+    if (!createStreamMapping(inputFormatCtx, recordMediaType)) {
         cleanup();
         const std::string errStr =
             "Init output context failed: " + utils::avErr2Str(AVERROR(ENOMEM));
@@ -219,6 +220,7 @@ ContainerFormat RealTimeStreamRecorder::detectContainerFormat(const std::string 
 
 bool RealTimeStreamRecorder::validateFormatCompatibility(ContainerFormat format,
                                                          AVFormatContext *inputFormatCtx,
+                                                         Config::RequiredMediaType recordMediaType,
                                                          std::string &errorMsg)
 {
     if (format == ContainerFormat::UNKNOWN) {
@@ -242,14 +244,16 @@ bool RealTimeStreamRecorder::validateFormatCompatibility(ContainerFormat format,
         AVStream *stream = inputFormatCtx->streams[i];
         const char *codecName = avcodec_get_name(stream->codecpar->codec_id);
 
-        if (stream->codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
+        if (stream->codecpar->codec_type == AVMEDIA_TYPE_VIDEO &&
+            (recordMediaType & Config::RequiredMediaType::kVideo)) {
             hasVideo = true;
             if (std::find(formatInfo.supportedVideoCodecs.begin(),
                           formatInfo.supportedVideoCodecs.end(),
                           codecName) == formatInfo.supportedVideoCodecs.end()) {
                 unsupportedCodecs.push_back(std::string("Video: ") + codecName);
             }
-        } else if (stream->codecpar->codec_type == AVMEDIA_TYPE_AUDIO) {
+        } else if (stream->codecpar->codec_type == AVMEDIA_TYPE_AUDIO &&
+                   (recordMediaType & Config::RequiredMediaType::kAudio)) {
             hasAudio = true;
             if (std::find(formatInfo.supportedAudioCodecs.begin(),
                           formatInfo.supportedAudioCodecs.end(),
@@ -316,7 +320,8 @@ void RealTimeStreamRecorder::recordingLoop()
 }
 
 int RealTimeStreamRecorder::initOutputContext(const std::string &outputPath,
-                                              AVFormatContext *inputFormatCtx)
+                                              AVFormatContext *inputFormatCtx,
+                                              Config::RequiredMediaType recordMediaType)
 {
     // 获取格式信息
     const auto &formatInfo = getFormatInfoMap().at(currentFormat_);
@@ -334,9 +339,18 @@ int RealTimeStreamRecorder::initOutputContext(const std::string &outputPath,
     for (unsigned int i = 0; i < inputFormatCtx->nb_streams; i++) {
         AVStream *inStream = inputFormatCtx->streams[i];
 
-        // 只处理视频和音频流
-        if (inStream->codecpar->codec_type != AVMEDIA_TYPE_VIDEO &&
-            inStream->codecpar->codec_type != AVMEDIA_TYPE_AUDIO) {
+        // 是否应该被处理
+        bool shouldProcess = false;
+        if (inStream->codecpar->codec_type == AVMEDIA_TYPE_VIDEO &&
+            (recordMediaType & Config::RequiredMediaType::kVideo)) {
+            shouldProcess = true;
+        } else if (inStream->codecpar->codec_type == AVMEDIA_TYPE_AUDIO &&
+                   (recordMediaType & Config::RequiredMediaType::kAudio)) {
+            shouldProcess = true;
+        }
+
+        // 只处理应该被处理的流
+        if (!shouldProcess) {
             continue;
         }
 
@@ -374,6 +388,13 @@ int RealTimeStreamRecorder::initOutputContext(const std::string &outputPath,
         }
 
         outStream->codecpar->codec_tag = 0;
+
+        // 复制时间基
+        outStream->time_base = inStream->time_base;
+
+        // 复制帧率信息
+        outStream->r_frame_rate = inStream->r_frame_rate;
+        outStream->avg_frame_rate = inStream->avg_frame_rate;
     }
 
     // 打开输出文件
@@ -445,7 +466,8 @@ void RealTimeStreamRecorder::cleanup()
     currentFormat_ = ContainerFormat::UNKNOWN;
 }
 
-bool RealTimeStreamRecorder::createStreamMapping(AVFormatContext *inputFormatCtx)
+bool RealTimeStreamRecorder::createStreamMapping(AVFormatContext *inputFormatCtx,
+                                                 Config::RequiredMediaType recordMediaType)
 {
     streamCount_ = inputFormatCtx->nb_streams;
     streamMapping_ = static_cast<int *>(av_malloc_array(streamCount_, sizeof(int)));
@@ -457,8 +479,11 @@ bool RealTimeStreamRecorder::createStreamMapping(AVFormatContext *inputFormatCtx
     int outputStreamIndex = 0;
     for (int i = 0; i < streamCount_; i++) {
         AVStream *inStream = inputFormatCtx->streams[i];
-        if (inStream->codecpar->codec_type == AVMEDIA_TYPE_VIDEO ||
-            inStream->codecpar->codec_type == AVMEDIA_TYPE_AUDIO) {
+        if (inStream->codecpar->codec_type == AVMEDIA_TYPE_VIDEO &&
+            (recordMediaType & Config::RequiredMediaType::kVideo)) {
+            streamMapping_[i] = outputStreamIndex++;
+        } else if (inStream->codecpar->codec_type == AVMEDIA_TYPE_AUDIO &&
+                   (recordMediaType & Config::RequiredMediaType::kAudio)) {
             streamMapping_[i] = outputStreamIndex++;
         } else {
             streamMapping_[i] = -1;
