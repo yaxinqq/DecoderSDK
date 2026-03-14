@@ -22,7 +22,7 @@ private slots:
     void onStartRecordBtnClicked();
     void onStopRecordBtnClicked();
 
-    void onTotalTimeRecved(int totalTime);
+    void onTotalTimeRecved(int64_t totalTime);
     void onPtsChanged(double pts);
     void onSliderValueChanged(int value);
     void onSliderPressed();

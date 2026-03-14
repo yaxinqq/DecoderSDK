@@ -79,7 +79,7 @@ void SimplePlayer::onStopRecordBtnClicked()
     ui->player->stopRecoding();
 }
 
-void SimplePlayer::onTotalTimeRecved(int totalTime)
+void SimplePlayer::onTotalTimeRecved(int64_t totalTime)
 {
     totalTime_ = totalTime;
     ui->endTimeLabel->setText(QString::number(totalTime));

@@ -62,7 +62,7 @@ signals:
     void widgetRectChanged(const QRect &rect);
     void videoRectChanged(const QRect &rect);
     void playerStateChanged(Stream::PlayerState state);
-    void totalTimeRecved(int totalTime);
+    void totalTimeRecved(int64_t totalTime);
     void ptsChanged(double pts);
 
     /*
