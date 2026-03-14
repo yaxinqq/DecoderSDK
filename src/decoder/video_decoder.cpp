@@ -688,6 +688,8 @@ void VideoDecoder::decodeLoop()
 
             // 结束seeking
             utils::atomicUpdateIfNotEqual<bool>(demuxerSeeking_, false);
+            // 清空解码器缓冲区
+            avcodec_flush_buffers(codecCtx_);
         }
 
         // 从包队列中获取一个包

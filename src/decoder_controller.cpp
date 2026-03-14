@@ -834,6 +834,7 @@ bool DecoderController::startDecodeInternal()
     LOG_DEBUG("Sync controller clocks reset");
 
     // 开启视频解码器
+    bool hasVideoDecoder = false;
     if (demuxer_->hasVideo() && (config_.decodeMediaType & Config::RequiredMediaType::kVideo) &&
         videoDecoder_) {
         videoDecoder_->init(config_);
@@ -844,9 +845,12 @@ bool DecoderController::startDecodeInternal()
             return false;
         }
         LOG_DEBUG("Video decoder initialized and opened");
+
+        hasVideoDecoder = true;
     }
 
     // 开启音频解码器
+    bool hasAudioDecoder = false;
     if (demuxer_->hasAudio() && (config_.decodeMediaType & Config::RequiredMediaType::kAudio) &&
         audioDecoder_) {
         audioDecoder_->init(config_);
@@ -856,6 +860,13 @@ bool DecoderController::startDecodeInternal()
             return false;
         }
         LOG_DEBUG("Audio decoder initialized and opened");
+
+        hasAudioDecoder = true;
+    }
+
+    // 如果是实时流，且只有视频，则不需要帧率控制
+    if (isRealTimeUrl() && hasVideoDecoder && !hasAudioDecoder) {
+        videoDecoder_->setFrameRateControl(false);
     }
 
     // 默认使用音频作为主时钟
