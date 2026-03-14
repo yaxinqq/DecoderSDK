@@ -810,6 +810,8 @@ bool Demuxer::openInternal(const std::string &url, const Config &config,
     }
 
     // 查找流信息
+    // 设置最大探测5s
+    formatContext_->max_analyze_duration = (int64_t)5 * AV_TIME_BASE;
     ret = avformat_find_stream_info(formatContext_, nullptr);
     if (ret < 0) {
         LOG_ERROR("{} Failed to find stream info: {}", url_, utils::avErr2Str(ret));
