@@ -820,10 +820,10 @@ bool Demuxer::openInternal(const std::string &url, const Config &config,
     audioStreamIndex_ = av_find_best_stream(formatContext_, AVMEDIA_TYPE_AUDIO, -1, -1, nullptr, 0);
 
     // 创建数据包队列
-    if (videoStreamIndex_ >= 0 && (config.decodeMediaType & Config::DecodeMediaType::kVideo)) {
+    if (videoStreamIndex_ >= 0 && (config.decodeMediaType & Config::RequiredMediaType::kVideo)) {
         videoPacketQueue_ = std::make_shared<PacketQueue>(1000);
     }
-    if (audioStreamIndex_ >= 0 && (config.decodeMediaType & Config::DecodeMediaType::kAudio)) {
+    if (audioStreamIndex_ >= 0 && (config.decodeMediaType & Config::RequiredMediaType::kAudio)) {
         audioPacketQueue_ = std::make_shared<PacketQueue>(1000);
     }
 
@@ -988,7 +988,8 @@ void Demuxer::stop()
     LOG_INFO("{} demuxer stopped!", url_);
 }
 
-void Demuxer::setupStreamInfo(const std::string_view &url, Config::DecodeMediaType decodeMediaType)
+void Demuxer::setupStreamInfo(const std::string_view &url,
+                              Config::RequiredMediaType decodeMediaType)
 {
     if (!formatContext_)
         return;
@@ -1005,7 +1006,7 @@ void Demuxer::setupStreamInfo(const std::string_view &url, Config::DecodeMediaTy
     streamInfo_->url = url;
     streamInfo_->totalTime = totalTime;
     streamInfo_->inputFormat = formatContext_->iformat->name;
-    if (videoStreamIndex_ >= 0 && (decodeMediaType & Config::DecodeMediaType::kVideo)) {
+    if (videoStreamIndex_ >= 0 && (decodeMediaType & Config::RequiredMediaType::kVideo)) {
         auto *const stream = formatContext_->streams[videoStreamIndex_];
         streamInfo_->videoInfo = StreamInfo::VideoInfo();
         streamInfo_->videoInfo->width = stream->codecpar->width;
@@ -1026,7 +1027,7 @@ void Demuxer::setupStreamInfo(const std::string_view &url, Config::DecodeMediaTy
         streamInfo_->videoInfo->colorRange =
             utils::avColorRange2Desc(stream->codecpar->color_range);
     }
-    if (audioStreamIndex_ >= 0 && (decodeMediaType & Config::DecodeMediaType::kAudio)) {
+    if (audioStreamIndex_ >= 0 && (decodeMediaType & Config::RequiredMediaType::kAudio)) {
         auto *const stream = formatContext_->streams[audioStreamIndex_];
         streamInfo_->audioInfo = StreamInfo::AudioInfo();
         streamInfo_->audioInfo->sampleRate = stream->codecpar->sample_rate;

@@ -503,8 +503,8 @@ using CreateHWContextCallback = std::function<void *(HWAccelType type)>;
 // userHwContext 是 CreateHWContextCallback 生成的硬件解码器上下文
 using FreeHWContextCallback = std::function<void(HWAccelType type, void *userHwContext)>;
 struct Config {
-    // 解码的媒体类型
-    enum DecodeMediaType : uint8_t {
+    // 需要的媒体类型
+    enum RequiredMediaType : uint8_t {
         kVideo = 1, // 视频
         kAudio = 2, // 音频
 
@@ -536,7 +536,7 @@ struct Config {
 
     // 需要解码的媒体类型（如果有视频+音频，但只想解某一类型的媒体数据，建议设置该参数）
     // 否则可能会因为另外类型媒体数据的PackQueue满队，导致程序阻塞
-    DecodeMediaType decodeMediaType = DecodeMediaType::kAll;
+    RequiredMediaType decodeMediaType = RequiredMediaType::kAll;
 
     // 硬件解码自动退化到软解的配置，是否启用硬件解码失败时自动退化到软解
     bool enableHardwareFallback = true;

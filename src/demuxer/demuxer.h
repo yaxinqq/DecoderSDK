@@ -307,7 +307,7 @@ private:
      * @param url 流地址
      * @param decodeMediaType 解码媒体类型
      */
-    void setupStreamInfo(const std::string_view &url, Config::DecodeMediaType decodeMediaType);
+    void setupStreamInfo(const std::string_view &url, Config::RequiredMediaType decodeMediaType);
 
 private:
     // 解复用器状态

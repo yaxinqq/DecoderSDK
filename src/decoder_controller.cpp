@@ -760,13 +760,13 @@ bool DecoderController::openInternal(const std::string &url, const Config &confi
     LOG_DEBUG("Demuxer opened successfully for: {}", url);
 
     // 根据配置初始化解码器
-    if (demuxer_->hasVideo() && (config_.decodeMediaType & Config::DecodeMediaType::kVideo)) {
+    if (demuxer_->hasVideo() && (config_.decodeMediaType & Config::RequiredMediaType::kVideo)) {
         videoDecoder_ = std::make_shared<VideoDecoder>(demuxer_, syncController_, eventDispatcher_);
         LOG_DEBUG("Video decoder created for: {}", url);
     }
 
     // 开启音频解码器
-    if (demuxer_->hasAudio() && (config_.decodeMediaType & Config::DecodeMediaType::kAudio)) {
+    if (demuxer_->hasAudio() && (config_.decodeMediaType & Config::RequiredMediaType::kAudio)) {
         audioDecoder_ = std::make_shared<AudioDecoder>(demuxer_, syncController_, eventDispatcher_);
         LOG_DEBUG("Audio decoder created for: {}", url);
     }
@@ -822,7 +822,7 @@ bool DecoderController::startDecodeInternal()
     LOG_DEBUG("Sync controller clocks reset");
 
     // 开启视频解码器
-    if (demuxer_->hasVideo() && (config_.decodeMediaType & Config::DecodeMediaType::kVideo) &&
+    if (demuxer_->hasVideo() && (config_.decodeMediaType & Config::RequiredMediaType::kVideo) &&
         videoDecoder_) {
         videoDecoder_->init(config_);
         videoDecoder_->setFrameRateControl(config_.enableFrameRateControl);
@@ -835,7 +835,7 @@ bool DecoderController::startDecodeInternal()
     }
 
     // 开启音频解码器
-    if (demuxer_->hasAudio() && (config_.decodeMediaType & Config::DecodeMediaType::kAudio) &&
+    if (demuxer_->hasAudio() && (config_.decodeMediaType & Config::RequiredMediaType::kAudio) &&
         audioDecoder_) {
         audioDecoder_->init(config_);
         audioDecoder_->setSpeed(config_.speed);
