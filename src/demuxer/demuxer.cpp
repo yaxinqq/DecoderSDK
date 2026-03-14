@@ -357,6 +357,12 @@ void Demuxer::fileStreamDemuxLoop(AVPacket *pkt)
                 if (handleLoopPlayback()) {
                     // 成功开始新的循环，不发送结束包
                     av_packet_unref(pkt);
+                } else {
+                    // 不需要循环播放时，结束循环，并通知外部循环播放结束
+                    auto event = std::make_shared<StreamEventArgs>(
+                        url_, kModuleName, utils::eventType2Desc(EventType::kStreamLoopEnded));
+                    eventDispatcher_->triggerEvent(EventType::kStreamLoopEnded, event);
+                    break;
                 }
                 isEof.reset();
             } else {

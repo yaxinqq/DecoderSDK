@@ -56,6 +56,7 @@ std::vector<EventType> allEventTypes()
         EventType::kStreamReadRecovery,   // 读取恢复
         EventType::kStreamEnded,          // 流结束
         EventType::kStreamLooped,         // 流循环播放
+        EventType::kStreamLoopEnded,      // 流循环播放
         EventType::kDecodeStarted,        // 解码已开始（调用startDecode成功）
         EventType::kDecodeStopped,        // 解码已停止（调用stopDecode成功）
         EventType::kDecodePaused,         // 解码已暂停（调用pauseDecode成功）
@@ -107,6 +108,8 @@ std::string getEventTypeName(EventType type)
             return "kStreamEnded";
         case EventType::kStreamLooped:
             return "kStreamLooped";
+        case EventType::kStreamLoopEnded:
+            return "kStreamLoopEnded";
         case EventType::kDecodeStarted:
             return "kDecodeStarted";
         case EventType::kDecodeStopped:

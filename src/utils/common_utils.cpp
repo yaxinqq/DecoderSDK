@@ -397,8 +397,10 @@ std::string eventType2Desc(EventType type)
             return "Stream Read Recovery";
         case EventType::kStreamEnded: // 流结束
             return "Stream Ended";
-        case EventType::kStreamLooped: // 流循环播放（新增）
+        case EventType::kStreamLooped: // 流循环播放
             return "Stream Looped";
+        case EventType::kStreamLoopEnded: // 流循环播放结束
+            return "Stream Loop Ended";
             // 解码相关事件
         case EventType::kDecodeStarted: // 解码已开始
             return "Decode Started";

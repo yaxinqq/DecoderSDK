@@ -137,7 +137,8 @@ enum class EventType : uint32_t {
     kStreamReadError,    // 读取数据失败
     kStreamReadRecovery, // 读取恢复
     kStreamEnded,        // 流结束
-    kStreamLooped,       // 流循环播放（新增）
+    kStreamLooped,       // 流循环播放
+    kStreamLoopEnded,    // 流循环播放结束
 
     // 解码相关事件
     kDecodeStarted = 20,   // 解码已开始
