@@ -179,7 +179,7 @@ struct StreamInfo {
     // 媒体文件地址
     std::string url;
     // 文件总时长(s)，实时流时有可能为空
-    std::optional<int> totalTime;
+    std::optional<int64_t> totalTime;
     // 流的封装格式
     std::string inputFormat;
 

@@ -1012,10 +1012,11 @@ void Demuxer::setupStreamInfo(const std::string_view &url,
         return;
 
     // 获取流总时长（以秒为单位）
-    std::optional<int> totalTime;
+    std::optional<int64_t> totalTime;
     if (formatContext_ && formatContext_->duration != AV_NOPTS_VALUE) {
         // 将时长从微秒转换为秒
-        totalTime = static_cast<int>(formatContext_->duration / AV_TIME_BASE);
+        totalTime =
+            static_cast<int64_t>(std::ceil((double)(formatContext_->duration) / AV_TIME_BASE));
     }
 
     // 组装流信息
