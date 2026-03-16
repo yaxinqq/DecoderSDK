@@ -55,7 +55,7 @@ option(BUILD_DECODERSDK_SHARED_LIBS "Build shared libraries" ON)
 
 # 添加选项控制具体编译哪些例子
 option(BUILD_CONSOLE_EXAMPLE "Build console example" OFF)
-option(BUILD_QT_GUI_EXAMPLE "Build Qt GUI example" ON)
+option(BUILD_QT_GUI_EXAMPLE "Build Qt GUI example" OFF)
 option(BUILD_D3D_RENDER_EXAMPLE "Build D3D render example" OFF)
 
 # 设置FFMpeg的根路径

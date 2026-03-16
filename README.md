@@ -10,7 +10,7 @@ DecoderSDK是一个基于FFmpeg的现代化音视频解码库，提供了简洁�
 
 ### 🚀 核心功能
 - **多格式支持**: 支持主流音视频格式解码
-- **硬件加速**: 支持CUDA、DXVA2、D3D11VA、VAAPI等多种硬件加速
+- **硬件加速**: 支持CUDA、DXVA2、D3D11VA、QSV、AMF、Vulkan、VAAPI等多种硬件加速
 - **实时流处理**: 支持RTSP、RTMP等实时流协议
 - **高性能队列**: 内置高效的帧队列和包队列管理
 - **同步控制**: 精确的音视频同步机制
@@ -41,7 +41,7 @@ DecoderSDK是一个基于FFmpeg的现代化音视频解码库，提供了简洁�
 - aarch64 (ARM 64位，Linux平台)
 
 ### 硬件加速支持
-- **Windows**: CUDA、D3D11VA、DXVA2、Vulkan
+- **Windows**: CUDA、D3D11VA、DXVA2、Vulkan、QSV、AMF
 - **Linux**: CUDA、VAAPI
 
 ## 系统要求
@@ -73,14 +73,20 @@ git clone <repository-url>
 cd DecoderSDK
 
 # 设置FFmpeg路径（必需）
-set FFMPEG_ROOT_DIR=C:\path\to\ffmpeg
+# CMD
+# set FFMPEG_ROOT_DIR=C:\path\to\ffmpeg
+# PowerShell
+$env:FFMPEG_ROOT_DIR="C:\path\to\ffmpeg"
 
 # 创建构建目录
 mkdir build
 cd build
 
 # 配置项目
-cmake .. -DFFMPEG_ROOT_DIR=%FFMPEG_ROOT_DIR%
+# CMD
+# cmake .. -DFFMPEG_ROOT_DIR=%FFMPEG_ROOT_DIR%
+# PowerShell
+cmake .. -DFFMPEG_ROOT_DIR="$env:FFMPEG_ROOT_DIR"
 
 # 编译
 cmake --build . --config Release
@@ -114,17 +120,12 @@ sudo make install
 
 ### 编译选项
 
-- `BUILD_EXAMPLES`: 是否编译示例程序 (默认: ON)
 - `BUILD_DECODERSDK_SHARED_LIBS`: 是否编译动态库 (默认: ON)
 - `BUILD_CONSOLE_EXAMPLE`: 是否编译控制台示例 (默认: OFF)
 - `BUILD_QT_GUI_EXAMPLE`: 是否编译Qt GUI示例 (默认: OFF)
 - `BUILD_D3D_RENDER_EXAMPLE`: 是否编译D3D渲染示例 (默认: OFF)
 - `FFMPEG_ROOT_DIR`: FFmpeg安装路径 (Windows必需)
 
-示例：
-```bash
-cmake .. -DBUILD_EXAMPLES=ON -DBUILD_QT_GUI_EXAMPLE=ON -DFFMPEG_ROOT_DIR=/path/to/ffmpeg
-```
 
 ## API 使用指南
 
@@ -243,8 +244,8 @@ config.hwAccelType = HWAccelType::kNone;
 位于 `examples/console/` 目录，演示基本的解码功能：
 ```bash
 # 编译控制台示例
-cmake .. -DBUILD_CONSOLE_EXAMPLE=ON
-make
+cmake .. -DBUILD_CONSOLE_EXAMPLE=ON -DFFMPEG_ROOT_DIR="$env:FFMPEG_ROOT_DIR"
+cmake --build .
 
 # 运行示例
 ./decoder_usage_example rtsp://example.com/stream
@@ -253,9 +254,15 @@ make
 ### Qt GUI示例
 位于 `examples/qt_gui/` 目录，提供图形界面播放器：
 ```bash
+# 设置Qt路径（必需）
+# CMD
+# set QT_DIR=C:\path\to\qt
+# PowerShell
+$env:QT_DIR="C:\path\to\qt"
+
 # 编译Qt GUI示例
-cmake .. -DBUILD_QT_GUI_EXAMPLE=ON
-make
+cmake .. -DBUILD_QT_GUI_EXAMPLE=ON -DFFMPEG_ROOT_DIR="$env:FFMPEG_ROOT_DIR" -DCMAKE_PREFIX_PATH="$env:QT_DIR"
+cmake --build .
 
 # 运行示例
 ./qt_gui_example
@@ -265,8 +272,8 @@ make
 位于 `examples/d3d_render_example/` 目录，演示D3D硬件渲染：
 ```bash
 # 编译D3D渲染示例（仅Windows）
-cmake .. -DBUILD_D3D_RENDER_EXAMPLE=ON
-make
+cmake .. -DBUILD_D3D_RENDER_EXAMPLE=ON -DFFMPEG_ROOT_DIR="$env:FFMPEG_ROOT_DIR"
+cmake --build .
 
 # 运行示例
 ./d3d_render_example
