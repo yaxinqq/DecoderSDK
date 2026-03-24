@@ -1,50 +1,36 @@
+/**
+ * @file decoder_usage_example.cpp
+ * @brief DecoderSDK 完整编解码流程示例
+ *
+ * 本示例演示了如何使用 DecoderSDK 进行视频流的解码、处理（转发）和重新编码。
+ * 包含以下主要步骤：
+ * 1. 初始化 DecoderController 打开输入流（文件或RTSP）。
+ * 2. 初始化 EncoderController 打开输出文件。
+ * 3. 将解码得到的音视频帧推送到编码器进行编码。
+ * 4. 演示了多线程处理和基本的同步机制。
+ *
+ *
+ * 运行参数：
+ * ./decoder_usage_example [input_url] [output_file]
+ */
+
 #include <atomic>
 #include <chrono>
 #include <iomanip>
 #include <iostream>
+#include <string>
 #include <thread>
 
 #ifdef _WIN32
 #include <windows.h>
 #endif
 
+#include "decodersdk/common_define.h"
 #include "decodersdk/decoder_controller.h"
+#include "decodersdk/encoder_controller.h"
+#include "logger/logger.h"
 
 using namespace decoder_sdk;
-
-// 用于计算帧率的辅助函数
-class FPSCalculator {
-private:
-    std::chrono::steady_clock::time_point startTime;
-    int frameCount;
-    double fps;
-
-public:
-    FPSCalculator() : frameCount(0), fps(0.0)
-    {
-        startTime = std::chrono::steady_clock::now();
-    }
-
-    void update()
-    {
-        frameCount++;
-        auto now = std::chrono::steady_clock::now();
-        auto duration =
-            std::chrono::duration_cast<std::chrono::milliseconds>(now - startTime).count();
-
-        // 每秒更新一次FPS
-        if (duration >= 1000) {
-            fps = frameCount * 1000.0 / duration;
-            frameCount = 0;
-            startTime = now;
-        }
-    }
-
-    double getFPS() const
-    {
-        return fps;
-    }
-};
 
 int main(int argc, char *argv[])
 {
@@ -52,170 +38,143 @@ int main(int argc, char *argv[])
     SetConsoleOutputCP(CP_UTF8);
 #endif
 
-    // avdevice_register_all();
-    // avformat_network_init();
+    // 1. 解析参数
+    std::string inputPath = (argc > 1) ? argv[1] : "D:/WorkSpace/test_video/test.mp4";
+    std::string outputPath = (argc > 2) ? argv[2] : "output.mp4";
 
-    // 初始化日志
-    // Logger::initFromConfig("./etc/decodersdk.json");
-    std::cout << std::fixed << std::setprecision(2);
+    std::cout << "Input: " << inputPath << std::endl;
+    std::cout << "Output: " << outputPath << std::endl;
 
-    // std::string videoPath = (argc > 1) ? argv[1] : "D:/WorkSpace/test_video/test.mp4";
+    // 2. 初始化解码器
+    DecoderController decoder;
+    DecoderConfig decodeConfig;
+    decodeConfig.hwAccelType = HWAccelType::kAuto; // 自动选择硬解
 
-    std::string videoPath =
-        (argc > 1) ? argv[1] : "rtsp://admin:zhkj2501@192.168.0.71:554/ch1/stream1";
-
-    float playbackSpeed = 1.0f;
-    DecoderController manager;
-
-    // 注册事件回调函数
-    manager.addGlobalEventListener([](EventType eventType, std::shared_ptr<EventArgs> event) {
-        std::cout << "收到" << event->source << "的" << getEventTypeName(eventType) << "回调："
-                  << event->description << std::endl;
-    });
-
-    DecoderConfig config;
-    config.hwAccelType = HWAccelType::kAuto;
-    config.swVideoOutFormat = ImageFormat::kRGB24;
-    config.requireFrameInSystemMemory = false;
-    if (!manager.open(videoPath, config)) {
-        std::cout << "打开文件失败: " << videoPath << std::endl;
+    if (!decoder.open(inputPath, decodeConfig)) {
+        std::cerr << "Failed to open decoder: " << inputPath << std::endl;
         return -1;
     }
-    std::cout << "打开文件成功: " << videoPath << std::endl;
-    manager.setFrameRateControl(true); // 开启内部帧率控制
-    manager.setSpeed(playbackSpeed);
-    manager.startRecording("./output.mp4");
-    manager.startDecode();
+    std::cout << "Decoder opened successfully." << std::endl;
 
-    // 测试时长和计时
-    const int TEST_DURATION_SEC = 10;
-    auto testStart = std::chrono::steady_clock::now();
-    std::atomic<bool> running{true};
+    // 获取流信息以配置编码器
+    const auto &streamInfoOpt = decoder.streamInfo();
+    if (!streamInfoOpt) {
+        std::cerr << "Failed to get stream info." << std::endl;
+        return -1;
+    }
+    const StreamInfo &streamInfo = *streamInfoOpt;
 
-    // FPS 统计
-    FPSCalculator audioFPS, videoFPS;
-    std::atomic<int> audioCount{0}, videoCount{0};
+    // 3. 初始化编码器
+    EncoderController encoder;
+    EncoderConfig encodeConfig;
+    encodeConfig.url = outputPath;
+    encodeConfig.format = "mp4";
+    encodeConfig.hwAccelType = HWAccelType::kAuto;
+    encodeConfig.encodeFormat = ImageFormat::kNV12; // 和解码端保持一致
 
-    // 启动音频线程
-    double lastAudioPts;
-    std::thread audioThread([&]() {
-        while (running) {
-            Frame afr;
-            if (manager.audioQueue().pop(afr, 1) && afr.isValid()) {
-                double audioPts = afr.secPts();
-                std::cout << "音频帧PTS: " << audioPts << std::endl;
-                lastAudioPts = audioPts;
-                audioFPS.update();
-                audioCount++;
-            } else {
-                // utils::highPrecisionSleep(1); // 1ms
-            }
-        }
-    });
-
-    // 启动视频线程
-    double lastVideoPts;
-    std::thread videoThread([&]() {
-        // const AVCodec *codec = avcodec_find_encoder(AV_CODEC_ID_PNG);
-        // if (!codec) {
-        //     LOG_ERROR("PNG 编码器未找到");
-        //     return;
-        // }
-
-        // AVCodecContext *codecCtx = nullptr;
-        // AVPacket *pkt = av_packet_alloc();
-
-        int i = 0;
-        while (running) {
-            Frame vfr;
-            if (manager.videoQueue().pop(vfr, 1) && vfr.isValid()) {
-                double videoPts = vfr.secPts();
-                std::cout << "视频帧PTS: " << videoPts << std::endl;
-                lastVideoPts = videoPts;
-                videoFPS.update();
-                videoCount++;
-
-                // // 保存图片验证解码有效性
-                // AVFrame *frame = vfr.get();
-                // // 1. 创建编码器上下文
-                // if (!codecCtx) {
-                //     codecCtx = avcodec_alloc_context3(codec);
-                //     codecCtx->width = frame->width;
-                //     codecCtx->height = frame->height;
-                //     codecCtx->pix_fmt = AV_PIX_FMT_RGB24;
-                //     codecCtx->time_base = AVRational{1, 25};
-                //     int ret = avcodec_open2(codecCtx, codec, nullptr);
-                //     if (ret < 0) {
-                //         LOG_ERROR("无法打开编码器, {}", ret);
-                //         avcodec_free_context(&codecCtx);
-                //         return;
-                //     }
-                // }
-
-                // // 3. 编码帧
-                // int ret = avcodec_send_frame(codecCtx, frame);
-                // if (ret < 0) {
-                //     LOG_ERROR("发送帧失败");
-                //     return;
-                // }
-
-                // ret = avcodec_receive_packet(codecCtx, pkt);
-                // if (ret < 0) {
-                //     LOG_ERROR("接收包失败");
-                //     return;
-                // }
-
-                // // 4. 写入文件
-                // const std::string filename = fmt::format("./images/{}.png", i++);
-                // FILE *outFile = fopen(filename.c_str(), "wb");
-                // fwrite(pkt->data, 1, pkt->size, outFile);
-                // fclose(outFile);
-
-                // av_packet_unref(pkt);
-
-                // 当视频到达100帧后，调用seek
-                // if (videoCount.load() % 100 == 0) {
-                //    double seekPos = videoPts + 3.0; // 5秒后
-                //    manager.seek(seekPos);
-                //    LOG_DEBUG("Seek to {} seconds", seekPos);
-                // }
-            } else {
-                // utils::highPrecisionSleep(1); // 1ms
-            }
-        }
-
-        // avcodec_free_context(&codecCtx);
-        // av_packet_free(&pkt);
-    });
-
-    // 主线程监测时长
-    while (true) {
-        auto now = std::chrono::steady_clock::now();
-        if (std::chrono::duration_cast<std::chrono::seconds>(now - testStart).count() >=
-            TEST_DURATION_SEC)
-            break;
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    // 配置视频参数
+    if (streamInfo.videoInfo) {
+        encodeConfig.encodeMediaTypes.set(MediaType::kVideo);
+        encodeConfig.width = streamInfo.videoInfo->width;
+        encodeConfig.height = streamInfo.videoInfo->height;
+        encodeConfig.fps =
+            streamInfo.videoInfo->frameRate > 0 ? streamInfo.videoInfo->frameRate : 30;
+        encodeConfig.videoBitrate = 4000000; // 4Mbps
+        std::cout << "Video Config: " << encodeConfig.width << "x" << encodeConfig.height << " @"
+                  << encodeConfig.fps << "fps" << std::endl;
+    } else {
+        encodeConfig.encodeMediaTypes.set(MediaType::kVideo, false);
     }
 
+    // 配置音频参数
+    if (streamInfo.audioInfo) {
+        encodeConfig.encodeMediaTypes.set(MediaType::kAudio);
+        encodeConfig.sampleRate = streamInfo.audioInfo->sampleRate;
+        encodeConfig.channels = streamInfo.audioInfo->channels;
+        encodeConfig.audioBitrate = 128000; // 128kbps
+        std::cout << "Audio Config: " << encodeConfig.sampleRate << "Hz " << encodeConfig.channels
+                  << "ch" << std::endl;
+    } else {
+        encodeConfig.encodeMediaTypes.set(MediaType::kAudio, false);
+    }
+
+    if (!encoder.open(outputPath, encodeConfig)) {
+        std::cerr << "Failed to open encoder: " << outputPath << std::endl;
+        return -1;
+    }
+    std::cout << "Encoder opened successfully." << std::endl;
+
+    // 4. 启动任务
+    encoder.start();
+    decoder.startDecode();
+
+    std::atomic<bool> running{true};
+
+    // 音频处理线程
+    std::thread audioThread([&]() {
+        Frame frame;
+        while (running) {
+            // 从解码器获取帧
+            auto audioQ = decoder.audioQueue();
+
+            if (audioQ.pop(frame, 10)) {
+                if (frame.isValid()) {
+                    // 推送到编码器
+                    if (!encoder.pushFrame(MediaType::kAudio, frame)) {
+                        // std::cerr << "Failed to push audio frame" << std::endl;
+                    }
+                }
+            } else {
+                // Wait/Sleep
+            }
+        }
+    });
+
+    // 视频处理线程
+    std::thread videoThread([&]() {
+        Frame frame;
+        int frameCount = 0;
+        while (running) {
+            auto videoQ = decoder.videoQueue();
+
+            if (videoQ.pop(frame, 10)) {
+                if (frame.isValid()) {
+                    // 推送到编码器
+                    if (!encoder.pushFrame(MediaType::kVideo, frame)) {
+                        // std::cerr << "Failed to push video frame" << std::endl;
+                    }
+
+                    if (++frameCount % 30 == 0) {
+                        std::cout << "Processed " << frameCount
+                                  << " video frames. PTS: " << frame.secPts() << "\r" << std::flush;
+                    }
+                }
+            } else {
+                // Wait/Sleep
+            }
+        }
+    });
+
+    // 主循环：运行一段时间
+    int seconds = 20;
+    std::cout << "Running for " << seconds << " seconds..." << std::endl;
+    std::this_thread::sleep_for(std::chrono::seconds(seconds));
+
+    // 5. 停止和清理
+    std::cout << "\nStopping..." << std::endl;
     running = false;
+
     if (audioThread.joinable())
         audioThread.join();
     if (videoThread.joinable())
         videoThread.join();
 
-    // 输出统计
-    std::cout << "测试完成" << std::endl;
-    std::cout << "音频帧数: " << audioCount.load() << " (" << audioFPS.getFPS() << " fps)"
-              << std::endl;
-    std::cout << "视频帧数: " << videoCount.load() << " (" << videoFPS.getFPS() << " fps)"
-              << std::endl;
+    decoder.stopDecode();
+    decoder.close();
 
-    std::cout << "音频帧PTS: " << lastAudioPts << std::endl;
-    std::cout << "视频帧PTS: " << lastVideoPts << std::endl;
+    encoder.stop();
+    encoder.close();
 
-    manager.stopRecording();
-    manager.stopDecode();
-    manager.close();
-    // avformat_network_deinit();
+    std::cout << "Done." << std::endl;
     return 0;
 }
