@@ -45,7 +45,7 @@ public:
      * @param preBufferCallback 预缓冲回调（如果有）
      * @return 是否成功打开
      */
-    bool open(const std::string &url, const Config &config,
+    bool open(const std::string &url, const DecoderConfig &config,
               const std::function<void()> &preBufferCallback = nullptr);
     /**
      * @brief 关闭媒体文件
@@ -262,7 +262,7 @@ private:
 
     /**
      * @brief 处理已经读取好的视频数据包
-     * 
+     *
      * @param packet 数据包
      * @param videoTimeBase 视频流时间基
      * @param jitterDetector jitter探测器
@@ -277,7 +277,7 @@ private:
     /**
      * @brief 打开解复用器，内部调用，不加锁
      */
-    bool openInternal(const std::string &url, const Config &config,
+    bool openInternal(const std::string &url, const DecoderConfig &config,
                       const std::function<void()> &preBufferCallback);
     /**
      * @brief 关闭解复用器，内部调用，不加锁
@@ -303,11 +303,11 @@ private:
 
     /**
      * @brief 组装流信息
-     * 
+     *
      * @param url 流地址
      * @param decodeMediaType 解码媒体类型
      */
-    void setupStreamInfo(const std::string_view &url, Config::RequiredMediaType decodeMediaType);
+    void setupStreamInfo(const std::string_view &url, MediaTypes decodeMediaTypes);
 
 private:
     // 解复用器状态
@@ -343,7 +343,7 @@ private:
     // 录制器
     std::unique_ptr<RealTimeStreamRecorder> realTimeStreamRecorder_;
     // 需要录制的媒体类型
-    Config::RequiredMediaType recordMediaType_ = Config::RequiredMediaType::kAll;
+    MediaTypes recordMediaTypes_ = MediaType::kAll;
 
     // 事件分发器
     std::shared_ptr<EventDispatcher> eventDispatcher_;

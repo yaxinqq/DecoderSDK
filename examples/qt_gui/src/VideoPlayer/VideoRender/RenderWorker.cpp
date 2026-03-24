@@ -79,11 +79,11 @@ void RenderWorker::render(const std::shared_ptr<decoder_sdk::Frame> &frame)
 
     // 根据帧类型进行不同的处理
     switch (frame->mediaType()) {
-        case decoder_sdk::MediaType::kMediaTypeAudio:
+        case decoder_sdk::MediaType::kAudio:
             renderAudio(frame);
             // qInfo() << "Audio Pts: " << frame->secPts();
             break;
-        case decoder_sdk::MediaType::kMediaTypeVideo:
+        case decoder_sdk::MediaType::kVideo:
             renderVideo(frame);
             // qInfo() << "Video Pts: " << frame->secPts();
             break;
@@ -128,7 +128,7 @@ void RenderWorker::preparePlaying()
 void RenderWorker::renderAudio(const std::shared_ptr<decoder_sdk::Frame> &audioFrame)
 {
     if (!audioFrame || !audioFrame->isValid() ||
-        audioFrame->mediaType() != decoder_sdk::MediaType::kMediaTypeAudio) {
+        audioFrame->mediaType() != decoder_sdk::MediaType::kAudio) {
         return;
     }
 
@@ -175,7 +175,7 @@ void RenderWorker::renderAudio(const std::shared_ptr<decoder_sdk::Frame> &audioF
 void RenderWorker::renderVideo(const std::shared_ptr<decoder_sdk::Frame> &videoFrame)
 {
     if (!videoFrame || !videoFrame->isValid() ||
-        videoFrame->mediaType() != decoder_sdk::MediaType::kMediaTypeVideo) {
+        videoFrame->mediaType() != decoder_sdk::MediaType::kVideo) {
         return;
     }
 

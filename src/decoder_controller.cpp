@@ -74,11 +74,11 @@ DecoderController::~DecoderController()
     avformat_network_deinit();
 }
 
-bool DecoderController::open(const std::string &url, const Config &config)
+bool DecoderController::open(const std::string &url, const DecoderConfig &config)
 {
     LOG_INFO("Opening media synchronously: {}", url);
     LOG_DEBUG("Config - decodeMediaType: {}, enableAutoReconnect: {}, enableFrameRateControl: {}",
-              static_cast<int>(config.decodeMediaType), config.enableAutoReconnect,
+              static_cast<uint32_t>(config.decodeMediaTypes), config.enableAutoReconnect,
               config.enableFrameRateControl);
 
     // 取消任何正在进行的异步打开操作
@@ -99,12 +99,12 @@ bool DecoderController::open(const std::string &url, const Config &config)
     return result;
 }
 
-void DecoderController::openAsync(const std::string &url, const Config &config,
+void DecoderController::openAsync(const std::string &url, const DecoderConfig &config,
                                   AsyncOpenCallback callback)
 {
     LOG_INFO("Opening media asynchronously: {}", url);
     LOG_DEBUG("Async open config - decodeMediaType: {}, enableAutoReconnect: {}",
-              static_cast<int>(config.decodeMediaType), config.enableAutoReconnect);
+              static_cast<uint32_t>(config.decodeMediaTypes), config.enableAutoReconnect);
 
     // 取消任何正在进行的异步打开操作
     cancelAsyncOpen();
@@ -741,17 +741,17 @@ const std::optional<StreamInfo> &DecoderController::streamInfo() const
 
 std::optional<DecoderInfo> DecoderController::decoderInfo(MediaType mediaType) const
 {
-    if (mediaType == MediaType::kMediaTypeVideo && videoDecoder_) {
+    if (mediaType == MediaType::kVideo && videoDecoder_) {
         return videoDecoder_->decoderInfo();
     }
-    if (mediaType == MediaType::kMediaTypeAudio && audioDecoder_) {
+    if (mediaType == MediaType::kAudio && audioDecoder_) {
         return audioDecoder_->decoderInfo();
     }
 
     return std::nullopt;
 }
 
-bool DecoderController::openInternal(const std::string &url, const Config &config)
+bool DecoderController::openInternal(const std::string &url, const DecoderConfig &config)
 {
     LOG_DEBUG("Opening internal: {}", url);
 
@@ -772,13 +772,13 @@ bool DecoderController::openInternal(const std::string &url, const Config &confi
     LOG_DEBUG("Demuxer opened successfully for: {}", url);
 
     // 根据配置初始化解码器
-    if (demuxer_->hasVideo() && (config_.decodeMediaType & Config::RequiredMediaType::kVideo)) {
+    if (demuxer_->hasVideo() && config_.decodeMediaTypes.has(MediaType::kVideo)) {
         videoDecoder_ = std::make_shared<VideoDecoder>(demuxer_, syncController_, eventDispatcher_);
         LOG_DEBUG("Video decoder created for: {}", url);
     }
 
     // 开启音频解码器
-    if (demuxer_->hasAudio() && (config_.decodeMediaType & Config::RequiredMediaType::kAudio)) {
+    if (demuxer_->hasAudio() && config_.decodeMediaTypes.has(MediaType::kAudio)) {
         audioDecoder_ = std::make_shared<AudioDecoder>(demuxer_, syncController_, eventDispatcher_);
         LOG_DEBUG("Audio decoder created for: {}", url);
     }
@@ -787,7 +787,7 @@ bool DecoderController::openInternal(const std::string &url, const Config &confi
     return true;
 }
 
-bool DecoderController::openAsyncInternal(const std::string &url, const Config &config)
+bool DecoderController::openAsyncInternal(const std::string &url, const DecoderConfig &config)
 {
     LOG_DEBUG("Async internal open for: {}", url);
 
@@ -835,8 +835,7 @@ bool DecoderController::startDecodeInternal()
 
     // 开启视频解码器
     bool hasVideoDecoder = false;
-    if (demuxer_->hasVideo() && (config_.decodeMediaType & Config::RequiredMediaType::kVideo) &&
-        videoDecoder_) {
+    if (demuxer_->hasVideo() && config_.decodeMediaTypes.has(MediaType::kVideo) && videoDecoder_) {
         videoDecoder_->init(config_);
         videoDecoder_->setFrameRateControl(config_.enableFrameRateControl);
         videoDecoder_->setSpeed(config_.speed);
@@ -851,8 +850,7 @@ bool DecoderController::startDecodeInternal()
 
     // 开启音频解码器
     bool hasAudioDecoder = false;
-    if (demuxer_->hasAudio() && (config_.decodeMediaType & Config::RequiredMediaType::kAudio) &&
-        audioDecoder_) {
+    if (demuxer_->hasAudio() && config_.decodeMediaTypes.has(MediaType::kAudio) && audioDecoder_) {
         audioDecoder_->init(config_);
         audioDecoder_->setSpeed(config_.speed);
         if (!audioDecoder_->open()) {

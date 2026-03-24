@@ -32,7 +32,7 @@ public:
      * @brief 初始化音频解码器
      * @param config 配置参数项
      */
-    void init(const Config &config);
+    void init(const DecoderConfig &config);
 
     /**
      * @brief 获取音频解码器类型

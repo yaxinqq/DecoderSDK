@@ -193,7 +193,7 @@ int main(int argc, char *argv[])
         std::cout << "Please enter video path (or press Enter for default RTSP stream): ";
         std::getline(std::cin, videoPath);
         if (videoPath.empty()) {
-            videoPath = "rtsp://admin:zhkj2501@192.168.0.71:554/ch1/stream1";
+            videoPath = "D:/WorkSpace/test_video/test.mp4";
         }
     }
 
@@ -222,9 +222,9 @@ int main(int argc, char *argv[])
     });
 
     // 配置解码器
-    Config config;
+    DecoderConfig config;
     config.hwAccelType = HWAccelType::kD3d11va; // 使用D3D11VA硬件加速
-    config.decodeMediaType = Config::RequiredMediaType::kVideo;
+    config.decodeMediaTypes = MediaType::kVideo;
     config.requireFrameInSystemMemory = false; // 不需要系统内存中的帧
 
     // 如果D3D11VA不可用，回退到软解码

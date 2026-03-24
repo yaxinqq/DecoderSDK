@@ -34,7 +34,7 @@ public:
      * @return true 成功
      * @return false 失败
      */
-    bool open(const std::string &url, const Config &config = Config());
+    bool open(const std::string &url, const DecoderConfig &config = DecoderConfig());
 
     /**
      * @brief 异步打开媒体
@@ -43,7 +43,7 @@ public:
      * @param config 配置参数
      * @param callback 回调函数
      */
-    void openAsync(const std::string &url, const Config &config, AsyncOpenCallback callback);
+    void openAsync(const std::string &url, const DecoderConfig &config, AsyncOpenCallback callback);
 
     /**
      * @brief 取消异步打开操作
@@ -324,7 +324,7 @@ private:
      * @param config 配置项
      * @return true 成功; false 失败
      */
-    bool openInternal(const std::string &url, const Config &config);
+    bool openInternal(const std::string &url, const DecoderConfig &config);
     /**
      * @brief 异步打开的内部实现，不加锁
      *
@@ -332,7 +332,7 @@ private:
      * @param config 配置项
      * @return true 成功; false 失败
      */
-    bool openAsyncInternal(const std::string &url, const Config &config);
+    bool openAsyncInternal(const std::string &url, const DecoderConfig &config);
     /**
      * @brief 关闭的内部实现，不加锁
      *
@@ -394,7 +394,7 @@ private:
     std::shared_ptr<VideoDecoder> videoDecoder_; // 视频解码器
     std::shared_ptr<AudioDecoder> audioDecoder_; // 音频解码器
 
-    Config config_;          // 解码器配置项
+    DecoderConfig config_;   // 解码器配置项
     bool isDecoding_{false}; // 是否正在解码
     bool isPaused_{false};   // 是否已暂停
 

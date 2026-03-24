@@ -96,7 +96,7 @@ public:
     void safeDelete();
 
     // 异步的打开流
-    void openAsync(const QString &url, const decoder_sdk::Config &config);
+    void openAsync(const QString &url, const decoder_sdk::DecoderConfig &config);
 
     // 执行任务
     void doTask(Task task);
@@ -175,7 +175,7 @@ public:
     // 往队列中加一个任务
     void appendTask(StreamDecoder::Task task);
     // 打开解码器
-    void open(const QString &url, const decoder_sdk::Config &config);
+    void open(const QString &url, const decoder_sdk::DecoderConfig &config);
 
     // 当前是否在录像
     bool isRecodering() const;
@@ -194,7 +194,7 @@ signals:
     // 发送即将销毁的信号
     void aboutToDelete(const QString &key);
     // 发送打开流的信号
-    void openAsync(const QString &url, const decoder_sdk::Config &config);
+    void openAsync(const QString &url, const decoder_sdk::DecoderConfig &config);
     // 发送任务
     void task(StreamDecoder::Task t);
 

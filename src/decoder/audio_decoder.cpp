@@ -33,7 +33,7 @@ AudioDecoder::~AudioDecoder()
     cleanupFormatConvertResources();
 }
 
-void AudioDecoder::init(const Config &config)
+void AudioDecoder::init(const DecoderConfig &config)
 {
     std::lock_guard<std::mutex> lock(mutex_);
     audioInterleaved_ = config.audioInterleaved;
@@ -52,7 +52,7 @@ std::optional<DecoderInfo> AudioDecoder::decoderInfo() const
 
     DecoderInfo info;
     info.codecName = codecCtx_->codec->name;
-    info.mediaType = MediaType::kMediaTypeAudio;
+    info.mediaType = MediaType::kAudio;
     return info;
 }
 

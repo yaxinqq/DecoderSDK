@@ -73,7 +73,7 @@ int main(int argc, char *argv[])
                   << event->description << std::endl;
     });
 
-    Config config;
+    DecoderConfig config;
     config.hwAccelType = HWAccelType::kAuto;
     config.swVideoOutFormat = ImageFormat::kRGB24;
     config.requireFrameInSystemMemory = false;

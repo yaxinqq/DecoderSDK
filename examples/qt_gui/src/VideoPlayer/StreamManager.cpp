@@ -231,7 +231,7 @@ bool StreamManager::isStreamExist(const QString &key) const
     return mapDecoderByKey_.contains(key) && mapDecoderByKey_[key];
 }
 
-const decoder_sdk::Config &StreamManager::defaultDecoderConfig() const
+const decoder_sdk::DecoderConfig &StreamManager::defaultDecoderConfig() const
 {
     return defaultDecoderConfig_;
 }
@@ -294,7 +294,7 @@ void StreamManager::initDefaultDecoderConfig()
     defaultDecoderConfig_.backendHwAccelType = decoder_sdk::HWAccelType::kD3d11va;
     defaultDecoderConfig_.swVideoOutFormat = decoder_sdk::ImageFormat::kYUV420P;
     defaultDecoderConfig_.requireFrameInSystemMemory = false;
-    defaultDecoderConfig_.decodeMediaType = decoder_sdk::Config::RequiredMediaType::kAll;
+    defaultDecoderConfig_.decodeMediaTypes = decoder_sdk::MediaType::kAll;
     defaultDecoderConfig_.enableHardwareFallback = true;
     defaultDecoderConfig_.enableAutoReconnect = true;
     defaultDecoderConfig_.maxReconnectAttempts = -1;

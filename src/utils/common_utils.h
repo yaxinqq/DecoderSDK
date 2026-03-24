@@ -64,7 +64,7 @@ MediaType avMediaType2MediaType(AVMediaType type);
 AVMediaType mediaType2AVMediaType(MediaType type);
 
 // RtspTransport 转为字符串
-std::string rtspTransport2Str(Config::RtspTransport transport);
+std::string rtspTransport2Str(DecoderConfig::RtspTransport transport);
 
 // 传入的AVPacket是否是有效的
 bool isValidPacket(const AVPacket *const pkt);

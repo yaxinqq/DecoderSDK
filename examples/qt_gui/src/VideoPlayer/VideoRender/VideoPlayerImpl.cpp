@@ -260,7 +260,7 @@ void VideoPlayerImpl::videoFrameReady(const std::shared_ptr<decoder_sdk::Frame> 
     }
 
     if (playerState_ == Stream::PlayerState::Playing && frame->isValid()) {
-        if (frame->mediaType() == decoder_sdk::MediaType::kMediaTypeVideo) {
+        if (frame->mediaType() == decoder_sdk::MediaType::kVideo) {
             frameWidth_ = frame->width();
             frameHeight_ = frame->height();
             strText_.clear();

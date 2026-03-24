@@ -311,21 +311,21 @@ MediaType avMediaType2MediaType(AVMediaType type)
 {
     switch (type) {
         case AVMEDIA_TYPE_VIDEO:
-            return MediaType::kMediaTypeVideo;
+            return MediaType::kVideo;
         case AVMEDIA_TYPE_AUDIO:
-            return MediaType::kMediaTypeAudio;
+            return MediaType::kAudio;
         default:
             break;
     }
-    return MediaType::kMediaTypeUnknown;
+    return MediaType::kUnknown;
 }
 
 AVMediaType mediaType2AVMediaType(MediaType type)
 {
     switch (type) {
-        case MediaType::kMediaTypeVideo:
+        case MediaType::kVideo:
             return AVMEDIA_TYPE_VIDEO;
-        case MediaType::kMediaTypeAudio:
+        case MediaType::kAudio:
             return AVMEDIA_TYPE_AUDIO;
         default:
             break;
@@ -333,14 +333,14 @@ AVMediaType mediaType2AVMediaType(MediaType type)
     return AVMEDIA_TYPE_UNKNOWN;
 }
 
-std::string rtspTransport2Str(Config::RtspTransport transport)
+std::string rtspTransport2Str(DecoderConfig::RtspTransport transport)
 {
     switch (transport) {
-        case Config::RtspTransport::kTcp:
+        case DecoderConfig::RtspTransport::kTcp:
             return "tcp";
-        case Config::RtspTransport::kUdp:
+        case DecoderConfig::RtspTransport::kUdp:
             return "udp";
-        case Config::RtspTransport::kUdpMulticast:
+        case DecoderConfig::RtspTransport::kUdpMulticast:
             return "udp_multicast";
         default:
             break;

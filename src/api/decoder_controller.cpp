@@ -11,12 +11,12 @@ DecoderController::~DecoderController()
 {
 }
 
-bool DecoderController::open(const std::string &url, const Config &config)
+bool DecoderController::open(const std::string &url, const DecoderConfig &config)
 {
     return impl_ ? impl_->open(url, config) : false;
 }
 
-void DecoderController::openAsync(const std::string &url, const Config &config,
+void DecoderController::openAsync(const std::string &url, const DecoderConfig &config,
                                   AsyncOpenCallback callback)
 {
     if (!impl_)

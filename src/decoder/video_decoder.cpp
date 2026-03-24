@@ -548,7 +548,7 @@ VideoDecoder::~VideoDecoder()
     hwAccel_.reset();
 }
 
-void VideoDecoder::init(const Config &config)
+void VideoDecoder::init(const DecoderConfig &config)
 {
     std::lock_guard<std::mutex> lock(mutex_);
     hwAccelType_ = config.hwAccelType;
@@ -587,7 +587,7 @@ std::optional<DecoderInfo> VideoDecoder::decoderInfo() const
 
     DecoderInfo info;
     info.codecName = codecCtx_->codec->name;
-    info.mediaType = MediaType::kMediaTypeVideo;
+    info.mediaType = MediaType::kVideo;
     info.hwAccelType = hwAccel_ ? hwAccel_->getType() : HWAccelType::kNone;
     return info;
 }

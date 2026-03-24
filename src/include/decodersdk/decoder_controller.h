@@ -28,7 +28,7 @@ public:
      * @return true 成功
      * @return false 失败
      */
-    bool open(const std::string &url, const Config &config = Config());
+    bool open(const std::string &url, const DecoderConfig &config = DecoderConfig());
 
     /**
      * @brief 异步打开媒体
@@ -37,7 +37,7 @@ public:
      * @param config 配置参数
      * @param callback 回调函数
      */
-    void openAsync(const std::string &url, const Config &config, AsyncOpenCallback callback);
+    void openAsync(const std::string &url, const DecoderConfig &config, AsyncOpenCallback callback);
 
     /**
      * @brief 关闭解码器

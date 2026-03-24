@@ -9,6 +9,7 @@
 #include <string>
 #include <vector>
 
+#include "enum_flags_wrapper.h"
 #include "sdk_global.h"
 
 namespace decoder_sdk {
@@ -16,14 +17,17 @@ namespace decoder_sdk {
 #pragma region normal
 
 // 媒体类型枚举
-enum class MediaType : uint8_t {
-    kMediaTypeUnknown = 0, // 未知
-    kMediaTypeVideo,       // 视频
-    kMediaTypeAudio,       // 音频
+enum class MediaType : uint32_t {
+    kUnknown = 0, // 未知
+    kVideo = 1,   // 视频
+    kAudio = 2,   // 音频
+
+    kAll = kVideo | kAudio, // 全部
 };
+ENABLE_FLAGS(MediaType, MediaTypes)
 
 // 硬件加速类型
-enum class HWAccelType : uint8_t {
+enum class HWAccelType : uint32_t {
     kNone,    // 不使用硬件加速
     kAuto,    // 自动选择最佳硬件加速
     kDxva2,   // DirectX Video Acceleration 2.0
@@ -42,7 +46,7 @@ enum class HWAccelType : uint8_t {
 DECODER_SDK_API std::string getHwAccelTypeDesc(HWAccelType type);
 
 // 图像格式枚举（部分）
-enum class ImageFormat : uint8_t {
+enum class ImageFormat : uint32_t {
     // 软解
     kNV12,    // NV12格式
     kNV21,    // NV21格式
@@ -67,7 +71,7 @@ enum class ImageFormat : uint8_t {
 };
 
 // 音频采样格式枚举
-enum class AudioSampleFormat : uint8_t {
+enum class AudioSampleFormat : uint32_t {
     kFmtU8,  ///< unsigned 8 bits
     kFmtS16, ///< signed 16 bits
     kFmtS32, ///< signed 32 bits
@@ -200,8 +204,8 @@ struct StreamInfo {
 
 // 解码器信息
 struct DecoderInfo {
-    std::string codecName;                              // 编解码器名称
-    MediaType mediaType = MediaType::kMediaTypeUnknown; // 媒体类型
+    std::string codecName;                     // 编解码器名称
+    MediaType mediaType = MediaType::kUnknown; // 媒体类型
 
     // 视频解码器独有信息
     HWAccelType hwAccelType = HWAccelType::kNone; // 硬件加速类型
@@ -249,9 +253,9 @@ public:
 // 解码器事件参数
 struct DecoderEventArgs : public EventArgs {
 public:
-    DecoderEventArgs(MediaType mediaType = MediaType::kMediaTypeUnknown,
-                     const std::string &source = "", const std::string &description = "",
-                     int errcode = 0, const std::string &errorMessage = "")
+    DecoderEventArgs(MediaType mediaType = MediaType::kUnknown, const std::string &source = "",
+                     const std::string &description = "", int errcode = 0,
+                     const std::string &errorMessage = "")
         : EventArgs(source, description, errcode, errorMessage), mediaType(mediaType)
     {
     }
@@ -295,7 +299,7 @@ public:
 };
 
 // 循环播放模式枚举（新增）
-enum class LoopMode : uint8_t {
+enum class LoopMode : uint32_t {
     kNone = 0, // 不循环
     kSingle,   // 单次循环
     kInfinite  // 无限循环
@@ -318,7 +322,7 @@ public:
 };
 
 // 连接类型
-enum class ConnectionType : uint8_t {
+enum class ConnectionType : uint32_t {
     kDirect, // 同步调用
     kQueued, // 异步队列
     kAuto    // 自动选择
@@ -458,7 +462,7 @@ struct VaapiSurfaceEGLExportData {
 #pragma region sync
 
 // 时钟同步选项
-enum class ClockType : uint8_t {
+enum class ClockType : uint32_t {
     kAudio,   // 音频时钟
     kVideo,   // 视频时钟
     kExternal // 外部时钟
@@ -503,17 +507,10 @@ using CreateHWContextCallback = std::function<void *(HWAccelType type)>;
 // 释放硬件解码器上下文的回调 会在AVHWDeviceContext的free回调中执行。
 // userHwContext 是 CreateHWContextCallback 生成的硬件解码器上下文
 using FreeHWContextCallback = std::function<void(HWAccelType type, void *userHwContext)>;
-struct Config {
-    // 需要的媒体类型
-    enum RequiredMediaType : uint8_t {
-        kVideo = 1, // 视频
-        kAudio = 2, // 音频
-
-        kAll = kVideo | kAudio, // 所有
-    };
-
+// 解码器配置结构体
+struct DecoderConfig {
     // rtsp协议使用的传输协议
-    enum class RtspTransport : uint8_t {
+    enum class RtspTransport : uint32_t {
         kTcp,          // tcp
         kUdp,          // udp
         kUdpMulticast, // udp多播
@@ -537,7 +534,7 @@ struct Config {
 
     // 需要解码的媒体类型（如果有视频+音频，但只想解某一类型的媒体数据，建议设置该参数）
     // 否则可能会因为另外类型媒体数据的PackQueue满队，导致程序阻塞
-    RequiredMediaType decodeMediaType = RequiredMediaType::kAll;
+    MediaTypes decodeMediaTypes = MediaType::kAll;
 
     // 硬件解码自动退化到软解的配置，是否启用硬件解码失败时自动退化到软解
     bool enableHardwareFallback = true;
@@ -584,7 +581,7 @@ struct Config {
     bool enableJitterDetector = true;
 
     // 需要录制的媒体类型
-    RequiredMediaType recordMediaType = RequiredMediaType::kAll;
+    MediaTypes recordMediaTypes = MediaType::kAll;
 };
 
 // 预缓冲状态

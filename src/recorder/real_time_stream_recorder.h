@@ -73,7 +73,7 @@ public:
      * @return 是否成功开始录制
      */
     bool startRecording(const std::string &outputPath, AVFormatContext *inputFormatCtx,
-                        Config::RequiredMediaType recordMediaType);
+                        MediaTypes recordMediaTypes);
 
     /**
      * @brief 停止录制
@@ -123,8 +123,7 @@ public:
      * @return 是否支持
      */
     static bool validateFormatCompatibility(ContainerFormat format, AVFormatContext *inputFormatCtx,
-                                            Config::RequiredMediaType recordMediaType,
-                                            std::string &errorMsg);
+                                            MediaTypes recordMediaTypes, std::string &errorMsg);
 
 private:
     /**
@@ -139,7 +138,7 @@ private:
      * @return 是否成功初始化，返回错误码，0 - 初始化成功
      */
     int initOutputContext(const std::string &outputPath, AVFormatContext *inputFormatCtx,
-                          Config::RequiredMediaType recordMediaType);
+                          MediaTypes recordMediaTypes);
 
     /**
      * @brief 清理资源
@@ -151,8 +150,7 @@ private:
      * @param inputFormatCtx 输入格式上下文
      * @return 是否成功创建
      */
-    bool createStreamMapping(AVFormatContext *inputFormatCtx,
-                             Config::RequiredMediaType recordMediaType);
+    bool createStreamMapping(AVFormatContext *inputFormatCtx, MediaTypes recordMediaTypes);
 
     /**
      * @brief 处理数据包写入

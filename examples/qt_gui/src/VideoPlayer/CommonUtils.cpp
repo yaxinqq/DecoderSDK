@@ -86,7 +86,7 @@ void registerVideoMetaType()
 {
     qRegisterMetaType<decoder_sdk::Frame>("decoder_sdk::Frame");
     qRegisterMetaType<std::shared_ptr<decoder_sdk::Frame>>("std::shared_ptr<decoder_sdk::Frame>");
-    qRegisterMetaType<decoder_sdk::Config>("decoder_sdk::Config");
+    qRegisterMetaType<decoder_sdk::DecoderConfig>("decoder_sdk::DecoderConfig");
     qRegisterMetaType<std::shared_ptr<decoder_sdk::EventArgs>>(
         "std::shared_ptr<decoder_sdk::EventArgs>");
     qRegisterMetaType<decoder_sdk::EventType>("decoder_sdk::EventType");

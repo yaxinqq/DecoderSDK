@@ -219,7 +219,7 @@ int StreamDecoder::close()
     return ret;
 }
 
-void StreamDecoder::openAsync(const QString &url, const decoder_sdk::Config &config)
+void StreamDecoder::openAsync(const QString &url, const decoder_sdk::DecoderConfig &config)
 {
     controller_.openAsync(url.toStdString(), config,
                           std::bind(&StreamDecoder::openCallback, this, std::placeholders::_1,
@@ -431,7 +431,7 @@ void StreamDecoderWorker::appendTask(StreamDecoder::Task task)
     condition_.notify_one();
 }
 
-void StreamDecoderWorker::open(const QString &url, const decoder_sdk::Config &config)
+void StreamDecoderWorker::open(const QString &url, const decoder_sdk::DecoderConfig &config)
 {
     // 只开启一次，后续加进来的player，会调用resume，防止当前解码器正在暂停
     if (!once_.load()) {

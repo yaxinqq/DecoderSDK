@@ -140,7 +140,7 @@ public:
      *
      * @return 解码器配置
      */
-    const decoder_sdk::Config &defaultDecoderConfig() const;
+    const decoder_sdk::DecoderConfig &defaultDecoderConfig() const;
 
 private slots:
     /*
@@ -197,5 +197,5 @@ private:
     QMap<QString, StreamDecoderWorker *> mapDecoderByKey_;
 
     // 默认的解码器配置
-    decoder_sdk::Config defaultDecoderConfig_;
+    decoder_sdk::DecoderConfig defaultDecoderConfig_;
 };

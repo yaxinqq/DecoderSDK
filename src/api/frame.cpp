@@ -137,8 +137,7 @@ int Frame::linesize(int plane) const
 
 MediaType Frame::mediaType() const
 {
-    return impl_ ? internal::utils::avMediaType2MediaType(impl_->mediaType())
-                 : MediaType::kMediaTypeUnknown;
+    return impl_ ? internal::utils::avMediaType2MediaType(impl_->mediaType()) : MediaType::kUnknown;
 }
 
 int Frame::getBufferSize() const

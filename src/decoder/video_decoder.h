@@ -33,7 +33,7 @@ public:
      * @brief 初始化视频解码器
      * @param config 配置参数项
      */
-    void init(const Config &config);
+    void init(const DecoderConfig &config);
 
     AVMediaType type() const override;
 

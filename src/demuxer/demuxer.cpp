@@ -40,7 +40,7 @@ Demuxer::~Demuxer()
     close();
 }
 
-bool Demuxer::open(const std::string &url, const Config &config,
+bool Demuxer::open(const std::string &url, const DecoderConfig &config,
                    const std::function<void()> &preBufferCallback)
 {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -165,7 +165,7 @@ bool Demuxer::startRecording(const std::string &outputPath)
         return false;
     }
 
-    return realTimeStreamRecorder_->startRecording(outputPath, formatContext_, recordMediaType_);
+    return realTimeStreamRecorder_->startRecording(outputPath, formatContext_, recordMediaTypes_);
 }
 
 bool Demuxer::stopRecording()
@@ -436,10 +436,10 @@ void Demuxer::realTimeStreamDemuxLoop(AVPacket *pkt)
             // 如果正在录制，则将需要录制的流写入录制器
             if (realTimeStreamRecorder_->isRecording()) {
                 AVMediaType mediaType = AVMEDIA_TYPE_UNKNOWN;
-                if ((recordMediaType_ & Config::RequiredMediaType::kVideo) &&
+                if (recordMediaTypes_.has(MediaType::kVideo) &&
                     pkt->stream_index == videoStreamIndex_) {
                     mediaType = AVMEDIA_TYPE_VIDEO;
-                } else if ((recordMediaType_ & Config::RequiredMediaType::kAudio) &&
+                } else if (recordMediaTypes_.has(MediaType::kAudio) &&
                            pkt->stream_index == audioStreamIndex_) {
                     mediaType = AVMEDIA_TYPE_AUDIO;
                 }
@@ -761,7 +761,7 @@ bool Demuxer::handleReadedVideoPacket(const AVPacket *const packet, const AVRati
     return true;
 }
 
-bool Demuxer::openInternal(const std::string &url, const Config &config,
+bool Demuxer::openInternal(const std::string &url, const DecoderConfig &config,
                            const std::function<void()> &preBufferCallback)
 {
     if (isOpened_) {
@@ -833,15 +833,15 @@ bool Demuxer::openInternal(const std::string &url, const Config &config,
     audioStreamIndex_ = av_find_best_stream(formatContext_, AVMEDIA_TYPE_AUDIO, -1, -1, nullptr, 0);
 
     // 创建数据包队列
-    if (videoStreamIndex_ >= 0 && (config.decodeMediaType & Config::RequiredMediaType::kVideo)) {
+    if (videoStreamIndex_ >= 0 && config.decodeMediaTypes.has(MediaType::kVideo)) {
         videoPacketQueue_ = std::make_shared<PacketQueue>(1000);
     }
-    if (audioStreamIndex_ >= 0 && (config.decodeMediaType & Config::RequiredMediaType::kAudio)) {
+    if (audioStreamIndex_ >= 0 && config.decodeMediaTypes.has(MediaType::kAudio)) {
         audioPacketQueue_ = std::make_shared<PacketQueue>(1000);
     }
 
     // 组装流信息
-    setupStreamInfo(url, config.decodeMediaType);
+    setupStreamInfo(url, config.decodeMediaTypes);
 
     // 设置状态
     isRealTime_ = isRealTime;
@@ -858,7 +858,7 @@ bool Demuxer::openInternal(const std::string &url, const Config &config,
     enableJitterDetector_ = config.enableJitterDetector;
 
     // 设置待录制的媒体类型
-    recordMediaType_ = config.recordMediaType;
+    recordMediaTypes_ = config.recordMediaTypes;
 
     // 启动解复用器
     start();
@@ -899,7 +899,7 @@ bool Demuxer::closeInternal()
     url_.clear();
     isRealTime_ = false;
     isOpened_ = false;
-    recordMediaType_ = Config::RequiredMediaType::kAll;
+    recordMediaTypes_ = MediaType::kAll;
     enableJitterDetector_ = true;
 
     // 清空流信息
@@ -1005,8 +1005,7 @@ void Demuxer::stop()
     LOG_INFO("{} demuxer stopped!", url_);
 }
 
-void Demuxer::setupStreamInfo(const std::string_view &url,
-                              Config::RequiredMediaType decodeMediaType)
+void Demuxer::setupStreamInfo(const std::string_view &url, MediaTypes decodeMediaTypes)
 {
     if (!formatContext_)
         return;
@@ -1024,7 +1023,7 @@ void Demuxer::setupStreamInfo(const std::string_view &url,
     streamInfo_->url = url;
     streamInfo_->totalTime = totalTime;
     streamInfo_->inputFormat = formatContext_->iformat->name;
-    if (videoStreamIndex_ >= 0 && (decodeMediaType & Config::RequiredMediaType::kVideo)) {
+    if (videoStreamIndex_ >= 0 && decodeMediaTypes.has(MediaType::kVideo)) {
         auto *const stream = formatContext_->streams[videoStreamIndex_];
         streamInfo_->videoInfo = StreamInfo::VideoInfo();
         streamInfo_->videoInfo->width = stream->codecpar->width;
@@ -1045,7 +1044,7 @@ void Demuxer::setupStreamInfo(const std::string_view &url,
         streamInfo_->videoInfo->colorRange =
             utils::avColorRange2Desc(stream->codecpar->color_range);
     }
-    if (audioStreamIndex_ >= 0 && (decodeMediaType & Config::RequiredMediaType::kAudio)) {
+    if (audioStreamIndex_ >= 0 && decodeMediaTypes.has(MediaType::kAudio)) {
         auto *const stream = formatContext_->streams[audioStreamIndex_];
         streamInfo_->audioInfo = StreamInfo::AudioInfo();
         streamInfo_->audioInfo->sampleRate = stream->codecpar->sample_rate;
