@@ -458,6 +458,25 @@ struct VaapiSurfaceEGLExportData {
 #pragma endregion
 // ===================================================== //
 
+// ====================== 编码相关 ====================== //
+#pragma region encoder
+
+// 编码器统计信息
+struct EncoderStatistics {
+    std::atomic<uint64_t> framesEncoded{0};
+    std::atomic<uint64_t> packetsWritten{0};
+    std::atomic<uint64_t> totalEncodeTime{0}; // ms
+
+    void reset()
+    {
+        framesEncoded = 0;
+        packetsWritten = 0;
+        totalEncodeTime = 0;
+    }
+};
+#pragma endregion
+// ===================================================== //
+
 // ====================== 同步相关 ====================== //
 #pragma region sync
 
@@ -582,6 +601,50 @@ struct DecoderConfig {
 
     // 需要录制的媒体类型
     MediaTypes recordMediaTypes = MediaType::kAll;
+};
+
+// 编码器配置
+struct EncoderConfig {
+    // 视频编码标准，目前暂时只支持H264和H265
+    enum class VideoCodec : uint32_t {
+        kH264, // H264编码
+        kH265, // H265编码
+    };
+
+    // 音频编码标准，目前暂时只支持AAC
+    enum class AudioCodec : uint32_t {
+        kAAC, // AAC编码
+    };
+
+    std::string url;
+    std::string format; // e.g. "mp4", "flv"
+
+    // 视频配置
+    int width = 1920;
+    int height = 1080;
+    int videoBitrate = 4000000; // 4Mbps
+    int fps = 30;
+    int gopSize = 60;
+    ImageFormat encodeFormat = ImageFormat::kRGBA;
+    VideoCodec videoCodec = VideoCodec::kH264;
+
+    // 硬件编码配置（仅视频编码器使用）
+    HWAccelType hwAccelType = HWAccelType::kNone;
+    HWAccelType backendHwAccelType = HWAccelType::kD3d11va;
+    int hwDeviceIndex = 0;
+    CreateHWContextCallback createHwContextCallback = nullptr;
+    FreeHWContextCallback freeHwContextCallback = nullptr;
+
+    // 音频配置
+    int sampleRate = 44100;
+    int channels = 2;
+    int audioBitrate = 128000; // 128kbps
+    AudioCodec audioCodec = AudioCodec::kAAC;
+    AudioSampleFormat inputSampleFormat = AudioSampleFormat::kFmtFltP;
+    uint64_t channelLayout = 3; // AV_CH_LAYOUT_STEREO (default)
+
+    // 全局配置
+    MediaTypes encodeMediaTypes = MediaType::kAll;
 };
 
 // 预缓冲状态

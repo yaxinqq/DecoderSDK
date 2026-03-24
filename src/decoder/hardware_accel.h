@@ -59,6 +59,19 @@ public:
     bool setupDecoder(AVCodecContext *codecCtx);
 
     /**
+     * @brief 设置编码器上下文
+     *
+     * @param codecCtx 编码器上下文
+     * @param swFormat 帧格式
+     * @param width 帧宽度
+     * @param height 帧高度
+     * @param poolSize 缓冲池大小
+     * @return
+     */
+    bool setupEncoder(AVCodecContext *codecCtx, AVPixelFormat swFormat, int width, int height,
+                      int poolSize = 32);
+
+    /**
      * @brief 获取硬件帧
      * @param frame 帧
      * @return 硬件帧

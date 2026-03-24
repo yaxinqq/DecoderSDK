@@ -209,6 +209,51 @@ bool HardwareAccel::setupDecoder(AVCodecContext *codecCtx)
     return true;
 }
 
+bool HardwareAccel::setupEncoder(AVCodecContext *codecCtx, AVPixelFormat swFormat, int width,
+                                 int height, int poolSize)
+{
+    if (!codecCtx || !initialized_ || !hwDeviceCtx_) {
+        return false;
+    }
+
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    if (codecCtx->hw_device_ctx) {
+        av_buffer_unref(&codecCtx->hw_device_ctx);
+    }
+    if (codecCtx->hw_frames_ctx) {
+        av_buffer_unref(&codecCtx->hw_frames_ctx);
+    }
+
+    codecCtx->hw_device_ctx = av_buffer_ref(hwDeviceCtx_);
+    if (!codecCtx->hw_device_ctx) {
+        LOG_WARN("Failed to reference hardware device context");
+        return false;
+    }
+
+    codecCtx->hw_frames_ctx = av_hwframe_ctx_alloc(codecCtx->hw_device_ctx);
+    if (!codecCtx->hw_frames_ctx) {
+        LOG_WARN("Failed to alloc hw_frames_ctx");
+        return false;
+    }
+
+    auto *framesCtx = reinterpret_cast<AVHWFramesContext *>(codecCtx->hw_frames_ctx->data);
+    framesCtx->format = hwPixFmt_;
+    framesCtx->sw_format = swFormat;
+    framesCtx->width = width;
+    framesCtx->height = height;
+    framesCtx->initial_pool_size = poolSize;
+
+    int ret = av_hwframe_ctx_init(codecCtx->hw_frames_ctx);
+    if (ret < 0) {
+        LOG_WARN("Failed to init hw_frames_ctx: {}", utils::avErr2Str(ret));
+        av_buffer_unref(&codecCtx->hw_frames_ctx);
+        return false;
+    }
+
+    return true;
+}
+
 AVFrame *HardwareAccel::getHWFrame(AVFrame *frame)
 {
     if (!frame || !initialized_) {

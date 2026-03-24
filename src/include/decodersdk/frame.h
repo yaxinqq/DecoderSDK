@@ -198,6 +198,7 @@ public:
     void unlockVulkanQueue(uint32_t queue_family, uint32_t index) const;
 
 private:
+    friend class EncoderController;
     std::unique_ptr<internal::Frame> impl_;
 };
 } // namespace decoder_sdk

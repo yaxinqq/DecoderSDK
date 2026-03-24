@@ -15,9 +15,11 @@ set(MODULE_DIRS
     base
     decoder
     demuxer
+    encoder
     event_system
     include
     logger
+    muxer
     recorder
     stream_sync
     utils
