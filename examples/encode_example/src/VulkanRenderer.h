@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 
 #include "OsdTextRendererStb.h"
 
@@ -36,19 +36,30 @@ public:
     VulkanRenderer();
     ~VulkanRenderer();
 
+    // ========== 生命周期与运行控制 ========== //
     /**
-     * @brief 初始化 GLFW 窗口与 Vulkan。
-     * @param width 窗口宽。
-     * @param height 窗口高。
-     * @param title 窗口标题。
+     * @brief 初始化。
+     * @param width 宽。
+     * @param height 高。
+     * @param imageFormat 图像格式。
+     * @param debug 是否是debug模式。
      */
-    bool initialize(uint32_t width, uint32_t height, const char *title);
+    bool initialize(uint32_t width, uint32_t height, VkFormat imageFormat, bool debug = true);
+
+    /**
+     * @brief 设置最大运行时间，单位s
+     *
+     * @param runningTime 运行时间
+     */
+    void setMaxRunning(uint32_t runningTime);
 
     /**
      * @brief 释放全部资源。
      */
     void shutdown();
+    // ===================================== //
 
+    // ========== 窗口与主循环控制 ========== //
     /**
      * @brief GLFW 窗口是否收到关闭请求。
      */
@@ -58,33 +69,30 @@ public:
      * @brief 处理窗口事件。
      */
     void pollEvents();
+    // ===================================== //
 
+    // ========== 编码与渲染输入控制 ========== //
     /**
      * @brief 设置CUDA上下文，和解码器共享
      *
      * @param ctx CUDA上下文
      */
     void setCudaContext(CUcontext ctx);
-    /**
-     * @brief 提交CUDA硬解码类型的视频帧
-     *
-     * @param frame 视频帧
-     */
-    void submitCudaNv12Frame(const decoder_sdk::Frame &frame);
 
     /**
      * @brief 渲染一帧。
+     * @param frame 视频帧，如果为空，则显示上一帧
      * @param osdTextUtf8 需要叠加显示在右上角的时间戳（UTF-8）。
      */
-    void drawFrame(const std::string &osdTextUtf8);
+    void drawFrame(const decoder_sdk::Frame &frame, const std::string &osdTextUtf8);
 
     /**
-     * @brief 确保编码资源可用
+     * @brief 确保离屏渲染资源可用
      *
-     * @param frame 编码器的可写frame，其data[0]为cuda device ptr
      * @return 是否初始化成功
      */
-    bool ensureEncodedResources(const decoder_sdk::Frame &frame);
+    bool ensureOffscreenResources();
+
     /**
      * @brief 将当前离屏渲染帧通过CUDA interop导出到encoder frame
      *
@@ -92,14 +100,7 @@ public:
      * @return 是否填充成功
      */
     bool fillEncodedFrame(decoder_sdk::Frame &frame);
-
-    /**
-     * @brief 设置离屏渲染的目标尺寸（用于编码输出尺寸匹配）
-     *
-     * @param width 目标宽度
-     * @param height 目标高度
-     */
-    void setOffscreenSize(uint32_t width, uint32_t height);
+    // ===================================== //
 
 private:
     // 视频的顶点数据（位置 + 纹理）
@@ -116,6 +117,7 @@ private:
     };
 
 private:
+    // ========== 窗口与Vulkan基础初始化 ========== //
     /**
      * @brief 初始化窗口
      *
@@ -161,6 +163,9 @@ private:
      * @return 是否创建成功
      */
     bool createAllocator();
+    // ===================================== //
+
+    // ========== 调试呈现路径（交换链）相关资源 ========== //
     /**
      * @brief 创建交换链
      *
@@ -180,6 +185,40 @@ private:
      */
     bool createFramebuffers();
     /**
+     * @brief 销毁当前交换链相关对象
+     */
+    void destroySwapchainObjects();
+    /**
+     * @brief 重建交换链
+     *
+     * @return 是否重建成功
+     */
+    bool recreateSwapchain();
+
+    /**
+     * @brief 离屏渲染与导出路径资源。
+     */
+    /**
+     * @brief 创建离屏RGBA纹理及其相关资源
+     *
+     * @return 是否创建成功
+     */
+    bool createOffscreenResources();
+    /**
+     * @brief 销毁离屏RGBA纹理及其相关资源
+     */
+    void destroyOffscreenResources();
+    /**
+     * @brief 创建将离屏纹理blitting到交换链的管线
+     *
+     * @return 是否创建成功
+     */
+    bool createBlitPipeline();
+
+    /**
+     * @brief 命令与同步资源。
+     */
+    /**
      * @brief 创建命令池
      *
      * @return 是否创建成功
@@ -191,7 +230,9 @@ private:
      * @return 是否创建成功
      */
     bool createSyncObjects();
+    // ===================================== //
 
+    // ========== 管线与描述符资源 ========== //
     /**
      * @brief 创建描述符布局
      *
@@ -231,17 +272,7 @@ private:
      */
     bool createOsdGeometry();
 
-    /**
-     * @brief 销毁当前交换链相关对象
-     */
-    void destroySwapchainObjects();
-    /**
-     * @brief 重建交换链
-     *
-     * @return 是否重建成功
-     */
-    bool recreateSwapchain();
-
+    // ========== 着色器与CPU侧上传辅助能力 ========== //
     /**
      * @brief 加载着色器
      *
@@ -326,8 +357,10 @@ private:
      */
     void copyBufferToImage(VkCommandBuffer cmd, VkBuffer buffer, VkImage image, uint32_t width,
                            uint32_t height, VkImageAspectFlags aspectMask) const;
+    // ===================================== //
 
 private:
+    // ========== 跨API互操作资源与辅助能力 ========== //
     // CUDA => vulkan 互操作所需资源
     struct CudaInteropSlot {
         // 宽度
@@ -378,8 +411,6 @@ private:
         uint32_t width = 0;
         // 高度
         uint32_t height = 0;
-        // 平面的步幅，用来对齐
-        int stride = 0;
 
         // 存放平面的数据
         VkImage image = VK_NULL_HANDLE;
@@ -401,6 +432,7 @@ private:
         CUmipmappedArray cuArrayPtr = 0;
         // cuda导出的信号量，用于vulkan和cuda之间的同步，表明数据写入成功
         CUexternalSemaphore cudaExtSemaphore = nullptr;
+        bool hasPendingCudaSignal = false;
     };
 
     /**
@@ -462,22 +494,7 @@ private:
      * @return
      */
     uint32_t findMemoryType(uint32_t typeBits, VkMemoryPropertyFlags properties) const;
-    /**
-     * @brief 创建离屏RGBA纹理及其相关资源
-     *
-     * @return 是否创建成功
-     */
-    bool createOffscreenResources();
-    /**
-     * @brief 销毁离屏RGBA纹理及其相关资源
-     */
-    void destroyOffscreenResources();
-    /**
-     * @brief 创建将离屏纹理blitting到交换链的管线
-     *
-     * @return 是否创建成功
-     */
-    bool createBlitPipeline();
+    // ===================================== //
 
 private:
     // BlitVertex结构体：用于全屏blit和YUV转换的顶点
@@ -492,6 +509,13 @@ private:
     GLFWwindow *window_ = nullptr;
     // 窗口大小是否发生改变
     bool windowResized_ = false;
+    // 是否为调试模式
+    // 调试模式下，会将图形输出到交换链
+    bool debug_ = true;
+    // 调试模式最大运行时间，单位s
+    uint32_t maxRunningTime_ = 20;
+    // 开始运行时间，从initialize开始计时
+    std::chrono::steady_clock::time_point startTime_;
 
     // 应用程序所在目录
     std::filesystem::path exeDir_;
@@ -599,6 +623,7 @@ private:
     // 由于编码需求，离屏大小与编码器一致
     uint32_t offscreenWidth_ = 0;
     uint32_t offscreenHeight_ = 0;
+    VkFormat offscreenFormat_ = VK_FORMAT_R8G8B8A8_UNORM;
     // ========== 离屏渲染相关资源 ==========
     // 离屏纹理的渲染通道
     VkRenderPass offscreenRenderPass_ = VK_NULL_HANDLE;

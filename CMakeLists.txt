@@ -20,7 +20,7 @@ endif ()
 
 # 在项目开始处定义版本信息
 set(DECODER_SDK_VERSION_MAJOR 1)
-set(DECODER_SDK_VERSION_MINOR 2)
+set(DECODER_SDK_VERSION_MINOR 3)
 set(DECODER_SDK_VERSION_PATCH 0)
 set(DECODER_SDK_VERSION_BUILD 0)
 
@@ -57,6 +57,7 @@ option(BUILD_DECODERSDK_SHARED_LIBS "Build shared libraries" ON)
 option(BUILD_CONSOLE_EXAMPLE "Build console example" OFF)
 option(BUILD_QT_GUI_EXAMPLE "Build Qt GUI example" OFF)
 option(BUILD_D3D_RENDER_EXAMPLE "Build D3D render example" OFF)
+option(BUILD_ENCODE_EXAMPLE "Build encode example" OFF)
 
 # 设置FFMpeg的根路径
 set(FFMPEG_ROOT_DIR "" CACHE PATH "Path to FFmpeg installation directory")
