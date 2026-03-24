@@ -1,10 +1,10 @@
 # DecoderSDK
 
-一个高性能的音视频解码SDK，支持多种硬件加速技术和实时流处理。
+一个高性能的音视频编解码SDK，支持多种硬件加速技术和实时流处理。
 
 ## 项目简介
 
-DecoderSDK是一个基于FFmpeg的现代化音视频解码库，提供了简洁易用的C++ API接口。该SDK专为高性能音视频应用设计，支持多种硬件加速技术、实时流处理、录制功能以及完善的事件系统。
+DecoderSDK是一个基于FFmpeg的现代化音视频编解码库，提供了简洁易用的C++ API接口。该SDK专为高性能音视频应用设计，支持多种硬件加速技术、实时流处理、录制功能以及完善的事件系统。
 
 ## 主要特性
 
@@ -25,7 +25,7 @@ DecoderSDK是一个基于FFmpeg的现代化音视频解码库，提供了简洁�
 - **解码退化**: 支持解码失败时的退化处理
 - **跨平台**: 支持Windows、Linux等多平台
 - **内存管理**: 智能的内存管理和资源回收
-- **性能监控**: 内置解码性能统计和监控
+- **性能监控**: 内置编解码性能统计和监控
 
 ## 运行平台
 
@@ -279,6 +279,17 @@ cmake --build .
 ./d3d_render_example
 ```
 
+### 编码示例
+位于 `examples/encode_example/` 目录，演示叠加OSD时间戳后的编码功能：
+```bash
+# 编译编码示例
+cmake .. -DBUILD_ENCODE_EXAMPLE=ON -DFFMPEG_ROOT_DIR="$env:FFMPEG_ROOT_DIR"
+cmake --build .
+
+# 运行示例
+./encode_usage_example <input_path> <output_path> <debug_mode>
+```
+
 ## 配置文件
 
 SDK支持通过JSON配置文件进行配置，默认配置文件位于 `resources/decoderSDK.json`：
@@ -376,4 +387,10 @@ if (checkVersion(1, 0, 0)) {
 
 ### v1.2.0（2025-11-20）
 - Windows下，允许使用Vulkan解码
+- 一些其它已知问题
+
+### v1.3.0（2026-03-24）
+- Windows下，硬件加速支持QSV和AMF
+- 新增编码功能
+- 新增OSD时间戳叠加示例
 - 一些其它已知问题
