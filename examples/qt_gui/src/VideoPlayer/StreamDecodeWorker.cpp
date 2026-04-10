@@ -161,7 +161,7 @@ void StreamDecoder::doTask(Task task)
     }
 }
 
-void StreamDecoder::onNeedToStartRecoding(const QString &recordPath, int flags)
+void StreamDecoder::startRecoding(const QString &recordPath)
 {
     if (controller_.isRecording())
         return;
@@ -169,7 +169,7 @@ void StreamDecoder::onNeedToStartRecoding(const QString &recordPath, int flags)
     controller_.startRecording(recordPath.toLocal8Bit().toStdString());
 }
 
-void StreamDecoder::onNeedToStopRecording()
+void StreamDecoder::stopRecording()
 {
     if (!controller_.isRecording())
         return;
@@ -177,17 +177,27 @@ void StreamDecoder::onNeedToStopRecording()
     controller_.stopRecording();
 }
 
-void StreamDecoder::onNeedToSeek(double pos)
+void StreamDecoder::seek(double pos)
 {
     controller_.seek(pos);
 }
 
-void StreamDecoder::onNeedToSpeed(double speed)
+void StreamDecoder::setSpeed(double speed)
 {
     controller_.setSpeed(speed);
 }
 
-int StreamDecoder::close()
+void StreamDecoder::setLoopMode(decoder_sdk::LoopMode mode, int maxLoops)
+{
+    controller_.setLoopMode(mode, maxLoops);
+}
+
+void StreamDecoder::resetLoopCount()
+{
+    controller_.resetLoopCount();
+}
+
+bool StreamDecoder::close()
 {
     if (controller_.isRecording()) {
         controller_.stopRecording();
@@ -207,8 +217,10 @@ int StreamDecoder::close()
             decodeThread_->wait();
         }
     }
-    const int ret = controller_.close();
-    emit aboutToDelete();
+    const auto ret = controller_.close();
+    if (ret) {
+        emit requestToDelete();
+    }
 
 #if DEBUG_DECODER
     g_decodingDecoder.fetch_sub(1);
@@ -226,7 +238,7 @@ void StreamDecoder::openAsync(const QString &url, const decoder_sdk::DecoderConf
                                     std::placeholders::_2, std::placeholders::_3));
 }
 
-int StreamDecoder::pause()
+bool StreamDecoder::pause()
 {
     bool ret = controller_.pause();
     if (controller_.isRealTimeUrl()) {
@@ -245,10 +257,10 @@ int StreamDecoder::pause()
         << QStringLiteral("****** decoding decoder count: %1 ******").arg(g_decodingDecoder.load());
 #endif
 
-    return ret ? 0 : -1;
+    return ret;
 }
 
-int StreamDecoder::resume()
+bool StreamDecoder::resume()
 {
     bool ret = false;
     if (controller_.isRealTimeUrl()) {
@@ -262,7 +274,7 @@ int StreamDecoder::resume()
         << QStringLiteral("****** decoding decoder count: %1 ******").arg(g_decodingDecoder.load());
 #endif
 
-    return ret ? 0 : -1;
+    return ret;
 }
 
 void StreamDecoder::openCallback(decoder_sdk::AsyncOpenResult result, bool openSuccess,
@@ -300,19 +312,6 @@ void StreamDecoder::streamEventCallback(decoder_sdk::EventType type,
             emit videoFrameReady(nullFrame);
             break;
         }
-        case decoder_sdk::EventType::kRecordingStarted:
-            emit recordingStatusChanged(true);
-            break;
-        case decoder_sdk::EventType::kRecordingStopped:
-            emit recordingStatusChanged(false);
-            break;
-        case decoder_sdk::EventType::kSeekStarted:
-            isSeeking_.store(true);
-            break;
-        case decoder_sdk::EventType::kSeekSuccess:
-        case decoder_sdk::EventType::kSeekFailed:
-            isSeeking_.store(false);
-            break;
         default:
             break;
     }
@@ -324,7 +323,7 @@ void StreamDecoder::streamEventCallback(decoder_sdk::EventType type,
         safeDeleteThread_->requestInterruption();
     }
 
-    emit eventUpdated(type, event);
+    emit eventUpdated(QString::fromStdString(controller_.url()), type, event);
 }
 
 #pragma endregion
@@ -339,39 +338,43 @@ StreamDecoderWorker::StreamDecoderWorker(const QString &key, QObject *parent /*=
     decoder_->moveToThread(thread_);
     thread_->start();
 
-    connect(this, &StreamDecoderWorker::needToStartRecoding, decoder_,
-            &StreamDecoder::onNeedToStartRecoding);
-    connect(this, &StreamDecoderWorker::needToStopRecording, decoder_,
-            &StreamDecoder::onNeedToStopRecording);
-    connect(this, &StreamDecoderWorker::needToSeek, decoder_, &StreamDecoder::onNeedToSeek);
-    connect(this, &StreamDecoderWorker::needToSpeed, decoder_, &StreamDecoder::onNeedToSpeed);
-
-    connect(decoder_, &StreamDecoder::openResultReady, this,
-            [this](bool res, const QString &errorMsg) {
-                // 开启事件循环
-                start();
-            });
-    connect(decoder_, &StreamDecoder::aboutToDelete, this, [this]() {
-        decoder_->deleteLater();
-
-        if (thread_ && thread_->isRunning()) {
-            thread_->requestInterruption();
-            thread_->quit();
-            thread_->wait();
-        }
-
-        emit aboutToDelete(key_);
-    });
-    connect(this, &StreamDecoderWorker::openAsync, decoder_, &StreamDecoder::openAsync);
-    connect(this, &StreamDecoderWorker::task, decoder_, &StreamDecoder::doTask,
+    // ============== Worker => Decoder的信号 ============== //
+    connect(this, &StreamDecoderWorker::requestToStartRecoding, decoder_,
+            &StreamDecoder::startRecoding);
+    connect(this, &StreamDecoderWorker::requestToStopRecording, decoder_,
+            &StreamDecoder::stopRecording);
+    connect(this, &StreamDecoderWorker::requestToSeek, decoder_, &StreamDecoder::seek);
+    connect(this, &StreamDecoderWorker::requestToSetSpeed, decoder_, &StreamDecoder::setSpeed);
+    connect(this, &StreamDecoderWorker::requestToSetLoopMode, decoder_,
+            &StreamDecoder::setLoopMode);
+    connect(this, &StreamDecoderWorker::requestToResetLoopCount, decoder_,
+            &StreamDecoder::resetLoopCount);
+    connect(this, &StreamDecoderWorker::requestToOpenAsync, decoder_, &StreamDecoder::openAsync);
+    connect(this, &StreamDecoderWorker::requestToDoTask, decoder_, &StreamDecoder::doTask,
             Qt::BlockingQueuedConnection); // 阻塞当前线程
+    // ===================================================== //
 
-    // 管理decoder的录像状态
-    connect(decoder_, &StreamDecoder::recordingStatusChanged, this,
-            &StreamDecoderWorker::setRecordingStatus, Qt::BlockingQueuedConnection);
+    // ============== Decoder => Worker的信号 ============== //
+    connect(decoder_, &StreamDecoder::openResultReady, this,
+            &StreamDecoderWorker::onOpenResultReady);
+    connect(decoder_, &StreamDecoder::requestToDelete, this,
+            &StreamDecoderWorker::onDecoderRequestToDelete);
 
+    connect(decoder_, &StreamDecoder::videoFrameReady, this, &StreamDecoderWorker::videoFrameReady);
+    connect(decoder_, &StreamDecoder::eventUpdated, this, &StreamDecoderWorker::onEventUpdated);
+    // ===================================================== //
+
+    // ================== 线程的销毁信号 =================== //
     connect(thread_, &QThread::finished, thread_, &QThread::deleteLater);
     connect(thread_, &QThread::finished, this, &QThread::deleteLater);
+    // ===================================================== //
+
+    // ========== 程序即将退出时，不再往外送帧 ============= //
+    connect(qApp, &QCoreApplication::aboutToQuit, this, [this]() {
+        disconnect(decoder_, &StreamDecoder::videoFrameReady, this,
+                   &StreamDecoderWorker::videoFrameReady);
+    });
+    // ===================================================== //
 
 #if DEBUG_DECODER
     g_existingDecoder.fetch_add(1);
@@ -384,8 +387,8 @@ StreamDecoderWorker::~StreamDecoderWorker()
 {
     if (isRunning()) {
         requestInterruption();
-        quit();
         condition_.notify_all(); // 防止run循环中还有休眠的条件变量，这里唤醒全部
+        quit();
 
         wait();
     }
@@ -436,9 +439,12 @@ void StreamDecoderWorker::open(const QString &url, const decoder_sdk::DecoderCon
     // 只开启一次，后续加进来的player，会调用resume，防止当前解码器正在暂停
     if (!once_.load()) {
         once_.store(true);
-        emit openAsync(url, config);
+        emit requestToOpenAsync(url, config);
     } else {
         appendTask(StreamDecoder::Task::kResume);
+
+        // 广播流信息和解码器信息，通知后续加入的player
+        emit requestToBroadcastStreamAndDecoderInfo();
     }
 }
 
@@ -462,10 +468,10 @@ void StreamDecoderWorker::registerPlayer(VideoPlayerImpl *player)
     if (!player || refPlayers_.contains(player) || decoder_.isNull())
         return;
 
-    connect(decoder_, &StreamDecoder::videoFrameReady, player, &VideoPlayerImpl::videoFrameReady,
+    connect(this, &StreamDecoderWorker::videoFrameReady, player, &VideoPlayerImpl::videoFrameReady,
             Qt::UniqueConnection);
-    connect(decoder_, &StreamDecoder::eventUpdated, player, &VideoPlayerImpl::onDecoderEventChanged,
-            Qt::UniqueConnection);
+    connect(this, &StreamDecoderWorker::eventUpdated, player,
+            &VideoPlayerImpl::onDecoderEventChanged, Qt::UniqueConnection);
     refPlayers_ << player;
 }
 
@@ -474,9 +480,9 @@ void StreamDecoderWorker::unRegisterPlayer(VideoPlayerImpl *player)
     if (!player || !refPlayers_.contains(player) || decoder_.isNull())
         return;
 
-    disconnect(decoder_, &StreamDecoder::videoFrameReady, player,
+    disconnect(this, &StreamDecoderWorker::videoFrameReady, player,
                &VideoPlayerImpl::videoFrameReady);
-    disconnect(decoder_, &StreamDecoder::eventUpdated, player,
+    disconnect(this, &StreamDecoderWorker::eventUpdated, player,
                &VideoPlayerImpl::onDecoderEventChanged);
     refPlayers_.removeOne(player);
 }
@@ -495,13 +501,57 @@ void StreamDecoderWorker::run()
         const auto t = tasks_.takeFirst();
         l.unlock();
 
-        emit task(t);
+        emit requestToDoTask(t);
     }
 }
 
 void StreamDecoderWorker::setRecordingStatus(bool status)
 {
     isRecording_ = status;
+}
+
+void StreamDecoderWorker::onOpenResultReady(bool res, const QString &errorMsg)
+{
+    // 这里不管成功还是失败，都开启事件循环，不能影响后续任务的接收
+    // 开启事件循环
+    start();
+}
+
+void StreamDecoderWorker::onDecoderRequestToDelete()
+{
+    decoder_->deleteLater();
+
+    if (thread_ && thread_->isRunning()) {
+        thread_->requestInterruption();
+        thread_->quit();
+        thread_->wait();
+    }
+
+    emit aboutToDelete(key_);
+}
+
+void StreamDecoderWorker::onEventUpdated(const QString &url, decoder_sdk::EventType type,
+                                         const std::shared_ptr<decoder_sdk::EventArgs> &event)
+{
+    switch (type) {
+        case decoder_sdk::EventType::kRecordingStarted:
+            // 设置当前的录像状态
+            setRecordingStatus(true);
+            break;
+        case decoder_sdk::EventType::kRecordingStopped:
+            // 设置当前的录像状态
+            setRecordingStatus(false);
+            break;
+        case decoder_sdk::EventType::kRecordingError:
+            if (refPlayers_.isEmpty()) {
+                emit requestToStopRecording();
+            }
+            break;
+        default:
+            break;
+    }
+
+    emit eventUpdated(url, type, event);
 }
 
 bool StreamDecoderWorker::shouldExecuteTask(StreamDecoder::Task task) const

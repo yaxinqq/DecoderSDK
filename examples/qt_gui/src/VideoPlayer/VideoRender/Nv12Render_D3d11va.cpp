@@ -1,4 +1,4 @@
-#ifdef D3D11VA_AVAILABLE
+﻿#ifdef D3D11VA_AVAILABLE
 #include "Nv12Render_D3d11va.h"
 
 #ifdef QSV_AVAILABLE
@@ -13,9 +13,9 @@
 #include <mutex>
 
 namespace {
-    std::mutex g_d3d11ImmediateExecMutex;
+std::mutex g_d3d11ImmediateExecMutex;
 
-    const char *nv12VsHlsl = R"(
+const char *nv12VsHlsl = R"(
 struct VSOut {
     float4 position : SV_Position;
     float2 texcoord  : TEXCOORD0;
@@ -44,7 +44,7 @@ VSOut main(uint vertexId : SV_VertexID)
 }
 )";
 
-    const char *nv12PsHlsl = R"(
+const char *nv12PsHlsl = R"(
 Texture2D<float>  texY  : register(t0);
 Texture2D<float2> texUV : register(t1);
 SamplerState sampLinear : register(s0);
@@ -77,7 +77,7 @@ float4 main(PSIn i) : SV_Target
 }
 )";
 
-    const char *p010PsHlsl = R"(
+const char *p010PsHlsl = R"(
 Texture2D<float>  texY  : register(t0);
 Texture2D<float2> texUV : register(t1);
 SamplerState sampLinear : register(s0);
@@ -110,98 +110,98 @@ float4 main(PSIn i) : SV_Target
 }
 )";
 
-    bool compileHlsl(const char *source, const char *entryPoint, const char *target,
-                     ComPtr<ID3DBlob> &outBlob)
-    {
-        outBlob.Reset();
-        ComPtr<ID3DBlob> errorBlob;
+bool compileHlsl(const char *source, const char *entryPoint, const char *target,
+                 ComPtr<ID3DBlob> &outBlob)
+{
+    outBlob.Reset();
+    ComPtr<ID3DBlob> errorBlob;
 
-        const HRESULT hr = D3DCompile(source, strlen(source), nullptr, nullptr, nullptr, entryPoint,
-                                      target, 0, 0, &outBlob, &errorBlob);
-        if (FAILED(hr)) {
-            if (errorBlob) {
-                qWarning() << QStringLiteral("[Nv12Render_D3d11va] HLSL compile failed:")
-                           << reinterpret_cast<const char *>(errorBlob->GetBufferPointer());
-            } else {
-                qWarning() << QStringLiteral("[Nv12Render_D3d11va] HLSL compile failed, HRESULT:")
-                           << Qt::hex << hr;
-            }
-            return false;
+    const HRESULT hr = D3DCompile(source, strlen(source), nullptr, nullptr, nullptr, entryPoint,
+                                  target, 0, 0, &outBlob, &errorBlob);
+    if (FAILED(hr)) {
+        if (errorBlob) {
+            qWarning() << QStringLiteral("[Nv12Render_D3d11va] HLSL compile failed:")
+                       << reinterpret_cast<const char *>(errorBlob->GetBufferPointer());
+        } else {
+            qWarning() << QStringLiteral("[Nv12Render_D3d11va] HLSL compile failed, HRESULT:")
+                       << Qt::hex << hr;
         }
+        return false;
+    }
 
+    return true;
+}
+
+bool unregisterWglTexture(wgl::WglDeviceRef &device, HANDLE &handle)
+{
+    if (!handle) {
         return true;
     }
+    if (!device.isValid()) {
+        return false;
+    }
 
-    bool unregisterWglTexture(wgl::WglDeviceRef &device, HANDLE &handle)
-    {
-        if (!handle) {
-            return true;
-        }
-        if (!device.isValid()) {
-            handle = nullptr;
+    device.wglDXUnlockObjectsNV(1, &handle);
+    const bool ok = device.wglDXUnregisterObjectNV(handle);
+    if (ok) {
+        handle = nullptr;
+    }
+    return ok;
+}
+
+bool tryGetFrameTextureAndSlice(const decoder_sdk::Frame &frame, ID3D11Texture2D *&outTexture,
+                                UINT &outSlice)
+{
+    outTexture = nullptr;
+    outSlice = 0;
+
+    const auto curPixelForamt = frame.pixelFormat();
+    if (curPixelForamt == decoder_sdk::ImageFormat::kD3d11va) {
+        outTexture = reinterpret_cast<ID3D11Texture2D *>(frame.data(0));
+        outSlice = static_cast<UINT>(reinterpret_cast<intptr_t>(frame.data(1)));
+        return outTexture != nullptr;
+    }
+
+#ifdef QSV_AVAILABLE
+    if (curPixelForamt == decoder_sdk::ImageFormat::kQsv) {
+        auto *const mfxSurface = reinterpret_cast<mfxFrameSurface1 *>(frame.data(3));
+        if (!mfxSurface) {
             return false;
         }
 
-        device.wglDXUnlockObjectsNV(1, &handle);
-        const bool ok = device.wglDXUnregisterObjectNV(handle);
-        handle = nullptr;
-        return ok;
+        auto *const pair = reinterpret_cast<mfxHDLPair *>(mfxSurface->Data.MemId);
+        if (!pair) {
+            return false;
+        }
+
+        if (pair->first) {
+            outTexture = reinterpret_cast<ID3D11Texture2D *>(pair->first);
+        }
+        if (pair->second) {
+            outSlice = *reinterpret_cast<UINT *>(pair->second);
+        }
+
+        return outTexture != nullptr;
     }
-
-    bool tryGetFrameTextureAndSlice(const decoder_sdk::Frame &frame, ID3D11Texture2D *&outTexture,
-                                    UINT &outSlice)
-    {
-        outTexture = nullptr;
-        outSlice = 0;
-
-        const auto curPixelForamt = frame.pixelFormat();
-        if (curPixelForamt == decoder_sdk::ImageFormat::kD3d11va) {
-            outTexture = reinterpret_cast<ID3D11Texture2D *>(frame.data(0));
-            outSlice = static_cast<UINT>(reinterpret_cast<intptr_t>(frame.data(1)));
-            return outTexture != nullptr;
-        }
-
-#ifdef QSV_AVAILABLE
-        if (curPixelForamt == decoder_sdk::ImageFormat::kQsv) {
-            auto *const mfxSurface = reinterpret_cast<mfxFrameSurface1 *>(frame.data(3));
-            if (!mfxSurface) {
-                return false;
-            }
-
-            auto *const pair = reinterpret_cast<mfxHDLPair *>(mfxSurface->Data.MemId);
-            if (!pair) {
-                return false;
-            }
-
-            if (pair->first) {
-                outTexture = reinterpret_cast<ID3D11Texture2D *>(pair->first);
-            }
-            if (pair->second) {
-                outSlice = *reinterpret_cast<UINT *>(pair->second);
-            }
-
-            return outTexture != nullptr;
-        }
 #endif
 
 #ifdef AMF_AVAILABLE
-        if (curPixelForamt == decoder_sdk::ImageFormat::kAmf) {
-            auto *const amfSurface = reinterpret_cast<amf::AMFSurface *>(frame.data(0));
-            if (!amfSurface) {
-                return false;
-            }
-            outTexture = amf_utils::getPackedSurfaceDX11(amfSurface);
-            outSlice = 0;
-            return outTexture != nullptr;
+    if (curPixelForamt == decoder_sdk::ImageFormat::kAmf) {
+        auto *const amfSurface = reinterpret_cast<amf::AMFSurface *>(frame.data(0));
+        if (!amfSurface) {
+            return false;
         }
+        outTexture = amf_utils::getPackedSurfaceDX11(amfSurface);
+        outSlice = 0;
+        return outTexture != nullptr;
+    }
 #endif
 
-        return false;
-    }
+    return false;
+}
 } // namespace
 
-Nv12Render_D3d11va::Nv12Render_D3d11va()
-    : VideoRender()
+Nv12Render_D3d11va::Nv12Render_D3d11va() : VideoRender()
 {
     initializeD3DResource(d3d11_utils::getD3D11Device(), d3d11_utils::getWglDeviceRef());
 }
@@ -253,6 +253,7 @@ bool Nv12Render_D3d11va::initInteropsResource(const decoder_sdk::Frame &frame)
 
     if (!sourceTexture) {
         qWarning() << QStringLiteral("[Nv12Render_D3d11va] Invalid D3D11 source texture!");
+        cleanup();
         return false;
     }
 
@@ -265,22 +266,26 @@ bool Nv12Render_D3d11va::initInteropsResource(const decoder_sdk::Frame &frame)
         if (!initializeD3DResource(textureDevice)) {
             qWarning() << QStringLiteral(
                 "[Nv12Render_D3d11va] Reinitialize D3D11 resource failed!");
+            cleanup();
             return false;
         }
     }
 
     if (!checkWGLInterop()) {
         qWarning() << QStringLiteral("[Nv12Render_D3d11va] Failed to initialize WGL interop!");
+        cleanup();
         return false;
     }
 
     if (!initializeNv12Converter()) {
         qWarning() << QStringLiteral("[Nv12Render_D3d11va] Failed to initialize NV12 converter!");
+        cleanup();
         return false;
     }
 
     if (!ensureOutputTextureAndInterop(frame.width(), frame.height())) {
         qWarning() << QStringLiteral("[Nv12Render_D3d11va] Failed to initialize interop output!");
+        cleanup();
         return false;
     }
 
@@ -301,9 +306,67 @@ bool Nv12Render_D3d11va::renderFrame(const decoder_sdk::Frame &frame)
     return blitToCurrentFbo(frame.width(), frame.height());
 }
 
+void Nv12Render_D3d11va::cleanupAllResources()
+{
+    cleanup();
+}
+
 bool Nv12Render_D3d11va::initializeD3DResource(const ComPtr<ID3D11Device> &d3d11Device,
                                                const wgl::WglDeviceRef &wglDevice)
 {
+    if (!d3d11Device.Get()) {
+        qWarning() << QStringLiteral("[Nv12Render_D3d11va] Can not get D3D11 Device!");
+        return false;
+    }
+
+    ComPtr<ID3D11DeviceContext> newD3d11Context;
+    d3d11Device->GetImmediateContext(&newD3d11Context);
+    if (!newD3d11Context.Get()) {
+        qWarning() << QStringLiteral("[Nv12Render_D3d11va] Can not get D3D11 Context!");
+        return false;
+    }
+
+    ComPtr<ID3D11DeviceContext> newD3d11DeferredContext;
+    HRESULT hr = d3d11Device->CreateDeferredContext(0, &newD3d11DeferredContext);
+    if (FAILED(hr) || !newD3d11DeferredContext) {
+        qWarning() << QStringLiteral("[Nv12Render_D3d11va] CreateDeferredContext failed, HRESULT:")
+                   << Qt::hex << hr;
+        return false;
+    }
+
+    // 如果传入的wgl设备有效，就使用传入的设备，否则使用d3d11 device新建
+    wgl::WglDeviceRef newWglDevice;
+    if (wglDevice.isValid()) {
+        newWglDevice = wglDevice;
+    } else {
+        newWglDevice = wgl::WglDeviceRef(d3d11Device.Get());
+    }
+
+    if (!newWglDevice.isValid()) {
+        qWarning() << QStringLiteral("[Nv12Render_D3d11va] Can not get wgl Device!");
+        return false;
+    }
+
+    if (wglTextureHandle_ && !unregisterWglTexture(wglD3DDevice_, wglTextureHandle_)) {
+        qWarning() << QStringLiteral(
+            "[Nv12Render_D3d11va] Failed to unregister WGL object before switching device!");
+        return false;
+    }
+
+    inputCopyYSrv_.Reset();
+    inputCopyUVSrv_.Reset();
+    inputCopyTexture_.Reset();
+    outputRTV_.Reset();
+    outputRGBTexture_.Reset();
+    outputWidth_ = 0;
+    outputHeight_ = 0;
+
+    nv12VertexShader_.Reset();
+    nv12PixelShader_.Reset();
+    p010PixelShader_.Reset();
+    nv12Sampler_.Reset();
+    texScaleCb_.Reset();
+
     d3d11Device5_.Reset();
     d3d11Context4_.Reset();
     executeFinishedFence_.Reset();
@@ -316,37 +379,10 @@ bool Nv12Render_D3d11va::initializeD3DResource(const ComPtr<ID3D11Device> &d3d11
     useFenceSync_ = false;
 
     d3d11Device_ = d3d11Device;
+    d3d11Context_ = newD3d11Context;
+    d3d11DeferredContext_ = newD3d11DeferredContext;
+    wglD3DDevice_ = newWglDevice;
 
-    if (!d3d11Device_.Get()) {
-        qWarning() << QStringLiteral("[Nv12Render_D3d11va] Can not get D3D11 Device!");
-        return false;
-    }
-
-    d3d11Device_->GetImmediateContext(&d3d11Context_);
-    if (!d3d11Context_.Get()) {
-        qWarning() << QStringLiteral("[Nv12Render_D3d11va] Can not get D3D11 Context!");
-        return false;
-    }
-
-    d3d11DeferredContext_.Reset();
-    HRESULT hr = d3d11Device_->CreateDeferredContext(0, &d3d11DeferredContext_);
-    if (FAILED(hr) || !d3d11DeferredContext_) {
-        qWarning() << QStringLiteral("[Nv12Render_D3d11va] CreateDeferredContext failed, HRESULT:")
-                   << Qt::hex << hr;
-        return false;
-    }
-
-    // 如果传入的wgl设备有效，就使用传入的设备，否则使用d3d11 device新建
-    if (wglDevice.isValid()) {
-        wglD3DDevice_ = wglDevice;
-    } else {
-        wglD3DDevice_ = wgl::WglDeviceRef(d3d11Device_.Get());
-    }
-
-    if (!wglD3DDevice_.isValid()) {
-        qWarning() << QStringLiteral("[Nv12Render_D3d11va] Can not get wgl Device!");
-        return false;
-    }
     return true;
 }
 
@@ -372,9 +408,9 @@ bool Nv12Render_D3d11va::initializeNv12Converter()
         return false;
     }
 
-    const bool syncReady =
-        useFenceSync_ ? (d3d11Device5_ && d3d11Context4_ && executeFinishedFence_ && executeFenceEvent_)
-                      : (executeFinishedQuery_ != nullptr);
+    const bool syncReady = useFenceSync_ ? (d3d11Device5_ && d3d11Context4_ &&
+                                            executeFinishedFence_ && executeFenceEvent_)
+                                         : (executeFinishedQuery_ != nullptr);
     if (nv12VertexShader_ && nv12PixelShader_ && p010PixelShader_ && nv12Sampler_ && texScaleCb_ &&
         syncReady) {
         return true;
@@ -501,9 +537,10 @@ bool Nv12Render_D3d11va::initializeNv12Converter()
         queryDesc.MiscFlags = 0;
         hr = d3d11Device_->CreateQuery(&queryDesc, &executeFinishedQuery_);
         if (FAILED(hr) || !executeFinishedQuery_) {
-            qWarning() << QStringLiteral(
-                              "[Nv12Render_D3d11va] Neither fence nor query sync is available, HRESULT:")
-                       << Qt::hex << hr;
+            qWarning()
+                << QStringLiteral(
+                       "[Nv12Render_D3d11va] Neither fence nor query sync is available, HRESULT:")
+                << Qt::hex << hr;
             return false;
         }
     }
@@ -632,7 +669,11 @@ bool Nv12Render_D3d11va::ensureOutputTextureAndInterop(int width, int height)
         return true;
     }
 
-    unregisterWglTexture(wglD3DDevice_, wglTextureHandle_);
+    if (wglTextureHandle_ && !unregisterWglTexture(wglD3DDevice_, wglTextureHandle_)) {
+        qWarning() << QStringLiteral(
+            "[Nv12Render_D3d11va] Failed to unregister previous WGL object!");
+        return false;
+    }
 
     outputRTV_.Reset();
     outputRGBTexture_.Reset();
@@ -801,9 +842,9 @@ bool Nv12Render_D3d11va::ensureInputShaderResources(ID3D11DeviceContext *cmdCont
 
         hr = d3d11Device_->CreateTexture2D(&expectedCopyDesc, nullptr, &inputCopyTexture_);
         if (FAILED(hr) || !inputCopyTexture_) {
-            qWarning()
-                << QStringLiteral("[Nv12Render_D3d11va] Create input copy texture failed, HRESULT:")
-                << Qt::hex << hr;
+            qWarning() << QStringLiteral(
+                              "[Nv12Render_D3d11va] Create input copy texture failed, HRESULT:")
+                       << Qt::hex << hr;
             return false;
         }
 
@@ -880,9 +921,9 @@ bool Nv12Render_D3d11va::processNV12ToRGB(const decoder_sdk::Frame &frame)
     if (!d3d11DeferredContext_) {
         HRESULT hr = d3d11Device_->CreateDeferredContext(0, &d3d11DeferredContext_);
         if (FAILED(hr) || !d3d11DeferredContext_) {
-            qWarning()
-                << QStringLiteral("[Nv12Render_D3d11va] CreateDeferredContext failed, HRESULT:")
-                << Qt::hex << hr;
+            qWarning() << QStringLiteral(
+                              "[Nv12Render_D3d11va] CreateDeferredContext failed, HRESULT:")
+                       << Qt::hex << hr;
             return false;
         }
     }
@@ -904,12 +945,13 @@ bool Nv12Render_D3d11va::processNV12ToRGB(const decoder_sdk::Frame &frame)
         float pad1;
     } cbData = {};
 
-    cbData.scaleX = (sourceDesc.Width > 0) ? (static_cast<float>(frame.width()) /
-                                              static_cast<float>(sourceDesc.Width))
-                                           : 1.0f;
-    cbData.scaleY = (sourceDesc.Height > 0) ? (static_cast<float>(frame.height()) /
-                                               static_cast<float>(sourceDesc.Height))
-                                            : 1.0f;
+    cbData.scaleX = (sourceDesc.Width > 0)
+                        ? (static_cast<float>(frame.width()) / static_cast<float>(sourceDesc.Width))
+                        : 1.0f;
+    cbData.scaleY =
+        (sourceDesc.Height > 0)
+            ? (static_cast<float>(frame.height()) / static_cast<float>(sourceDesc.Height))
+            : 1.0f;
     if (cbData.scaleX > 1.0f) {
         cbData.scaleX = 1.0f;
     }
@@ -948,12 +990,12 @@ bool Nv12Render_D3d11va::processNV12ToRGB(const decoder_sdk::Frame &frame)
     ID3D11SamplerState *sampler = nv12Sampler_.Get();
     d3d11DeferredContext_->PSSetSamplers(0, 1, &sampler);
 
-    ID3D11ShaderResourceView *srvs[2] = { ySrv.Get(), uvSrv.Get() };
+    ID3D11ShaderResourceView *srvs[2] = {ySrv.Get(), uvSrv.Get()};
     d3d11DeferredContext_->PSSetShaderResources(0, 2, srvs);
 
     d3d11DeferredContext_->Draw(3, 0);
 
-    ID3D11ShaderResourceView *nullSrvs[2] = { nullptr, nullptr };
+    ID3D11ShaderResourceView *nullSrvs[2] = {nullptr, nullptr};
     d3d11DeferredContext_->PSSetShaderResources(0, 2, nullSrvs);
 
     ComPtr<ID3D11CommandList> commandList;
@@ -999,6 +1041,7 @@ bool Nv12Render_D3d11va::registerTextureWithOpenGL(int width, int height)
     if (FAILED(hr)) {
         qWarning() << QStringLiteral("[Nv12Render_D3d11va] Failed to create RGB texture, HRESULT:")
                    << Qt::hex << hr;
+        outputRGBTexture_.Reset();
         return false;
     }
 
@@ -1006,12 +1049,16 @@ bool Nv12Render_D3d11va::registerTextureWithOpenGL(int width, int height)
     if (FAILED(hr)) {
         qWarning() << QStringLiteral("[Nv12Render_D3d11va] Failed to create output RTV, HRESULT:")
                    << Qt::hex << hr;
+        outputRTV_.Reset();
+        outputRGBTexture_.Reset();
         return false;
     }
 
     if (!wglD3DDevice_.isValid() || !outputRGBTexture_) {
         qWarning() << QStringLiteral(
             "[Nv12Render_D3d11va] Missing resources for OpenGL registration!");
+        outputRTV_.Reset();
+        outputRGBTexture_.Reset();
         return false;
     }
 
@@ -1027,6 +1074,8 @@ bool Nv12Render_D3d11va::registerTextureWithOpenGL(int width, int height)
         qWarning() << QStringLiteral(
                           "[Nv12Render_D3d11va] Failed to register RGB texture with WGL, error:")
                    << error;
+        outputRTV_.Reset();
+        outputRGBTexture_.Reset();
         return false;
     }
     wglD3DDevice_.wglDXLockObjectsNV(1, &wglTextureHandle_);
@@ -1065,8 +1114,8 @@ bool Nv12Render_D3d11va::waitForExecuteComplete()
 
     d3d11Context_->End(executeFinishedQuery_.Get());
     for (int i = 0; i < 20000; ++i) {
-        const HRESULT hr =
-            d3d11Context_->GetData(executeFinishedQuery_.Get(), nullptr, 0, D3D11_ASYNC_GETDATA_DONOTFLUSH);
+        const HRESULT hr = d3d11Context_->GetData(executeFinishedQuery_.Get(), nullptr, 0,
+                                                  D3D11_ASYNC_GETDATA_DONOTFLUSH);
         if (hr == S_OK) {
             return true;
         }

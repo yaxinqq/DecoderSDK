@@ -12,12 +12,10 @@
 #include <QPainter>
 #include <QThread>
 #include <QTimer>
+#include <QUuid>
 
 VideoPlayerImpl::VideoPlayerImpl(QObject *parent)
-    : QObject(parent),
-      playerState_{Stream::PlayerState::Stop},
-      strText_{},
-      digitalZoomRect_{0.0, 0.0, 1.0, 1.0}
+    : QObject(parent), playerState_{Stream::PlayerState::Stop}, strText_{}
 {
     QTimer *timer = new QTimer(this);
     timer->setTimerType(Qt::PreciseTimer);
@@ -36,10 +34,7 @@ VideoPlayerImpl::VideoPlayerImpl(QObject *parent)
     fpsTextWidth_ = fm.horizontalAdvance(QString("FPS: 99")) + 10;
     fpsTextHeight_ = fm.height();
 
-    // fpsVisible_ = GlobalParams::instance()->fpsVisible();
-    // connect(GlobalParams::instance(), &GlobalParams::fpsVisibleChanged, this, [this](bool
-    // visible) { 	fpsVisible_ = visible; 	emit aboutToUpdate();
-    // });
+    fpsVisible_ = true;
 
     // 流地址打开超时
     streamOpenTimeout_.store(false);
@@ -54,6 +49,8 @@ VideoPlayerImpl::VideoPlayerImpl(QObject *parent)
 
     connect(this, &VideoPlayerImpl::playerStateChanged, this,
             &VideoPlayerImpl::onPlayerStateChanged);
+
+    recordFileUuid_ = QUuid::createUuid().toString(QUuid::StringFormat::WithoutBraces);
 }
 
 VideoPlayerImpl::~VideoPlayerImpl()
@@ -62,17 +59,17 @@ VideoPlayerImpl::~VideoPlayerImpl()
         renderWorker_->deleteLater();
     }
     if (renderWorkerThread_) {
-        qDebug() << __FUNCTION__ << "Render worker begin quit!";
+        qDebug() << __FUNCTION__ << QStringLiteral("Render worker begin quit!");
         renderWorkerThread_->requestInterruption();
         renderWorkerThread_->quit();
         if (!renderWorkerThread_->wait(3000)) {
             // Todo: 分析一下为什么需要 terminate
-            qDebug() << __FUNCTION__ << "Render worker begin terminated!";
+            qDebug() << __FUNCTION__ << QStringLiteral("Render worker begin terminated!");
             renderWorkerThread_->terminate();
             renderWorkerThread_->wait();
-            qDebug() << __FUNCTION__ << "Render worker end terminated!";
+            qDebug() << __FUNCTION__ << QStringLiteral("Render worker end terminated!");
         }
-        qDebug() << __FUNCTION__ << "Render worker end quit!";
+        qDebug() << __FUNCTION__ << QStringLiteral("Render worker end quit!");
     }
 }
 
@@ -100,18 +97,18 @@ void VideoPlayerImpl::initialize(QOpenGLContext *context, QSurface *surface)
         renderWorkerThread_->start();
 
         connect(renderWorker_, &RenderWorker::textureReady,
-                [this](QWeakPointer<VideoRender> render, double pts) {
+                [this](QWeakPointer<VideoRender> render,
+                       const Stream::VideoFrameParam &videoFrameParam) {
                     if (playerState_ == Stream::PlayerState::Playing) {
                         if (render_ != render) {
                             render_ = render;
-                            auto sRender = render.lock();
-                            if (sRender) {
-                                sRender->setDigitalZoomRect(digitalZoomRect_);
-                            }
                         }
+
                         emit aboutToUpdate();
-                        emit ptsChanged(pts);
+                        emit ptsChanged(videoFrameParam.pts);
                     }
+
+                    setFrameSize(videoFrameParam.size.width(), videoFrameParam.size.height());
                 });
     }
 }
@@ -144,8 +141,6 @@ void VideoPlayerImpl::paintGL(const QRect &widgetRect, const QRect &needRendered
         if (videoRect != videoRect_) {
             videoRect_ = videoRect;
             emit videoRectChanged(videoRect_);
-            // qDebug() << __FUNCTION__ << "widget rect:" << widgetRect_ << "video rect:" <<
-            // videoRect_ << "frame:" << frameWidth_ << "x" << frameHeight_;
         }
 
         // 渲染帧
@@ -169,8 +164,6 @@ void VideoPlayerImpl::resize(int w, int h)
             videoRect_ = videoRect;
             emit videoRectChanged(videoRect_);
         }
-        // qDebug() << __FUNCTION__ << "widget rect:" << widgetRect_ << "video rect:" << videoRect_
-        // << "frame:" << frameWidth_ << "x" << frameHeight_;
     }
 }
 
@@ -205,7 +198,6 @@ void VideoPlayerImpl::clearByPainter(QPainter *painter, const QRect &rect)
 
 Stream::AspectRatioMode VideoPlayerImpl::aspectRatioMode() const
 {
-    // return GlobalParams::instance()->videoKeepAspectRatio();
     return Stream::AspectRatioMode::KeepAspectRatio;
 }
 
@@ -216,18 +208,6 @@ void VideoPlayerImpl::paintCommon(QPainter *painter, const QRect &widgetRect)
     painter->save();
     painter->setFont(painterFont_);
 
-    if ((playerState() == Stream::PlayerState::Pause ||
-         playerState() == Stream::PlayerState::Resume) &&
-        !lastFrame_.isNull()) {
-        QRect srcRect(digitalZoomRect_.x() * lastFrame_.width(),
-                      digitalZoomRect_.y() * lastFrame_.height(),
-                      digitalZoomRect_.width() * lastFrame_.width(),
-                      digitalZoomRect_.height() * lastFrame_.height());
-
-        srcRect = srcRect.intersected(lastFrame_.rect());
-        painter->drawImage(videoRect_, lastFrame_, srcRect);
-    }
-
     painter->setPen(Qt::white);
     painter->drawText(widgetRect_, Qt::AlignCenter, strText_);
 
@@ -237,11 +217,6 @@ void VideoPlayerImpl::paintCommon(QPainter *painter, const QRect &widgetRect)
                           QString("FPS: %1").arg(fps_));
     }
 
-    if (playerState_ == Stream::PlayerState::Playing ||
-        playerState_ == Stream::PlayerState::Pause) {
-        for (auto img : masks_)
-            painter->drawImage(widgetRect_, *img);
-    }
     painter->restore();
 }
 
@@ -261,12 +236,10 @@ void VideoPlayerImpl::videoFrameReady(const std::shared_ptr<decoder_sdk::Frame> 
 
     if (playerState_ == Stream::PlayerState::Playing && frame->isValid()) {
         if (frame->mediaType() == decoder_sdk::MediaType::kVideo) {
-            frameWidth_ = frame->width();
-            frameHeight_ = frame->height();
             strText_.clear();
         }
 
-        emit renderRequested(frame);
+        emit renderRequested(frame, processParam_);
     }
 }
 
@@ -311,9 +284,6 @@ void VideoPlayerImpl::renderToImage(const QSize &size, QImage &image)
             if (curContext)
                 curContext->makeCurrent(curContext->surface());
         }
-    } else {
-        // 没有渲染器时，使用上次保存的图片
-        image = lastFrame_;
     }
 }
 
@@ -325,15 +295,11 @@ void VideoPlayerImpl::renderToImage(QImage &image)
 void VideoPlayerImpl::setPlayerState(Stream::PlayerState state)
 {
     playerState_ = state;
-#ifndef QT_COMMERCIAL
     emit playerStateChanged(playerState_);
-#endif
 
     if (playerState_ == Stream::PlayerState::Playing) {
         emit preparePlaying();
     } else if (playerState_ == Stream::PlayerState::Pause) {
-        renderToImage(lastFrame_); // 获得最后一帧
-
         emit preparePause();
     } else if (playerState_ == Stream::PlayerState::Stop) {
         emit prepareStop();
@@ -347,9 +313,9 @@ void VideoPlayerImpl::setPlayerState(Stream::PlayerState state)
 
 void VideoPlayerImpl::setDigitalZoomRect(const QRectF &rect)
 {
-    digitalZoomRect_ = rect;
+    processParam_.digitalZoomRect = rect;
     if (auto sRender = render_.lock(); sRender) {
-        sRender->setDigitalZoomRect(digitalZoomRect_);
+        sRender->setDigitalZoomRect(rect);
     }
     emit aboutToUpdate();
 }
@@ -360,10 +326,155 @@ QRectF VideoPlayerImpl::digitalZoomRect() const
         return sRender->digitalZoomRect();
     }
 
-    return digitalZoomRect_;
+    return processParam_.digitalZoomRect;
 }
 
-void VideoPlayerImpl::onDecoderEventChanged(decoder_sdk::EventType type,
+void VideoPlayerImpl::setHorizontalFlip(bool flip)
+{
+    processParam_.horizontalFlip = flip;
+    if (auto sRender = render_.lock(); sRender) {
+        sRender->setHorizontalFlip(flip);
+    }
+    emit aboutToUpdate();
+}
+
+bool VideoPlayerImpl::isHorizontalFlip() const
+{
+    if (auto sRender = render_.lock(); sRender) {
+        return sRender->isHorizontalFlip();
+    }
+
+    return processParam_.horizontalFlip;
+}
+
+void VideoPlayerImpl::setVecticalFlip(bool flip)
+{
+    processParam_.vecticalFlip = flip;
+    if (auto sRender = render_.lock(); sRender) {
+        sRender->setVecticalFlip(flip);
+    }
+    emit aboutToUpdate();
+}
+
+bool VideoPlayerImpl::isVecticalFlip() const
+{
+    if (auto sRender = render_.lock(); sRender) {
+        return sRender->isVecticalFlip();
+    }
+
+    return processParam_.vecticalFlip;
+}
+
+void VideoPlayerImpl::setHorizontalAndVecticalFlip(bool hflip, bool vflip)
+{
+    processParam_.horizontalFlip = hflip;
+    processParam_.vecticalFlip = vflip;
+    if (auto sRender = render_.lock(); sRender) {
+        sRender->setHorizontalAndVecticalFlip(hflip, vflip);
+    }
+    emit aboutToUpdate();
+}
+
+QPair<bool, bool> VideoPlayerImpl::isHorizontalAndVecticalFlip() const
+{
+    if (auto sRender = render_.lock(); sRender) {
+        return sRender->isHorizontalAndVecticalFlip();
+    }
+
+    return {processParam_.horizontalFlip, processParam_.vecticalFlip};
+}
+
+void VideoPlayerImpl::setColorAdjustments(float brightness, float contrast, float saturation,
+                                          float hue)
+{
+    processParam_.brightness = brightness;
+    processParam_.contrast = contrast;
+    processParam_.saturation = saturation;
+    processParam_.hue = hue;
+    if (auto sRender = render_.lock(); sRender) {
+        sRender->setColorAdjustments(brightness, contrast, saturation, hue);
+    }
+    emit aboutToUpdate();
+}
+
+void VideoPlayerImpl::setBrightness(float brightness)
+{
+    processParam_.brightness = brightness;
+    if (auto sRender = render_.lock(); sRender) {
+        sRender->setBrightness(brightness);
+    }
+    emit aboutToUpdate();
+}
+
+float VideoPlayerImpl::brightness() const
+{
+    if (auto sRender = render_.lock(); sRender) {
+        return sRender->brightness();
+    }
+
+    return processParam_.brightness;
+}
+
+void VideoPlayerImpl::setContrast(float contrast)
+{
+    processParam_.contrast = contrast;
+    if (auto sRender = render_.lock(); sRender) {
+        sRender->setContrast(contrast);
+    }
+    emit aboutToUpdate();
+}
+
+float VideoPlayerImpl::contrast() const
+{
+    if (auto sRender = render_.lock(); sRender) {
+        return sRender->contrast();
+    }
+
+    return processParam_.contrast;
+}
+
+void VideoPlayerImpl::setSaturation(float saturation)
+{
+    processParam_.saturation = saturation;
+    if (auto sRender = render_.lock(); sRender) {
+        sRender->setSaturation(saturation);
+    }
+    emit aboutToUpdate();
+}
+
+float VideoPlayerImpl::saturation() const
+{
+    if (auto sRender = render_.lock(); sRender) {
+        return sRender->saturation();
+    }
+
+    return processParam_.saturation;
+}
+
+void VideoPlayerImpl::setHue(float hue)
+{
+    processParam_.hue = hue;
+    if (auto sRender = render_.lock(); sRender) {
+        sRender->setHue(hue);
+    }
+    emit aboutToUpdate();
+}
+
+float VideoPlayerImpl::hue() const
+{
+    if (auto sRender = render_.lock(); sRender) {
+        return sRender->hue();
+    }
+
+    return processParam_.hue;
+}
+
+QString VideoPlayerImpl::defaultRecordFileName() const
+{
+    return recordFileUuid_;
+}
+
+void VideoPlayerImpl::onDecoderEventChanged(const QString &url, decoder_sdk::EventType type,
                                             const std::shared_ptr<decoder_sdk::EventArgs> &event)
 {
     switch (type) {
@@ -373,6 +484,8 @@ void VideoPlayerImpl::onDecoderEventChanged(decoder_sdk::EventType type,
             // !streamOpenTimeout_.load() 条件去掉
             if (!streamOpenErrorTimer_->isActive() && !streamOpenTimeout_.load())
                 streamOpenErrorTimer_->start();
+
+            emit errorOccured(Stream::ErrorType::kOpenError);
             break;
         case decoder_sdk::EventType::kStreamOpened: {
             // 关闭超时计时器，并修改bool值
@@ -387,25 +500,55 @@ void VideoPlayerImpl::onDecoderEventChanged(decoder_sdk::EventType type,
             }
             break;
         }
+        case decoder_sdk::EventType::kStreamLoopEnded:
+            emit fileStreamLoopEnded();
+            break;
+        case decoder_sdk::EventType::kStreamReadError:
+            emit errorOccured(Stream::ErrorType::kReadError);
+            break;
         case decoder_sdk::EventType::kCreateDecoderFailed:
             strText_ = QStringLiteral("资源不足");
             qWarning() << QStringLiteral("播放失败，解码器资源不足。");
+
+            emit errorOccured(Stream::ErrorType::kDecodeError);
             break;
         case decoder_sdk::EventType::kRecordingStarted:
-            qInfo() << QStringLiteral("开始录制视频");
-            emit recordStarted();
+            emit recordStarted(getFilePathFromRecordEvent(event));
             break;
         case decoder_sdk::EventType::kRecordingStopped:
-            qInfo() << QStringLiteral("结束录制视频");
-            emit recordStopped();
+            emit recordStopped(getFilePathFromRecordEvent(event));
             break;
         case decoder_sdk::EventType::kRecordingError:
-            qInfo() << QStringLiteral("录制视频出错");
-            emit recordErrorOccured();
+            emit errorOccured(Stream::ErrorType::kRecordError);
+            break;
+        case decoder_sdk::EventType::kSeekStarted:
+            emit seekStarted();
+            break;
+        case decoder_sdk::EventType::kSeekSuccess:
+            emit seekEnded(true);
+            break;
+        case decoder_sdk::EventType::kSeekFailed:
+            emit seekEnded(false);
             break;
         default:
             break;
     }
+
+    qDebug() << QStringLiteral("%1 occurred event: %2")
+                    .arg(url, QString::fromStdString(event->description));
+}
+
+QString VideoPlayerImpl::getFilePathFromRecordEvent(
+    const std::shared_ptr<decoder_sdk::EventArgs> &event)
+{
+    QString filePath;
+    if (auto *const recordEvent = dynamic_cast<decoder_sdk::RecordingEventArgs *>(event.get());
+        recordEvent) {
+        filePath = QString::fromLocal8Bit(recordEvent->outputPath.data(),
+                                          static_cast<int>(recordEvent->outputPath.size()));
+    }
+
+    return filePath;
 }
 
 void VideoPlayerImpl::onPlayerStateChanged(Stream::PlayerState state)
@@ -416,8 +559,10 @@ void VideoPlayerImpl::onPlayerStateChanged(Stream::PlayerState state)
             strText_ = QStringLiteral("请稍候");
             break;
         case Stream::PlayerState::Stop:
-            digitalZoomRect_ = QRectF(0.0, 0.0, 1.0, 1.0);
+            processParam_ = Stream::VideoProcessParam{};
             strText_.clear();
+
+            setFrameSize(0, 0);
 
             videoRect_ = QRect();
             emit videoRectChanged(videoRect_);
@@ -430,6 +575,10 @@ void VideoPlayerImpl::onPlayerStateChanged(Stream::PlayerState state)
 
 QRect VideoPlayerImpl::calculateVideoRect(const QRect &needRenderedRect)
 {
+    if (frameWidth_ == 0 || frameHeight_ == 0) {
+        return QRect();
+    }
+
     const auto width = widgetRect_.width();
     const auto height = widgetRect_.height();
 
@@ -454,4 +603,14 @@ QRect VideoPlayerImpl::calculateVideoRect(const QRect &needRenderedRect)
     }
 
     return videoRect;
+}
+
+void VideoPlayerImpl::setFrameSize(int width, int height)
+{
+    if (width == frameWidth_ && height == frameHeight_)
+        return;
+
+    frameWidth_ = width;
+    frameHeight_ = height;
+    emit frameSizeChanged(width, height);
 }

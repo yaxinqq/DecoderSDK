@@ -20,8 +20,15 @@ VideoPlayer::VideoPlayer(QWidget *parent) : QOpenGLWidget(parent)
     connect(impl_, &VideoPlayerImpl::playerStateChanged, this, &VideoPlayer::playerStateChanged);
     connect(impl_, &VideoPlayerImpl::aboutToUpdate, this, &VideoPlayer::aboutToRenderFrame);
     connect(impl_, &VideoPlayerImpl::streamClosed, this, &VideoPlayer::streamClosed);
+    connect(impl_, &VideoPlayerImpl::fileStreamLoopEnded, this, &VideoPlayer::fileStreamLoopEnded);
+    connect(impl_, &VideoPlayerImpl::errorOccured, this, &VideoPlayer::errorOccured);
+    connect(impl_, &VideoPlayerImpl::recordStarted, this, &VideoPlayer::recordStarted);
+    connect(impl_, &VideoPlayerImpl::recordStopped, this, &VideoPlayer::recordStopped);
     connect(impl_, &VideoPlayerImpl::totalTimeRecved, this, &VideoPlayer::totalTimeRecved);
     connect(impl_, &VideoPlayerImpl::ptsChanged, this, &VideoPlayer::ptsChanged);
+    connect(impl_, &VideoPlayerImpl::seekStarted, this, &VideoPlayer::seekStarted);
+    connect(impl_, &VideoPlayerImpl::seekEnded, this, &VideoPlayer::seekEnded);
+    connect(impl_, &VideoPlayerImpl::frameSizeChanged, this, &VideoPlayer::frameSizeChanged);
 
     connect(this, &VideoPlayer::forceToRender, this, &VideoPlayer::aboutToRenderFrame);
 }
@@ -70,9 +77,100 @@ QRectF VideoPlayer::digitalZoomRect() const
     return impl_->digitalZoomRect();
 }
 
-void VideoPlayer::setMasks(QList<QImage *> masks)
+void VideoPlayer::setHorizontalFlip(bool flip)
 {
-    impl_->setMasks(masks);
+    impl_->setHorizontalFlip(flip);
+}
+
+bool VideoPlayer::isHorizontalFlip() const
+{
+    return impl_->isHorizontalFlip();
+}
+
+void VideoPlayer::setVecticalFlip(bool flip)
+{
+    impl_->setVecticalFlip(flip);
+}
+
+bool VideoPlayer::isVecticalFlip() const
+{
+    return impl_->isVecticalFlip();
+}
+
+void VideoPlayer::setHorizontalAndVecticalFlip(bool hflip, bool vflip)
+{
+    impl_->setHorizontalAndVecticalFlip(hflip, vflip);
+}
+
+QPair<bool, bool> VideoPlayer::isHorizontalAndVecticalFlip() const
+{
+    return impl_->isHorizontalAndVecticalFlip();
+}
+
+void VideoPlayer::setColorAdjustments(float brightness, float contrast, float saturation, float hue)
+{
+    impl_->setColorAdjustments(brightness, contrast, saturation, hue);
+}
+
+void VideoPlayer::setBrightness(float brightness)
+{
+    impl_->setBrightness(brightness);
+}
+
+float VideoPlayer::brightness() const
+{
+    return impl_->brightness();
+}
+
+void VideoPlayer::setContrast(float contrast)
+{
+    impl_->setContrast(contrast);
+}
+
+float VideoPlayer::contrast() const
+{
+    return impl_->contrast();
+}
+
+void VideoPlayer::setSaturation(float saturation)
+{
+    impl_->setSaturation(saturation);
+}
+
+float VideoPlayer::saturation() const
+{
+    return impl_->saturation();
+}
+
+void VideoPlayer::setHue(float hue)
+{
+    impl_->setSaturation(hue);
+}
+
+float VideoPlayer::hue() const
+{
+    return impl_->hue();
+}
+
+void VideoPlayer::startRecoding(const QString &recodPath)
+{
+    // do nothing
+}
+
+void VideoPlayer::stopRecoding()
+{
+    // do nothing
+}
+
+bool VideoPlayer::isRecording() const
+{
+    // do nothing
+    return false;
+}
+
+QString VideoPlayer::defaultRecordFileName() const
+{
+    return impl_->defaultRecordFileName();
 }
 
 void VideoPlayer::setShownScreenText(const QString &shownScreenText)

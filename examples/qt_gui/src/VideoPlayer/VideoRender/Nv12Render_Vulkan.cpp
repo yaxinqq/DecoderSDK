@@ -1,4 +1,4 @@
-#include "Nv12Render_Vulkan.h"
+﻿#include "Nv12Render_Vulkan.h"
 
 #ifdef VULKAN_AVAILABLE
 #include <QApplication>
@@ -463,6 +463,12 @@ bool Nv12Render_Vulkan::renderFrame(const decoder_sdk::Frame &frame)
     }
 
     return blitToCurrentFbo(frame.width(), frame.height());
+}
+
+void Nv12Render_Vulkan::cleanupAllResources()
+{
+    cleanupVulkanResources();
+    cleanupOpenGLResources();
 }
 
 bool Nv12Render_Vulkan::ensureInteropReadFbo()
@@ -1490,7 +1496,7 @@ void Nv12Render_Vulkan::cleanupOpenGLResources()
         memoryHandle_ = nullptr;
     }
 #else
-    if (memoryHandle_ > 0) {
+    if (memoryHandle_ >= 0) {
         close(memoryHandle_);
         memoryHandle_ = -1;
     }

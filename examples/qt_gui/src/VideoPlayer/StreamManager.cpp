@@ -104,7 +104,7 @@ bool StreamManager::resume(VideoPlayerImpl *player)
     return true;
 }
 
-bool StreamManager::startRecoding(VideoPlayerImpl *player, const QString &recodDir)
+bool StreamManager::startRecoding(VideoPlayerImpl *player, const QString &recodPath)
 {
     // 获得player对应的decoder
     StreamDecoderWorker *const worker = streamDecoderByPlayer(player);
@@ -112,7 +112,7 @@ bool StreamManager::startRecoding(VideoPlayerImpl *player, const QString &recodD
         return false; // 没有对应的解码器，返回false
 
     // 开启decoder的录像
-    worker->needToStartRecoding(recodDir);
+    worker->requestToStartRecoding(recodPath);
     return true;
 }
 
@@ -124,7 +124,7 @@ bool StreamManager::stopRecoding(VideoPlayerImpl *player)
         return false; // 没有对应的解码器，返回false
 
     // 停止decoder的录像
-    worker->needToStopRecording();
+    worker->requestToStopRecording();
     return true;
 }
 
@@ -145,7 +145,7 @@ bool StreamManager::seek(VideoPlayerImpl *player, double pts)
     if (!worker)
         return false;
 
-    worker->needToSeek(pts);
+    worker->requestToSeek(pts);
     return true;
 }
 
@@ -156,7 +156,7 @@ bool StreamManager::setSpeed(VideoPlayerImpl *player, double speed)
     if (!worker)
         return false;
 
-    worker->needToSpeed(speed);
+    worker->requestToSetSpeed(speed);
     return true;
 }
 

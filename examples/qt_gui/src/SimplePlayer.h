@@ -1,6 +1,7 @@
 #pragma once
 #include "WidgetDigitalZoomController.h"
 
+#include <QContextMenuEvent>
 #include <QWidget>
 
 namespace Ui {
@@ -32,15 +33,29 @@ private slots:
     void onVideoRectChanged(const QRect &rect);
     void onDigitalZoomRectChanged(const QRectF &rect);
 
+protected:
+    void contextMenuEvent(QContextMenuEvent *event) override;
+
 private:
     void initUi();
     void initConnection();
+    void resetColorAdjustments();
+    void adjustBrightness(float percent);
+    void adjustContrast(float percent);
+    void adjustSaturation(float percent);
+    void adjustHue(float percent);
+    void applyColorAdjustments();
 
 private:
     Ui::SimplePlayer *ui = nullptr;
     bool isSliderPressed_ = false; // 标记滑块是否被按下
-    int totalTime_ = 0;            // 总时长
+    int64_t totalTime_ = 0;        // 总时长
 
-    // 第三方相机电子放大控制对象
     WidgetDigitalZoomController *digitalZoomCtrl_ = nullptr;
+
+    // 颜色调整参数
+    float brightness_ = 0.0f;
+    float contrast_ = 1.0f;
+    float saturation_ = 1.0f;
+    float hue_ = 0.0f;
 };

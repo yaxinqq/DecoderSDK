@@ -4,8 +4,8 @@
 #include <chrono>
 
 namespace {
-    // 通用顶点着色器
-    const char *vertexShaderSource = R"(
+// 通用顶点着色器
+const char *vertexShaderSource = R"(
 attribute vec4 vertexIn;
 attribute vec2 textureIn;
 varying vec2 textureOut;
@@ -16,8 +16,8 @@ void main(void)
 }
 )";
 
-    // YUV420P片段着色器
-    const char *yuv420pFragmentShader = R"(
+// YUV420P片段着色器
+const char *yuv420pFragmentShader = R"(
 #ifdef GL_ES
 precision mediump float;
 #endif
@@ -45,8 +45,8 @@ void main(void)
 }
 )";
 
-    // YUV422P片段着色器
-    const char *yuv422pFragmentShader = R"(
+// YUV422P片段着色器
+const char *yuv422pFragmentShader = R"(
 #ifdef GL_ES
 precision mediump float;
 #endif
@@ -73,8 +73,8 @@ void main(void)
 }
 )";
 
-    // YUV444P片段着色器
-    const char *yuv444pFragmentShader = R"(
+// YUV444P片段着色器
+const char *yuv444pFragmentShader = R"(
 #ifdef GL_ES
 precision mediump float;
 #endif
@@ -101,8 +101,8 @@ void main(void)
 }
 )";
 
-    // NV12片段着色器
-    const char *nv12FragmentShader = R"(
+// NV12片段着色器
+const char *nv12FragmentShader = R"(
 #ifdef GL_ES
 precision mediump float;
 #endif
@@ -129,8 +129,8 @@ void main(void)
 }
 )";
 
-    // NV21片段着色器
-    const char *nv21FragmentShader = R"(
+// NV21片段着色器
+const char *nv21FragmentShader = R"(
 #ifdef GL_ES
 precision mediump float;
 #endif
@@ -156,8 +156,8 @@ void main(void)
 }
 )";
 
-    // RGB24片段着色器
-    const char *rgb24FragmentShader = R"(
+// RGB24片段着色器
+const char *rgb24FragmentShader = R"(
 #ifdef GL_ES
 precision mediump float;
 #endif
@@ -170,8 +170,8 @@ void main(void)
 }
 )";
 
-    // BGR24片段着色器
-    const char *bgr24FragmentShader = R"(
+// BGR24片段着色器
+const char *bgr24FragmentShader = R"(
 #ifdef GL_ES
 precision mediump float;
 #endif
@@ -185,8 +185,8 @@ void main(void)
 }
 )";
 
-    // RGBA片段着色器
-    const char *rgbaFragmentShader = R"(
+// RGBA片段着色器
+const char *rgbaFragmentShader = R"(
 #ifdef GL_ES
 precision mediump float;
 #endif
@@ -199,8 +199,8 @@ void main(void)
 }
 )";
 
-    // BGRA片段着色器
-    const char *bgraFragmentShader = R"(
+// BGRA片段着色器
+const char *bgraFragmentShader = R"(
 #ifdef GL_ES
 precision mediump float;
 #endif
@@ -216,8 +216,7 @@ void main(void)
 
 } // namespace
 
-SoftwareRender::SoftwareRender()
-    : VideoRender()
+SoftwareRender::SoftwareRender() : VideoRender()
 {
 }
 
@@ -279,30 +278,39 @@ bool SoftwareRender::renderFrame(const decoder_sdk::Frame &frame)
     return drawFrame(textures_, currentFormat);
 }
 
+void SoftwareRender::cleanupAllResources()
+{
+    cleanup();
+}
+
 bool SoftwareRender::initializeShaders(decoder_sdk::ImageFormat format)
 {
     program_.removeAllShaders();
 
     // 添加顶点着色器
     if (!program_.addCacheableShaderFromSourceCode(QOpenGLShader::Vertex, getVertexShader())) {
-        qDebug() << QStringLiteral("[SoftwareRender] Failed to compile vertex shader: %1").arg(program_.log());
+        qDebug() << QStringLiteral("[SoftwareRender] Failed to compile vertex shader: %1")
+                        .arg(program_.log());
         return false;
     }
 
     // 添加片段着色器
     if (!program_.addCacheableShaderFromSourceCode(QOpenGLShader::Fragment,
                                                    getFragmentShader(format))) {
-        qDebug() << QStringLiteral("[SoftwareRender] Failed to compile fragment shader: %1").arg(program_.log());
+        qDebug() << QStringLiteral("[SoftwareRender] Failed to compile fragment shader: %1")
+                        .arg(program_.log());
         return false;
     }
 
     // 链接着色器程序
     if (!program_.link()) {
-        qDebug() << QStringLiteral("[SoftwareRender] Failed to link shader program: %1").arg(program_.log());
+        qDebug() << QStringLiteral("[SoftwareRender] Failed to link shader program: %1")
+                        .arg(program_.log());
         return false;
     }
 
-    qDebug() << QStringLiteral("[SoftwareRender] Shaders initialized successfully for format") << static_cast<int>(format);
+    qDebug() << QStringLiteral("[SoftwareRender] Shaders initialized successfully for format")
+             << static_cast<int>(format);
     return true;
 }
 

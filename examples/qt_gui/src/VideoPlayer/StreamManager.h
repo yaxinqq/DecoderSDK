@@ -81,9 +81,9 @@ public:
      * @brief 开启录像
      *
      * @param player 播放器
-     * @param recodDir 保存录像的目录
+     * @param recodDir 保存录像的路径
      */
-    bool startRecoding(VideoPlayerImpl *player, const QString &recodDir);
+    bool startRecoding(VideoPlayerImpl *player, const QString &recodPath);
 
     /*
      * @brief 停止录像

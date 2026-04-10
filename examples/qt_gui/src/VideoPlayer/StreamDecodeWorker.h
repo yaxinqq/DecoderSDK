@@ -103,24 +103,26 @@ public:
 
 public slots:
     // 开启录像，结果根据event变更进行处理
-    void onNeedToStartRecoding(const QString &recordPath, int flags = 0);
+    void startRecoding(const QString &recordPath);
     // 关闭录像，结果根据event变更进行处理
-    void onNeedToStopRecording();
+    void stopRecording();
+    // 进行跳转
+    void seek(double pos);
+    // 设置倍速
+    void setSpeed(double speed);
 
-    void onNeedToSeek(double pos);
-    void onNeedToSpeed(double speed);
-
-signals:
-    // 录像状态变更  isRecoding - 是否正在录像
-    void recordingStatusChanged(bool isRecoding);
+    // 设置循环模式
+    void setLoopMode(decoder_sdk::LoopMode mode, int maxLoops = -1);
+    // 重置循环计数
+    void resetLoopCount();
 
 private:
     // 暂停解码器
-    int pause();
+    bool pause();
     // 恢复解码器
-    int resume();
+    bool resume();
     // 关闭解码器
-    int close();
+    bool close();
 
     // 打开流后的回调函数
     void openCallback(decoder_sdk::AsyncOpenResult result, bool openSuccess,
@@ -137,10 +139,10 @@ signals:
     void openResultReady(bool success, const QString &errorMsg);
     // 发送帧
     void videoFrameReady(const std::shared_ptr<decoder_sdk::Frame> &frame);
-    // 发送销毁信号
-    void aboutToDelete();
+    // 发送请求销毁信号，由外部进行销毁
+    void requestToDelete();
     // 发送流事件通知
-    void eventUpdated(decoder_sdk::EventType type,
+    void eventUpdated(const QString &url, decoder_sdk::EventType type,
                       const std::shared_ptr<decoder_sdk::EventArgs> &event);
 
 private:
@@ -148,8 +150,6 @@ private:
 
     std::atomic_bool isOpening_ = false; // 流正在打开中
     QMutex mutex_;                       // "完成任务"的状态锁
-
-    std::atomic_bool isSeeking_ = false;
 
     // 提取解码帧的线程
     DecoderThread *decodeThread_ = nullptr;
@@ -191,32 +191,65 @@ public:
     void unRegisterPlayer(VideoPlayerImpl *player);
 
 signals:
-    // 发送即将销毁的信号
+    // 向外部发送即将销毁的信号
     void aboutToDelete(const QString &key);
-    // 发送打开流的信号
-    void openAsync(const QString &url, const decoder_sdk::DecoderConfig &config);
-    // 发送任务
-    void task(StreamDecoder::Task t);
 
-    /*
-     * @brief 开始录像
-     *
-     * @param recordDir 录像存储目录
-     * @param flags 存储标志，参加RecordingFlag定义
-     */
-    void needToStartRecoding(const QString &recordDir, int flags = 0);
+    // ================= 解码器发出，向Player分发 ================= //
+    // 向外部发送帧
+    void videoFrameReady(const std::shared_ptr<decoder_sdk::Frame> &frame);
+    // 向外部发送流事件通知
+    void eventUpdated(const QString &url, decoder_sdk::EventType type,
+                      const std::shared_ptr<decoder_sdk::EventArgs> &event);
+    // ============================================================ //
 
-    /*
-     * @brief 停止录像
-     *
-     */
-    void needToStopRecording();
+    // ================= 需要解码器进行操作的信号 ================= //
+    // 需要解码器异步开流
+    void requestToOpenAsync(const QString &url, const decoder_sdk::DecoderConfig &config);
+    // 需要解码器进行任务操作
+    void requestToDoTask(StreamDecoder::Task t);
+    // 需要解码器广播流信息以及解码器信息
+    void requestToBroadcastStreamAndDecoderInfo();
+    // 需要解码器开始录像
+    void requestToStartRecoding(const QString &recordDir);
+    // 需要解码器停止录像
+    void requestToStopRecording();
+    // 需要解码器进行Seek
+    void requestToSeek(double pos);
+    // 需要解码器变速
+    void requestToSetSpeed(double speed);
 
-    void needToSeek(double pos);
-    void needToSpeed(double speed);
+    // 需要解码器设置循环播放模式
+    void requestToSetLoopMode(decoder_sdk::LoopMode mode, int maxLoops = -1);
+    // 需要解码器重置循环计数
+    void requestToResetLoopCount();
+    // ============================================================ //
 
 protected:
     void run() override;
+
+private slots:
+    /**
+     * @brief 解码器异步开启结果已就绪
+     *
+     * @param res 异步开启成功还是失败
+     * @param errorMsg 如果开启失败，错误信息
+     */
+    void onOpenResultReady(bool res, const QString &errorMsg);
+
+    /**
+     * @brief 解码器请求销毁
+     */
+    void onDecoderRequestToDelete();
+
+    /**
+     * @brief 响应解码器事件变更，并在这里进行分发
+     *
+     * @param url decoder对应的url
+     * @param type 事件类型
+     * @param event 事件
+     */
+    void onEventUpdated(const QString &url, decoder_sdk::EventType type,
+                        const std::shared_ptr<decoder_sdk::EventArgs> &event);
 
 private:
     /*

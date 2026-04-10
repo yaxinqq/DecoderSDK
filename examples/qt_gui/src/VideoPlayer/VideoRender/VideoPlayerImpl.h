@@ -1,10 +1,11 @@
 ﻿#pragma once
-#include "../CommonDef.h"
+#include "CommonDef.h"
 
 #include "decodersdk/frame.h"
 
 #include <QFont>
 #include <QImage>
+#include <QMap>
 #include <QObject>
 
 class RenderWorker;
@@ -12,7 +13,6 @@ class VideoRender;
 class QThread;
 class QOpenGLContext;
 class QSurface;
-struct AVFrame;
 
 /*!
  * \class VideoPlayerImpl
@@ -106,10 +106,6 @@ public:
 public:
     void videoFrameReady(const std::shared_ptr<decoder_sdk::Frame> &frame);
 
-    void setMasks(QList<QImage *> masks)
-    {
-        masks_ = masks;
-    }
     void setShownScreenText(const QString &shownScreenText)
     {
         strText_ = shownScreenText;
@@ -151,12 +147,124 @@ public:
      */
     QRectF digitalZoomRect() const;
 
+    /**
+     * @brief 设置是否水平翻转
+     *
+     * @param flip 是否水平翻转
+     */
+    void setHorizontalFlip(bool flip);
+    /**
+     * @brief 是否水平翻转
+     *
+     * @return 是否水平翻转
+     */
+    bool isHorizontalFlip() const;
+    /**
+     * @brief 设置是否垂直翻转
+     *
+     * @param flip 是否垂直翻转
+     */
+    void setVecticalFlip(bool flip);
+    /**
+     * @brief 是否垂直翻转
+     *
+     * @return 是否垂直翻转
+     */
+    bool isVecticalFlip() const;
+    /**
+     * @brief 设置是否水平、垂直翻转
+     *
+     * @param hFlip 是否水平翻转
+     * @param vFlip 是否垂直翻转
+     */
+    void setHorizontalAndVecticalFlip(bool hflip, bool vflip);
+    /**
+     * @brief 是否水平翻转
+     *
+     * @return 是否水平翻转
+     */
+    QPair<bool, bool> isHorizontalAndVecticalFlip() const;
+
+    /**
+     * @brief 设置颜色调整值
+     *
+     * @param brightness 亮度
+     * @param contrast 对比度
+     * @param saturation 饱和度
+     * @param hue 色调
+     */
+    void setColorAdjustments(float brightness, float contrast, float saturation, float hue);
+
+    /**
+     * @brief 设置亮度
+     *
+     * @param brightness 亮度
+     */
+    void setBrightness(float brightness);
+    /**
+     * @brief 获取亮度
+     * @return 亮度
+     */
+    float brightness() const;
+
+    /**
+     * @brief 设置对比度
+     *
+     * @param contrast 对比度
+     */
+    void setContrast(float contrast);
+    /**
+     * @brief 获取对比度
+     * @return 对比度
+     */
+    float contrast() const;
+
+    /**
+     * @brief 设置饱和度
+     *
+     * @param saturation 饱和度
+     */
+    void setSaturation(float saturation);
+    /**
+     * @brief 获取饱和度
+     * @return 饱和度
+     */
+    float saturation() const;
+
+    /**
+     * @brief 设置色调
+     *
+     * @param hue 色调
+     */
+    void setHue(float hue);
+    /**
+     * @brief 获取色调
+     * @return 色调
+     */
+    float hue() const;
+
+    /*
+     * @brief 获得默认录像文件名称
+     *
+     */
+    QString defaultRecordFileName() const;
+
 public slots:
-    void onDecoderEventChanged(decoder_sdk::EventType type,
+    void onDecoderEventChanged(const QString &url, decoder_sdk::EventType type,
                                const std::shared_ptr<decoder_sdk::EventArgs> &event);
 
+public:
+    /**
+     * @brief 从录制事件中得到录像文件路径
+     *
+     * @param event 录制事件
+     * @return 录像文件路径
+     */
+    static QString getFilePathFromRecordEvent(const std::shared_ptr<decoder_sdk::EventArgs> &event);
+
 signals:
-    void renderRequested(const std::shared_ptr<decoder_sdk::Frame> &frame);
+    void renderRequested(const std::shared_ptr<decoder_sdk::Frame> &frame,
+                         const Stream::VideoProcessParam &processParam);
     void prepareStop();
     void preparePause();
     void preparePlaying();
@@ -164,30 +272,55 @@ signals:
     void videoRectChanged(const QRect &rect);
     void playerStateChanged(Stream::PlayerState state);
 
+    /**
+     * @brief 视频尺寸发生变化
+     *
+     * @param width 宽
+     * @param height 高
+     */
+    void frameSizeChanged(int width, int height);
+
     void totalTimeRecved(int64_t totalTime);
     void ptsChanged(double pts);
+
+    /**
+     * @brief 发生错误，该信号可能会多次重复的发出
+     *
+     * @param errorType 错误类型
+     */
+    void errorOccured(Stream::ErrorType errorType);
 
     /*
      * @brief 录像已开启
      *
      */
-    void recordStarted();
+    void recordStarted(const QString &filePath);
     /*
      * @brief 录像已关闭
      *
      */
-    void recordStopped();
-    /*
-     * @brief 录像时发生了错误
-     *
-     */
-    void recordErrorOccured();
+    void recordStopped(const QString &filePath);
 
     /*
      * @brief 流地址关闭，无法连接
      *
      */
     void streamClosed();
+
+    /*
+     * @brief 文件流循环播放结束
+     *
+     */
+    void fileStreamLoopEnded();
+
+    /**
+     * @brief 跳转开始
+     */
+    void seekStarted();
+    /**
+     * @brief 跳转结束
+     */
+    void seekEnded(bool success);
 
     void aboutToUpdate();
 
@@ -202,16 +335,24 @@ private:
      */
     QRect calculateVideoRect(const QRect &needRenderedRect);
 
+    /**
+     * @brief 设置纹理尺寸
+     *
+     * @param width 纹理宽度
+     * @param height 纹理高度
+     */
+    void setFrameSize(int width, int height);
+
 private:
     RenderWorker *renderWorker_ = nullptr;
     QWeakPointer<VideoRender> render_;
     QThread *renderWorkerThread_ = nullptr;
 
-    int frameWidth_ = -1;
-    int frameHeight_ = -1;
+    int frameWidth_ = 0;
+    int frameHeight_ = 0;
 
     // FPS
-    bool fpsVisible_ = true;
+    bool fpsVisible_ = false;
     int frameCount_ = 0;
     int fps_ = 0;
     int fpsTextWidth_;
@@ -219,22 +360,20 @@ private:
 
     QFont painterFont_;
     QString strText_;
-    QList<QImage *> masks_;
 
     QRect widgetRect_; // 容器尺寸
     QRect videoRect_;  // 视频的实际显示尺寸
-
-    // 暂停前的最后一帧（图像的原始大小）
-    QImage lastFrame_;
 
     // 流地址打开失败的计时器，用于记录超时时间
     QTimer *streamOpenErrorTimer_ = nullptr;
     // 流地址是否打开超时
     std::atomic_bool streamOpenTimeout_;
 
-    // 电子放大区域
-    QRectF digitalZoomRect_;
+    // 视频处理参数
+    Stream::VideoProcessParam processParam_;
 
-private:
+    // 唯一标识，用来标识录像文件
+    QString recordFileUuid_;
+
     Stream::PlayerState playerState_;
 };

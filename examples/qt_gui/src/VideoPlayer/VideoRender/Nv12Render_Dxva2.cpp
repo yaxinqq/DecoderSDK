@@ -1,4 +1,4 @@
-#ifdef DXVA2_AVAILABLE
+﻿#ifdef DXVA2_AVAILABLE
 #include "Nv12Render_Dxva2.h"
 
 #ifdef QSV_AVAILABLE
@@ -12,10 +12,26 @@
 #endif
 
 namespace {
+bool unregisterWglTexture(wgl::WglDeviceRef &device, HANDLE &handle)
+{
+    if (!handle) {
+        return true;
+    }
+    if (!device.isValid()) {
+        return false;
+    }
+
+    HANDLE interopHandle = handle;
+    device.wglDXUnlockObjectsNV(1, &interopHandle);
+    const bool ok = device.wglDXUnregisterObjectNV(interopHandle);
+    if (ok) {
+        handle = nullptr;
+    }
+    return ok;
+}
 } // namespace
 
-Nv12Render_Dxva2::Nv12Render_Dxva2()
-    : VideoRender()
+Nv12Render_Dxva2::Nv12Render_Dxva2() : VideoRender()
 {
     initializeD3DResource(dxva2_utils::getDXVA2Device(), dxva2_utils::getWglDeviceRef());
 }
@@ -85,6 +101,7 @@ bool Nv12Render_Dxva2::initInteropsResource(const decoder_sdk::Frame &frame)
 
     if (!sourceSurface) {
         qWarning() << QStringLiteral("[Nv12Render_Dxva2] Missing required resources!");
+        cleanup();
         return false;
     }
 
@@ -95,6 +112,7 @@ bool Nv12Render_Dxva2::initInteropsResource(const decoder_sdk::Frame &frame)
         textureDevice->QueryInterface(__uuidof(IDirect3DDevice9Ex), (void **)&textureDeviceEx);
     if (FAILED(hr)) {
         qWarning() << QStringLiteral("[Nv12Render_Dxva2] Unsupported device!");
+        cleanup();
         return false;
     }
 
@@ -104,18 +122,21 @@ bool Nv12Render_Dxva2::initInteropsResource(const decoder_sdk::Frame &frame)
             "currently in use; therefore, the D3D9 Resource needs to be reinitialized.");
         if (!initializeD3DResource(textureDeviceEx)) {
             qWarning() << QStringLiteral("[Nv12Render_Dxva2] Reinitialize D3D9 resource failed!");
+            cleanup();
             return false;
         }
     }
 
     if (!checkWGLInterop()) {
         qWarning() << QStringLiteral("[Nv12Render_Dxva2] Failed to initialize WGL interop!");
+        cleanup();
         return false;
     }
 
     if (!registerTextureWithOpenGL(frame.width(), frame.height())) {
         qWarning() << QStringLiteral(
             "[Nv12Render_Dxva2] Failed to register D3D texture to OpenGL texture!");
+        cleanup();
         return false;
     }
 
@@ -166,27 +187,42 @@ bool Nv12Render_Dxva2::renderFrame(const decoder_sdk::Frame &frame)
     return blitToCurrentFbo(frame.width(), frame.height());
 }
 
+void Nv12Render_Dxva2::cleanupAllResources()
+{
+    cleanup();
+}
+
 bool Nv12Render_Dxva2::initializeD3DResource(const ComPtr<IDirect3DDevice9Ex> &d3d9Device,
                                              const wgl::WglDeviceRef &wglDevice)
 {
-    d3d9Device_ = d3d9Device;
-
-    if (!d3d9Device_.Get()) {
+    if (!d3d9Device.Get()) {
         qWarning() << QStringLiteral("[Nv12Render_Dxva2] Can not get D3D9 Device!");
         return false;
     }
 
-    // 如果传入的wgl设备有效，就使用传入的设备，否则使用d3d11 device新建
+    wgl::WglDeviceRef newWglDevice;
     if (wglDevice.isValid()) {
-        wglD3DDevice_ = wglDevice;
+        newWglDevice = wglDevice;
     } else {
-        wglD3DDevice_ = wgl::WglDeviceRef(d3d9Device_.Get());
+        newWglDevice = wgl::WglDeviceRef(d3d9Device.Get());
     }
 
-    if (!wglD3DDevice_.isValid()) {
+    if (!newWglDevice.isValid()) {
         qWarning() << QStringLiteral("[Nv12Render_Dxva2] Can not get wgl Device!");
         return false;
     }
+
+    if (wglTextureHandle_ && !unregisterWglTexture(wglD3DDevice_, wglTextureHandle_)) {
+        qWarning() << QStringLiteral(
+            "[Nv12Render_Dxva2] Failed to unregister WGL object before switching device!");
+        return false;
+    }
+
+    rgbRenderTarget_.Reset();
+    sharedHandle_ = nullptr;
+
+    d3d9Device_ = d3d9Device;
+    wglD3DDevice_ = newWglDevice;
 
     return true;
 }
@@ -208,10 +244,9 @@ bool Nv12Render_Dxva2::checkWGLInterop()
 
 void Nv12Render_Dxva2::cleanup()
 {
-    if (wglTextureHandle_ && wglD3DDevice_.isValid()) {
-        wglD3DDevice_.wglDXUnlockObjectsNV(1, &wglTextureHandle_);
-        wglD3DDevice_.wglDXUnregisterObjectNV(wglTextureHandle_);
-        wglTextureHandle_ = nullptr;
+    if (wglTextureHandle_ && !unregisterWglTexture(wglD3DDevice_, wglTextureHandle_) &&
+        wglD3DDevice_.isValid()) {
+        qWarning() << QStringLiteral("[Nv12Render_Dxva2] Failed to unregister WGL object!");
     }
 
     if (sharedTexture_) {
@@ -227,11 +262,16 @@ void Nv12Render_Dxva2::cleanup()
     if (rgbRenderTarget_) {
         rgbRenderTarget_.Reset();
     }
+    sharedHandle_ = nullptr;
 }
 
 bool Nv12Render_Dxva2::createRgbRenderTarget()
 {
-    // 创建OpenGL纹理
+    if (sharedTexture_) {
+        glDeleteTextures(1, &sharedTexture_);
+        sharedTexture_ = 0;
+    }
+
     glGenTextures(1, &sharedTexture_);
     glBindTexture(GL_TEXTURE_2D, sharedTexture_);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
@@ -273,7 +313,7 @@ bool Nv12Render_Dxva2::convertNv12ToRgbStretchRect(LPDIRECT3DSURFACE9 nv12Surfac
     };
 
     // 设置目标矩形（输出纹理区域）
-    RECT destRect = { 0, 0, static_cast<LONG>(frame.width()), static_cast<LONG>(frame.height()) };
+    RECT destRect = {0, 0, static_cast<LONG>(frame.width()), static_cast<LONG>(frame.height())};
 
     // 使用StretchRect进行格式转换和拷贝
     // 注意：这个方法依赖于D3D9驱动程序的内部转换能力
@@ -299,13 +339,15 @@ bool Nv12Render_Dxva2::registerTextureWithOpenGL(int width, int height)
         return false;
     }
 
-    // 清理之前的资源
-    if (rgbRenderTarget_) {
-        rgbRenderTarget_.Reset();
-        sharedHandle_ = nullptr;
+    if (wglTextureHandle_ && !unregisterWglTexture(wglD3DDevice_, wglTextureHandle_)) {
+        qWarning() << QStringLiteral(
+            "[Nv12Render_Dxva2] Failed to unregister previous WGL object!");
+        return false;
     }
 
-    // 创建输出纹理
+    rgbRenderTarget_.Reset();
+    sharedHandle_ = nullptr;
+
     const HRESULT hr = d3d9Device_->CreateRenderTarget(width, height,
                                                        D3DFMT_X8R8G8B8,     // OpenGL 兼容的格式
                                                        D3DMULTISAMPLE_NONE, // 无多重采样
@@ -319,20 +361,24 @@ bool Nv12Render_Dxva2::registerTextureWithOpenGL(int width, int height)
         qWarning() << QStringLiteral(
                           "[Nv12Render_Dxva2] Failed to create RGB render target, HRESULT:")
                    << Qt::hex << hr;
+        rgbRenderTarget_.Reset();
+        sharedHandle_ = nullptr;
         return false;
     }
 
     if (!sharedHandle_) {
         qWarning() << QStringLiteral("[Nv12Render_Dxva2] Shared handle is null!");
+        rgbRenderTarget_.Reset();
         return false;
     }
 
     if (!wglD3DDevice_.isValid() || !rgbRenderTarget_) {
         qWarning() << "[Nv12Render_Dxva2] Missing resources for OpenGL registration!";
+        rgbRenderTarget_.Reset();
+        sharedHandle_ = nullptr;
         return false;
     }
 
-    // 设置共享句柄
     if (sharedHandle_ &&
         !wgl::wglDXSetResourceShareHandleNV(rgbRenderTarget_.Get(), sharedHandle_)) {
         DWORD error = GetLastError();
@@ -341,10 +387,11 @@ bool Nv12Render_Dxva2::registerTextureWithOpenGL(int width, int height)
                           "surface, error:")
                    << error;
 
+        rgbRenderTarget_.Reset();
+        sharedHandle_ = nullptr;
         return false;
     }
 
-    // 注册RGB渲染目标表面
     glBindTexture(GL_TEXTURE_2D, sharedTexture_);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
     glBindTexture(GL_TEXTURE_2D, 0);
@@ -356,6 +403,8 @@ bool Nv12Render_Dxva2::registerTextureWithOpenGL(int width, int height)
         qWarning() << QStringLiteral("[Nv12Render_Dxva2] Failed to register texture, error:")
                    << error;
 
+        rgbRenderTarget_.Reset();
+        sharedHandle_ = nullptr;
         return false;
     }
     wglD3DDevice_.wglDXLockObjectsNV(1, &wglTextureHandle_);

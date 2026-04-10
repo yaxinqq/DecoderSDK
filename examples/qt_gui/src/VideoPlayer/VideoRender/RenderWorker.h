@@ -38,37 +38,90 @@ public:
     qreal volume() const;
 
 signals:
-    void textureReady(const QWeakPointer<VideoRender> &render, double pts);
+    void textureReady(const QWeakPointer<VideoRender> &render,
+                      const Stream::VideoFrameParam &videoFrameParam);
 
 public slots:
-    void render(const std::shared_ptr<decoder_sdk::Frame> &frame);
+    void render(const std::shared_ptr<decoder_sdk::Frame> &frame,
+                const Stream::VideoProcessParam &processParam);
     void prepareStop();
     void preparePause();
     void preparePlaying();
 
 private:
+    /**
+     * @brief 渲染音频
+     *
+     * @param audioFrame 音频帧
+     */
     void renderAudio(const std::shared_ptr<decoder_sdk::Frame> &audioFrame);
-    void renderVideo(const std::shared_ptr<decoder_sdk::Frame> &videoFrame);
+    /**
+     * @brief 渲染视频
+     *
+     * @param videoFrame 视频帧
+     * @param processParam 视频处理参数
+     */
+    void renderVideo(const std::shared_ptr<decoder_sdk::Frame> &videoFrame,
+                     const Stream::VideoProcessParam &processParam);
 
-    // 根据像素格式创建对应的渲染器
+    /**
+     * @brief 处理视频帧中的SEI数据
+     *
+     * @param videoFrame 视频帧
+     */
+    void handleFrameSEI(const std::shared_ptr<decoder_sdk::Frame> &videoFrame);
+
+    /**
+     * @brief 创建视频渲染器
+     *
+     * @param videoFrame 视频帧
+     * @return QSharedPointer<VideoRender> 视频渲染器
+     */
     QSharedPointer<VideoRender> createRenderer(
         const std::shared_ptr<decoder_sdk::Frame> &videoFrame);
 
+    /**
+     * @brief 确保上下文已是当前上下文
+     *
+     * @return true 成功
+     */
+    bool ensureContextCurrent();
+    /**
+     * @brief 释放当前上下文
+     */
+    void releaseContextCurrent();
+
+    /**
+     * @brief 停止并释放音频渲染器
+     */
+    void stopAndReleaseAudioRender();
+
+    /**
+     * @brief 释放视频渲染器
+     */
+    void releaseVideoRender();
+
 private:
-    QSharedPointer<VideoRender> render_;
+    // 渲染表面
     QSurface *surface_;
+    // 渲染上下文
     QOpenGLContext *context_;
 
-    int renderWidth_ = 0;
-    int renderHeight_ = 0;
+    // 视频部分
+    // 视频渲染器
+    QSharedPointer<VideoRender> render_;
+    // 视频帧参数（最终结果，会考虑裁剪拼接）
+    Stream::VideoFrameParam videoFrameParam_;
+    // 视频帧原始宽度
+    int frameOriginWidth_ = 0;
+    // 视频帧原始高度
+    int frameOriginHeight_ = 0;
+    // 视频帧图像格式
     decoder_sdk::ImageFormat currentPixelFormat_ = decoder_sdk::ImageFormat::kUnknown;
 
-    // 是否准备好渲染，当播放器暂停时，该状态为false
-    std::atomic<bool> readyRender_;
-
     // 音频部分
+    // 音频渲染器
     std::unique_ptr<AudioRender> audioRender_;
-
     // 音频参数缓存，用于判断是否需要重新初始化
     int audioSampleRate_ = 0;
     int audioChannels_ = 0;

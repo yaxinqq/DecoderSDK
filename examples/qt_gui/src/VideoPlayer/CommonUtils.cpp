@@ -90,6 +90,9 @@ void registerVideoMetaType()
     qRegisterMetaType<std::shared_ptr<decoder_sdk::EventArgs>>(
         "std::shared_ptr<decoder_sdk::EventArgs>");
     qRegisterMetaType<decoder_sdk::EventType>("decoder_sdk::EventType");
+
+    qRegisterMetaType<Stream::VideoProcessParam>("Stream::VideoProcessParam");
+    qRegisterMetaType<Stream::VideoFrameParam>("Stream::VideoFrameParam");
 }
 
 QString getCurrentGLRenderer()

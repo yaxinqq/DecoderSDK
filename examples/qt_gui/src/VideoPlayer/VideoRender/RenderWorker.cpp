@@ -36,27 +36,25 @@
 RenderWorker::RenderWorker(QSurface *surface, QOpenGLContext *context, QObject *parent)
     : QObject(parent), surface_(surface)
 {
-    readyRender_.store(false);
-
+    // 外部已保证context是有效值
     context_ = new QOpenGLContext(this);
     context_->setFormat(context->format());
     context_->setShareContext(context);
-    context_->create();
+    if (!context_->create()) {
+        qWarning() << "[RenderWorker] Failed to create OpenGL context.";
+    }
 }
 
 RenderWorker::~RenderWorker()
 {
-    if (render_) {
-        context_->makeCurrent(surface_);
-        render_.reset(nullptr);
-    }
+    // 释放视频渲染器
+    releaseVideoRender();
 
-    if (audioRender_) {
-        audioRender_->stop();
-        audioRender_.reset(nullptr);
-    }
+    // 停止并释放音频渲染器
+    stopAndReleaseAudioRender();
 
-    context_->doneCurrent();
+    // 释放当前上下文
+    releaseContextCurrent();
 }
 
 void RenderWorker::setVolume(qreal volume)
@@ -72,7 +70,8 @@ qreal RenderWorker::volume() const
     return audioRender_ ? audioRender_->volume() : 0.0;
 }
 
-void RenderWorker::render(const std::shared_ptr<decoder_sdk::Frame> &frame)
+void RenderWorker::render(const std::shared_ptr<decoder_sdk::Frame> &frame,
+                          const Stream::VideoProcessParam &processParam)
 {
     if (!frame || !frame->isValid())
         return;
@@ -84,7 +83,7 @@ void RenderWorker::render(const std::shared_ptr<decoder_sdk::Frame> &frame)
             // qInfo() << "Audio Pts: " << frame->secPts();
             break;
         case decoder_sdk::MediaType::kVideo:
-            renderVideo(frame);
+            renderVideo(frame, processParam);
             // qInfo() << "Video Pts: " << frame->secPts();
             break;
         default:
@@ -95,34 +94,32 @@ void RenderWorker::render(const std::shared_ptr<decoder_sdk::Frame> &frame)
 
 void RenderWorker::prepareStop()
 {
-    if (render_) {
-        render_.reset(nullptr);
-        context_->doneCurrent();
-    }
-    if (audioRender_) {
-        audioRender_.reset(nullptr);
-    }
+    // 释放视频渲染器
+    releaseVideoRender();
 
-    currentPixelFormat_ = decoder_sdk::ImageFormat::kUnknown;
-    readyRender_.store(false);
+    // 停止并释放音频渲染器
+    stopAndReleaseAudioRender();
+
+    // 释放当前上下文
+    releaseContextCurrent();
 }
 
 void RenderWorker::preparePause()
 {
+    // 视频渲染器只保留必要的资源
     if (render_) {
-        render_.reset(nullptr);
-    }
-    if (audioRender_) {
-        audioRender_.reset(nullptr);
+        if (ensureContextCurrent()) {
+            render_->uninitialize();
+        }
     }
 
-    currentPixelFormat_ = decoder_sdk::ImageFormat::kUnknown;
-    readyRender_.store(false);
+    // 停止并释放音频渲染器
+    stopAndReleaseAudioRender();
 }
 
 void RenderWorker::preparePlaying()
 {
-    readyRender_.store(true);
+    // do nothing
 }
 
 void RenderWorker::renderAudio(const std::shared_ptr<decoder_sdk::Frame> &audioFrame)
@@ -147,10 +144,7 @@ void RenderWorker::renderAudio(const std::shared_ptr<decoder_sdk::Frame> &audioF
     }
 
     if (needRecreateAudioRenderer) {
-        if (audioRender_) {
-            // 停止旧的音频渲染
-            audioRender_->stop();
-        }
+        stopAndReleaseAudioRender();
 
         // 初始化
         audioRender_.reset(new AudioRender);
@@ -172,10 +166,16 @@ void RenderWorker::renderAudio(const std::shared_ptr<decoder_sdk::Frame> &audioF
     }
 }
 
-void RenderWorker::renderVideo(const std::shared_ptr<decoder_sdk::Frame> &videoFrame)
+void RenderWorker::renderVideo(const std::shared_ptr<decoder_sdk::Frame> &videoFrame,
+                               const Stream::VideoProcessParam &processParam)
 {
     if (!videoFrame || !videoFrame->isValid() ||
         videoFrame->mediaType() != decoder_sdk::MediaType::kVideo) {
+        return;
+    }
+
+    // 确保上下文是当前上下文
+    if (!ensureContextCurrent()) {
         return;
     }
 
@@ -188,7 +188,7 @@ void RenderWorker::renderVideo(const std::shared_ptr<decoder_sdk::Frame> &videoF
 
     if (!render_ || render_->shouldRebuild()) {
         needRecreateRenderer = true;
-    } else if (renderWidth_ != width || renderHeight_ != height) {
+    } else if (frameOriginWidth_ != width || frameOriginHeight_ != height) {
         needRecreateRenderer = true;
     } else if (currentPixelFormat_ != pixelFormat) {
         // 像素格式改变，需要重新创建渲染器
@@ -196,9 +196,6 @@ void RenderWorker::renderVideo(const std::shared_ptr<decoder_sdk::Frame> &videoF
     }
 
     if (needRecreateRenderer) {
-        context_->makeCurrent(surface_);
-
-        // 释放旧的渲染器
         if (render_) {
             render_.reset();
         }
@@ -206,9 +203,8 @@ void RenderWorker::renderVideo(const std::shared_ptr<decoder_sdk::Frame> &videoF
         // 根据像素格式创建新的渲染器
         render_ = createRenderer(videoFrame);
         if (render_) {
-            render_->initialize(videoFrame);
-            renderWidth_ = width;
-            renderHeight_ = height;
+            frameOriginWidth_ = videoFrame->width();
+            frameOriginHeight_ = videoFrame->height();
             currentPixelFormat_ = pixelFormat;
         } else {
             qWarning() << "[RenderWorker] Failed to create video renderer for pixel format:"
@@ -218,8 +214,28 @@ void RenderWorker::renderVideo(const std::shared_ptr<decoder_sdk::Frame> &videoF
     }
 
     if (render_) {
-        render_->render(videoFrame);
-        emit textureReady(render_, videoFrame->secPts());
+        // 未初始化时，进行初始化
+        if (!render_->isInitialized()) {
+            render_->initialize(videoFrame, processParam);
+        }
+
+        // 处理SEI数据
+        handleFrameSEI(videoFrame);
+        render_->render(videoFrame, &videoFrameParam_);
+        emit textureReady(render_, videoFrameParam_);
+    }
+}
+
+void RenderWorker::handleFrameSEI(const std::shared_ptr<decoder_sdk::Frame> &videoFrame)
+{
+    // 如果不是关键帧，则不处理
+    if (videoFrame->keyFrame() != 1)
+        return;
+
+    // 遍历UUID，如果未找到对应的，也不进行处理
+    const auto &seiDataList = videoFrame->userSEIDataList();
+    for (int i = 0; i < seiDataList.size(); ++i) {
+        // do something
     }
 }
 
@@ -279,4 +295,49 @@ QSharedPointer<VideoRender> RenderWorker::createRenderer(
             // 对于软解格式，使用软解渲染器作为默认选择
             return QSharedPointer<VideoRender>(new SoftwareRender);
     }
+}
+
+bool RenderWorker::ensureContextCurrent()
+{
+    if (QOpenGLContext::currentContext() == context_) {
+        return true;
+    }
+    if (!context_->makeCurrent(surface_)) {
+        qWarning() << QStringLiteral("[RenderWorker] Failed to make OpenGL context current.");
+        return false;
+    }
+    return true;
+}
+
+void RenderWorker::releaseContextCurrent()
+{
+    if (context_ && QOpenGLContext::currentContext() == context_) {
+        context_->doneCurrent();
+    }
+}
+
+void RenderWorker::stopAndReleaseAudioRender()
+{
+    if (audioRender_) {
+        audioRender_->stop();
+        audioRender_.reset(nullptr);
+    }
+    audioSampleRate_ = 0;
+    audioChannels_ = 0;
+    audioSampleFormat_ = decoder_sdk::AudioSampleFormat::kUnknown;
+}
+
+void RenderWorker::releaseVideoRender()
+{
+    // 释放视频渲染器
+    if (render_) {
+        // 确保上下文是当前上下文
+        if (ensureContextCurrent()) {
+            render_.reset(nullptr);
+        }
+    }
+
+    currentPixelFormat_ = decoder_sdk::ImageFormat::kUnknown;
+    frameOriginWidth_ = 0;
+    frameOriginHeight_ = 0;
 }

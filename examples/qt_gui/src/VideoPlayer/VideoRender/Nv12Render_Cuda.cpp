@@ -8,7 +8,7 @@
 #include "../CommonUtils.h"
 
 namespace {
-    const char *vsrc = R"(
+const char *vsrc = R"(
 #ifdef GL_ES
     precision mediump float;
 #endif
@@ -23,7 +23,7 @@ namespace {
 	}
 )";
 
-    const char *fsrc = R"(
+const char *fsrc = R"(
 #ifdef GL_ES
     precision mediump float;
 #endif
@@ -71,37 +71,19 @@ inline bool check(CUresult e, int iLine, const char *szFile)
 
 #define ck(call) check(call, __LINE__, __FILE__)
 
-Nv12Render_Cuda::Nv12Render_Cuda()
-    : VideoRender()
-    , context_(cuda_utils::getCudaContext())
+Nv12Render_Cuda::Nv12Render_Cuda() : VideoRender(), context_(cuda_utils::getCudaContext())
 {
     cuda_utils::cuCtxSetCurrent(context_);
 }
 
 Nv12Render_Cuda::~Nv12Render_Cuda()
 {
-    if (!resourceYRegisteredFailed_) {
-        ck(cuda_utils::cuGraphicsUnmapResources(1, &resourceY_, copyYStream_));
-        ck(cuda_utils::cuGraphicsUnregisterResource(resourceY_));
-    }
-    if (!resourceUVRegisteredFailed_) {
-        ck(cuda_utils::cuGraphicsUnmapResources(1, &resourceUV_, copyUVStream_));
-        ck(cuda_utils::cuGraphicsUnregisterResource(resourceUV_));
-    }
-
-    if (copyYStream_)
-        ck(cuda_utils::cuStreamDestroy(copyYStream_));
-    if (copyUVStream_)
-        ck(cuda_utils::cuStreamDestroy(copyUVStream_));
-
+    cleanupCudaResource();
     if (context_) {
         ck(cuda_utils::cuDevicePrimaryCtxRelease(cuda_utils::getCudaDevice()));
     }
 
-    vbo_.destroy();
-    for (auto *id : { &idY_, &idUV_ }) {
-        glDeleteTextures(1, id);
-    }
+    cleanupOpenGLResource();
 }
 
 QString Nv12Render_Cuda::renderName() const
@@ -161,33 +143,54 @@ bool Nv12Render_Cuda::initRenderTexture(const decoder_sdk::Frame &frame)
 
 bool Nv12Render_Cuda::initInteropsResource(const decoder_sdk::Frame &frame)
 {
+    Q_UNUSED(frame);
+
     if (!ck(cuda_utils::cuGraphicsGLRegisterImage(&resourceY_, idY_, GL_TEXTURE_2D,
                                                   CU_GRAPHICS_REGISTER_FLAGS_WRITE_DISCARD))) {
-        resourceYRegisteredFailed_ = true;
+        cleanupCudaResource();
         return false;
     }
     if (!ck(cuda_utils::cuGraphicsGLRegisterImage(&resourceUV_, idUV_, GL_TEXTURE_2D,
                                                   CU_GRAPHICS_REGISTER_FLAGS_WRITE_DISCARD))) {
-        resourceUVRegisteredFailed_ = true;
+        cleanupCudaResource();
         return false;
     }
 
-    ck(cuda_utils::cuStreamCreate(&copyYStream_, 1));
-    ck(cuda_utils::cuStreamCreate(&copyUVStream_, 1));
+    if (!ck(cuda_utils::cuStreamCreate(&copyYStream_, 1))) {
+        cleanupCudaResource();
+        return false;
+    }
+    if (!ck(cuda_utils::cuStreamCreate(&copyUVStream_, 1))) {
+        cleanupCudaResource();
+        return false;
+    }
 
-    // 资源映射，只映射一次，不再重复映射
-    ck(cuda_utils::cuGraphicsMapResources(1, &resourceY_, 0));
-    ck(cuda_utils::cuGraphicsSubResourceGetMappedArray(&cudaArrayY_, resourceY_, 0, 0));
+    if (!ck(cuda_utils::cuGraphicsMapResources(1, &resourceY_, copyYStream_))) {
+        cleanupCudaResource();
+        return false;
+    }
+    resourceYMapped_ = true;
+    if (!ck(cuda_utils::cuGraphicsSubResourceGetMappedArray(&cudaArrayY_, resourceY_, 0, 0))) {
+        cleanupCudaResource();
+        return false;
+    }
 
-    ck(cuda_utils::cuGraphicsMapResources(1, &resourceUV_, 0));
-    ck(cuda_utils::cuGraphicsSubResourceGetMappedArray(&cudaArrayUV_, resourceUV_, 0, 0));
+    if (!ck(cuda_utils::cuGraphicsMapResources(1, &resourceUV_, copyUVStream_))) {
+        cleanupCudaResource();
+        return false;
+    }
+    resourceUVMapped_ = true;
+    if (!ck(cuda_utils::cuGraphicsSubResourceGetMappedArray(&cudaArrayUV_, resourceUV_, 0, 0))) {
+        cleanupCudaResource();
+        return false;
+    }
 
     return true;
 }
 
 bool Nv12Render_Cuda::renderFrame(const decoder_sdk::Frame &frame)
 {
-    if (resourceYRegisteredFailed_ || resourceUVRegisteredFailed_ || !copyYStream_ ||
+    if (!resourceY_ || !resourceUV_ || !cudaArrayY_ || !cudaArrayUV_ || !copyYStream_ ||
         !copyUVStream_)
         return false;
 
@@ -196,7 +199,7 @@ bool Nv12Render_Cuda::renderFrame(const decoder_sdk::Frame &frame)
     }
 
     // Y通道处理
-    CUDA_MEMCPY2D mY = { 0 };
+    CUDA_MEMCPY2D mY = {0};
     mY.srcMemoryType = CU_MEMORYTYPE_DEVICE;
     mY.srcDevice = reinterpret_cast<CUdeviceptr>(frame.data(0));
     mY.srcPitch = frame.linesize(0);
@@ -207,7 +210,7 @@ bool Nv12Render_Cuda::renderFrame(const decoder_sdk::Frame &frame)
     ck(cuda_utils::cuMemcpy2DAsync(&mY, copyYStream_));
 
     // UV 通道处理
-    CUDA_MEMCPY2D mUV = { 0 };
+    CUDA_MEMCPY2D mUV = {0};
     mUV.srcMemoryType = CU_MEMORYTYPE_DEVICE;
     mUV.srcDevice = reinterpret_cast<CUdeviceptr>(frame.data(1));
     mUV.srcPitch = frame.linesize(1);
@@ -264,6 +267,12 @@ bool Nv12Render_Cuda::renderFrame(const decoder_sdk::Frame &frame)
     return true;
 }
 
+void Nv12Render_Cuda::cleanupAllResources()
+{
+    cleanupCudaResource();
+    cleanupOpenGLResource();
+}
+
 void Nv12Render_Cuda::drawFrame(GLuint idY, GLuint idUV)
 {
     program_.bind();
@@ -286,6 +295,57 @@ void Nv12Render_Cuda::drawFrame(GLuint idY, GLuint idUV)
     program_.disableAttributeArray("textureIn");
     vbo_.release();
     program_.release();
+}
+
+void Nv12Render_Cuda::cleanupCudaResource()
+{
+    // 唤醒阻塞的条件变量
+    copyYSucced_.store(true);
+    copyUVSucced_.store(true);
+    conditional_.notify_all();
+
+    // 销毁
+    if (resourceY_) {
+        if (resourceYMapped_) {
+            ck(cuda_utils::cuGraphicsUnmapResources(1, &resourceY_, copyYStream_));
+            resourceYMapped_ = false;
+        }
+        ck(cuda_utils::cuGraphicsUnregisterResource(resourceY_));
+        resourceY_ = nullptr;
+    }
+    if (resourceUV_) {
+        if (resourceUVMapped_) {
+            ck(cuda_utils::cuGraphicsUnmapResources(1, &resourceUV_, copyUVStream_));
+            resourceUVMapped_ = false;
+        }
+        ck(cuda_utils::cuGraphicsUnregisterResource(resourceUV_));
+        resourceUV_ = nullptr;
+    }
+    cudaArrayY_ = nullptr;
+    cudaArrayUV_ = nullptr;
+
+    if (copyYStream_) {
+        ck(cuda_utils::cuStreamDestroy(copyYStream_));
+        copyYStream_ = nullptr;
+    }
+    if (copyUVStream_) {
+        ck(cuda_utils::cuStreamDestroy(copyUVStream_));
+        copyUVStream_ = nullptr;
+    }
+
+    // 重置条件
+    copyYSucced_.store(false);
+    copyUVSucced_.store(false);
+}
+
+void Nv12Render_Cuda::cleanupOpenGLResource()
+{
+    vbo_.destroy();
+    for (auto *id : {&idY_, &idUV_}) {
+        glDeleteTextures(1, id);
+        *id = 0;
+    }
+    program_.removeAllShaders();
 }
 
 #endif

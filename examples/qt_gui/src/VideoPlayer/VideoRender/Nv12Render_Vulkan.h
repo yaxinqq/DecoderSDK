@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #ifdef VULKAN_AVAILABLE
 
 #include "CommonUtils.h"
@@ -51,6 +51,11 @@ protected:
      * @param frame 视频帧
      */
     bool renderFrame(const decoder_sdk::Frame &frame) override;
+
+    /**
+     * @brief 清理所有相关的资源（特定API资源 + 对应的OpenGL资源）
+     */
+    void cleanupAllResources() override;
 
 private:
     /**

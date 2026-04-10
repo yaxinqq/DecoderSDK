@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #ifdef VAAPI_AVAILABLE
 
 #include "VideoRender.h"
@@ -60,6 +60,11 @@ protected:
      */
     void cleanupRenderResources() override;
 
+    /**
+     * @brief 清理所有相关的资源（特定API资源 + 对应的OpenGL资源）
+     */
+    void cleanupAllResources() override;
+
 private:
     /*
      * @brief 绘制视频帧
@@ -73,6 +78,11 @@ private:
      * @brief 清理EGL资源
      */
     void cleanupEGLTextures();
+
+    /**
+     * @brief 清理所有资源
+     */
+    void cleanup();
 
 private:
     // EGL图像相关资源

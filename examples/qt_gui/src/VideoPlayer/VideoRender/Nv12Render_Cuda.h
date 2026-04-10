@@ -56,6 +56,11 @@ protected:
      */
     bool renderFrame(const decoder_sdk::Frame &frame) override;
 
+    /**
+     * @brief 清理所有相关的资源（特定API资源 + 对应的OpenGL资源）
+     */
+    void cleanupAllResources() override;
+
 private:
     /*
      * @brief 绘制视频帧
@@ -64,6 +69,15 @@ private:
      * @param idUV UV纹理
      */
     void drawFrame(GLuint idY, GLuint idUV);
+
+    /**
+     * @brief 清除互操作资源
+     */
+    void cleanupCudaResource();
+    /**
+     * @brief 清除OpenGL资源
+     */
+    void cleanupOpenGLResource();
 
 private:
     // CUDA流同步
@@ -86,9 +100,9 @@ private:
     CUarray cudaArrayY_ = nullptr;
     CUarray cudaArrayUV_ = nullptr;
 
-    // 资源映射是否成功
-    bool resourceYRegisteredFailed_ = false;
-    bool resourceUVRegisteredFailed_ = false;
+    // 资源是否已映射到OpenGL上下文
+    bool resourceYMapped_ = false;
+    bool resourceUVMapped_ = false;
 
     // OpenGL的相关对象
     QOpenGLShaderProgram program_;
