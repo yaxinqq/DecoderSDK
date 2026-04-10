@@ -79,6 +79,44 @@ public:
      */
     QRectF digitalZoomRect() const;
 
+    /**
+     * @brief 设置是否水平翻转
+     *
+     * @param flip 是否水平翻转
+     */
+    void setHorizontalFlip(bool flip);
+    /**
+     * @brief 是否水平翻转
+     *
+     * @return 是否水平翻转
+     */
+    bool isHorizontalFlip() const;
+    /**
+     * @brief 设置是否垂直翻转
+     *
+     * @param flip 是否垂直翻转
+     */
+    void setVecticalFlip(bool flip);
+    /**
+     * @brief 是否垂直翻转
+     *
+     * @return 是否垂直翻转
+     */
+    bool isVecticalFlip() const;
+    /**
+     * @brief 设置是否水平、垂直翻转
+     *
+     * @param hFlip 是否水平翻转
+     * @param vFlip 是否垂直翻转
+     */
+    void setHorizontalAndVecticalFlip(bool hflip, bool vflip);
+    /**
+     * @brief 是否水平翻转
+     *
+     * @return 是否水平翻转
+     */
+    QPair<bool, bool> isHorizontalAndVecticalFlip() const;
+
 protected:
     /**
      * @brief 初始化VBO
@@ -165,6 +203,15 @@ private:
      */
     QVector4D transToOpenGLUniform(const QRectF &rect, bool needTrans = true) const;
 
+    /**
+     * @brief 得到翻转参数
+     * 
+     * @param hFlip 是否水平翻转
+     * @param vFlip 是否垂直翻转
+     * @return 翻转向量（x：水平、y：垂直）
+     */
+    QVector2D getFlipParam(bool hFlip, bool vFlip) const;
+
 private:
     QMutex mtx_;
     QSharedPointer<QOpenGLFramebufferObject> curFbo_;
@@ -184,6 +231,10 @@ private:
 
     // 电子放大区域
     QRectF digitalZoomRect_;
+
+    // 画面是否水平、竖直翻转
+    bool horizontalFlip_ = false;
+    bool vecticalFlip_ = false;
 };
 
 #endif // VIDEORENDER_H

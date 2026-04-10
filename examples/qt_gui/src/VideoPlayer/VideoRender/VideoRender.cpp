@@ -13,9 +13,24 @@ const char *vsrc = R"(
         attribute vec4 position;
         attribute vec2 texCoord;
         varying vec2 vTexCoord;
+        
+        /*
+         * texFlip.x : horizontal flip (0 or 1)
+         * texFlip.y : vertical flip   (0 or 1)
+         */
+        uniform vec2 texFlip;
+
+        vec2 applyFlip(vec2 uv)
+        {
+            return mix(uv, 1.0 - uv, texFlip);
+        }
+
         void main() {
             gl_Position = position;
-            vTexCoord = texCoord;
+
+            vec2 uv = texCoord;
+            uv = applyFlip(uv);
+            vTexCoord = uv;            
         }
     )";
 
@@ -158,8 +173,9 @@ QSharedPointer<QOpenGLFramebufferObject> VideoRender::getFrameBuffer()
         return nullptr;
     }
 
-    // 使用blit进行深拷贝
-    QOpenGLFramebufferObject::blitFramebuffer(copyFbo.get(), curFbo_.get());
+    copyFbo->bind();
+    drawFbo(curFbo_);
+    copyFbo->release();
 
     return copyFbo;
 }
@@ -188,6 +204,55 @@ void VideoRender::setDigitalZoomRect(const QRectF &rect)
 QRectF VideoRender::digitalZoomRect() const
 {
     return digitalZoomRect_;
+}
+
+void VideoRender::setHorizontalFlip(bool flip)
+{
+    if (flip == horizontalFlip_)
+        return;
+
+    horizontalFlip_ = flip;
+    fboDrawProgram_.bind();
+    fboDrawProgram_.setUniformValue("texFlip", getFlipParam(horizontalFlip_, vecticalFlip_));
+    fboDrawProgram_.release();
+}
+
+bool VideoRender::isHorizontalFlip() const
+{
+    return horizontalFlip_;
+}
+
+void VideoRender::setVecticalFlip(bool flip)
+{
+    if (flip == vecticalFlip_)
+        return;
+
+    vecticalFlip_ = flip;
+    fboDrawProgram_.bind();
+    fboDrawProgram_.setUniformValue("texFlip", getFlipParam(horizontalFlip_, vecticalFlip_));
+    fboDrawProgram_.release();
+}
+
+bool VideoRender::isVecticalFlip() const
+{
+    return vecticalFlip_;
+}
+
+void VideoRender::setHorizontalAndVecticalFlip(bool hflip, bool vflip)
+{
+    if (horizontalFlip_ == hflip && vecticalFlip_ == vflip)
+        return;
+
+    horizontalFlip_ = hflip;
+    vecticalFlip_ = vflip;
+    fboDrawProgram_.bind();
+    fboDrawProgram_.setUniformValue("texFlip", getFlipParam(horizontalFlip_, vecticalFlip_));
+    fboDrawProgram_.release();
+}
+
+QPair<bool, bool> VideoRender::isHorizontalAndVecticalFlip() const
+{
+    return {horizontalFlip_, vecticalFlip_};
 }
 
 void VideoRender::initDefaultVBO(QOpenGLBuffer &vbo, const bool horizontal,
@@ -236,6 +301,7 @@ bool VideoRender::initializeFboDrawResources(const QSize &size)
     fboDrawProgram_.bind();
     fboDrawProgram_.setUniformValue("texture", 0);
     fboDrawProgram_.setUniformValue("zoomRect", transToOpenGLUniform(digitalZoomRect_));
+    fboDrawProgram_.setUniformValue("texFlip", getFlipParam(horizontalFlip_, vecticalFlip_));
     fboDrawProgram_.release();
 
     // 全屏quad的顶点数据（交错式布局）
@@ -290,4 +356,9 @@ QVector4D VideoRender::transToOpenGLUniform(const QRectF &rect, bool needTrans) 
 {
     return QVector4D(rect.x(), needTrans ? 1 - rect.y() - rect.height() : rect.y(), rect.width(),
                      rect.height());
+}
+
+QVector2D VideoRender::getFlipParam(bool hFlip, bool vFlip) const
+{
+    return QVector2D(hFlip ? 1.0f : 0.0f, vFlip ? 1.0f : 0.0f);
 }
