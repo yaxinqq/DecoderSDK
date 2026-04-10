@@ -304,6 +304,17 @@ bool Nv12Render_D3d11va::renderFrame(const decoder_sdk::Frame &frame)
 bool Nv12Render_D3d11va::initializeD3DResource(const ComPtr<ID3D11Device> &d3d11Device,
                                                const wgl::WglDeviceRef &wglDevice)
 {
+    d3d11Device5_.Reset();
+    d3d11Context4_.Reset();
+    executeFinishedFence_.Reset();
+    executeFinishedQuery_.Reset();
+    if (executeFenceEvent_) {
+        CloseHandle(executeFenceEvent_);
+        executeFenceEvent_ = nullptr;
+    }
+    executeFenceValue_ = 0;
+    useFenceSync_ = false;
+
     d3d11Device_ = d3d11Device;
 
     if (!d3d11Device_.Get()) {
@@ -361,7 +372,11 @@ bool Nv12Render_D3d11va::initializeNv12Converter()
         return false;
     }
 
-    if (nv12VertexShader_ && nv12PixelShader_ && p010PixelShader_ && nv12Sampler_ && texScaleCb_) {
+    const bool syncReady =
+        useFenceSync_ ? (d3d11Device5_ && d3d11Context4_ && executeFinishedFence_ && executeFenceEvent_)
+                      : (executeFinishedQuery_ != nullptr);
+    if (nv12VertexShader_ && nv12PixelShader_ && p010PixelShader_ && nv12Sampler_ && texScaleCb_ &&
+        syncReady) {
         return true;
     }
 
@@ -436,6 +451,63 @@ bool Nv12Render_D3d11va::initializeNv12Converter()
         return false;
     }
 
+    d3d11Device5_.Reset();
+    d3d11Context4_.Reset();
+    executeFinishedFence_.Reset();
+    executeFinishedQuery_.Reset();
+    if (executeFenceEvent_) {
+        CloseHandle(executeFenceEvent_);
+        executeFenceEvent_ = nullptr;
+    }
+    executeFenceValue_ = 0;
+    useFenceSync_ = false;
+
+    ComPtr<ID3D11Device5> device5;
+    ComPtr<ID3D11DeviceContext4> context4;
+    ComPtr<ID3D11Fence> fence;
+    HANDLE fenceEvent = nullptr;
+    bool fenceReady = false;
+
+    hr = d3d11Device_.As(&device5);
+    if (SUCCEEDED(hr) && device5) {
+        hr = d3d11Context_.As(&context4);
+        if (SUCCEEDED(hr) && context4) {
+            hr = device5->CreateFence(0, D3D11_FENCE_FLAG_NONE, __uuidof(ID3D11Fence),
+                                      reinterpret_cast<void **>(fence.GetAddressOf()));
+            if (SUCCEEDED(hr) && fence) {
+                fenceEvent = CreateEvent(nullptr, FALSE, FALSE, nullptr);
+                if (fenceEvent) {
+                    d3d11Device5_ = device5;
+                    d3d11Context4_ = context4;
+                    executeFinishedFence_ = fence;
+                    executeFenceEvent_ = fenceEvent;
+                    useFenceSync_ = true;
+                    fenceReady = true;
+                    qDebug() << QStringLiteral(
+                        "[Nv12Render_D3d11va] Synchronization using fence is ready.");
+                }
+            }
+        }
+    }
+
+    if (!fenceReady) {
+        if (fenceEvent) {
+            CloseHandle(fenceEvent);
+            fenceEvent = nullptr;
+        }
+
+        D3D11_QUERY_DESC queryDesc = {};
+        queryDesc.Query = D3D11_QUERY_EVENT;
+        queryDesc.MiscFlags = 0;
+        hr = d3d11Device_->CreateQuery(&queryDesc, &executeFinishedQuery_);
+        if (FAILED(hr) || !executeFinishedQuery_) {
+            qWarning() << QStringLiteral(
+                              "[Nv12Render_D3d11va] Neither fence nor query sync is available, HRESULT:")
+                       << Qt::hex << hr;
+            return false;
+        }
+    }
+
     return true;
 }
 
@@ -458,6 +530,16 @@ void Nv12Render_D3d11va::cleanup()
     inputCopyYSrv_.Reset();
     inputCopyUVSrv_.Reset();
     inputCopyTexture_.Reset();
+    executeFinishedFence_.Reset();
+    executeFinishedQuery_.Reset();
+    d3d11Context4_.Reset();
+    d3d11Device5_.Reset();
+    if (executeFenceEvent_) {
+        CloseHandle(executeFenceEvent_);
+        executeFenceEvent_ = nullptr;
+    }
+    executeFenceValue_ = 0;
+    useFenceSync_ = false;
 
     outputWidth_ = 0;
     outputHeight_ = 0;
@@ -886,6 +968,11 @@ bool Nv12Render_D3d11va::processNV12ToRGB(const decoder_sdk::Frame &frame)
         std::lock_guard<std::mutex> lock(g_d3d11ImmediateExecMutex);
         wglD3DDevice_.wglDXUnlockObjectsNV(1, &wglTextureHandle_);
         d3d11Context_->ExecuteCommandList(commandList.Get(), TRUE);
+        if (!waitForExecuteComplete()) {
+            qWarning() << QStringLiteral("[Nv12Render_D3d11va] Wait execute complete failed!");
+            wglD3DDevice_.wglDXLockObjectsNV(1, &wglTextureHandle_);
+            return false;
+        }
         wglD3DDevice_.wglDXLockObjectsNV(1, &wglTextureHandle_);
     }
 
@@ -945,6 +1032,55 @@ bool Nv12Render_D3d11va::registerTextureWithOpenGL(int width, int height)
     wglD3DDevice_.wglDXLockObjectsNV(1, &wglTextureHandle_);
 
     return true;
+}
+
+bool Nv12Render_D3d11va::waitForExecuteComplete()
+{
+    if (useFenceSync_) {
+        if (!d3d11Context4_ || !executeFinishedFence_ || !executeFenceEvent_) {
+            return false;
+        }
+
+        ++executeFenceValue_;
+        HRESULT hr = d3d11Context4_->Signal(executeFinishedFence_.Get(), executeFenceValue_);
+        if (FAILED(hr)) {
+            return false;
+        }
+
+        if (executeFinishedFence_->GetCompletedValue() >= executeFenceValue_) {
+            return true;
+        }
+
+        hr = executeFinishedFence_->SetEventOnCompletion(executeFenceValue_, executeFenceEvent_);
+        if (FAILED(hr)) {
+            return false;
+        }
+
+        return WaitForSingleObject(executeFenceEvent_, INFINITE) == WAIT_OBJECT_0;
+    }
+
+    if (!d3d11Context_ || !executeFinishedQuery_) {
+        return false;
+    }
+
+    d3d11Context_->End(executeFinishedQuery_.Get());
+    for (int i = 0; i < 20000; ++i) {
+        const HRESULT hr =
+            d3d11Context_->GetData(executeFinishedQuery_.Get(), nullptr, 0, D3D11_ASYNC_GETDATA_DONOTFLUSH);
+        if (hr == S_OK) {
+            return true;
+        }
+        if (hr != S_FALSE) {
+            return false;
+        }
+        if ((i % 100) == 0) {
+            Sleep(1);
+        } else {
+            Sleep(0);
+        }
+    }
+
+    return false;
 }
 
 #endif

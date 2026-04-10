@@ -123,6 +123,7 @@ void VideoRender::render(const std::shared_ptr<decoder_sdk::Frame> &frame)
     // 绑定FBO并让子类渲染到其中
     nextFbo_->bind();
     glViewport(0, 0, frame->width(), frame->height());
+    // clearGL();
     const bool success = renderFrame(*frame);
     nextFbo_->release();
 
@@ -147,7 +148,7 @@ void VideoRender::render(const std::shared_ptr<decoder_sdk::Frame> &frame)
     // 清理渲染资源
     cleanupRenderResources();
 
-    {
+    if (success) {
         QMutexLocker lock(&mtx_);
         std::swap(curFbo_, nextFbo_);
     }

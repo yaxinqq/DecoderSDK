@@ -12,6 +12,7 @@
 #define D3D11_1_INTERFACE_DEFINED
 #include <d3d11.h>
 #include <d3d11_1.h>
+#include <d3d11_4.h>
 #include <wrl/client.h>
 
 using Microsoft::WRL::ComPtr;
@@ -126,8 +127,7 @@ private:
      * @return 是否初始化成功
      */
     bool ensureInputShaderResources(ID3D11DeviceContext *cmdContext, ID3D11Texture2D *sourceTexture,
-                                    UINT arraySlice,
-                                    ComPtr<ID3D11ShaderResourceView> &outYSrv,
+                                    UINT arraySlice, ComPtr<ID3D11ShaderResourceView> &outYSrv,
                                     ComPtr<ID3D11ShaderResourceView> &outUVSrv);
 
     /**
@@ -153,6 +153,7 @@ private:
      * @param height 纹理高度
      */
     bool registerTextureWithOpenGL(int width, int height);
+    bool waitForExecuteComplete();
 
 private:
     // D3D11设备和上下文
@@ -165,6 +166,13 @@ private:
     ComPtr<ID3D11PixelShader> p010PixelShader_;
     ComPtr<ID3D11SamplerState> nv12Sampler_;
     ComPtr<ID3D11Buffer> texScaleCb_;
+    ComPtr<ID3D11Device5> d3d11Device5_;
+    ComPtr<ID3D11DeviceContext4> d3d11Context4_;
+    ComPtr<ID3D11Fence> executeFinishedFence_;
+    ComPtr<ID3D11Query> executeFinishedQuery_;
+    HANDLE executeFenceEvent_ = nullptr;
+    UINT64 executeFenceValue_ = 0;
+    bool useFenceSync_ = false;
 
     // WGL设备句柄
     wgl::WglDeviceRef wglD3DDevice_;
