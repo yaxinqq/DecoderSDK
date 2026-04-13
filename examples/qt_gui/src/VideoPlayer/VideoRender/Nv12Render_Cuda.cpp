@@ -156,31 +156,7 @@ bool Nv12Render_Cuda::initInteropsResource(const decoder_sdk::Frame &frame)
         return false;
     }
 
-    if (!ck(cuda_utils::cuStreamCreate(&copyYStream_, 1))) {
-        cleanupCudaResource();
-        return false;
-    }
-    if (!ck(cuda_utils::cuStreamCreate(&copyUVStream_, 1))) {
-        cleanupCudaResource();
-        return false;
-    }
-
-    if (!ck(cuda_utils::cuGraphicsMapResources(1, &resourceY_, copyYStream_))) {
-        cleanupCudaResource();
-        return false;
-    }
-    resourceYMapped_ = true;
-    if (!ck(cuda_utils::cuGraphicsSubResourceGetMappedArray(&cudaArrayY_, resourceY_, 0, 0))) {
-        cleanupCudaResource();
-        return false;
-    }
-
-    if (!ck(cuda_utils::cuGraphicsMapResources(1, &resourceUV_, copyUVStream_))) {
-        cleanupCudaResource();
-        return false;
-    }
-    resourceUVMapped_ = true;
-    if (!ck(cuda_utils::cuGraphicsSubResourceGetMappedArray(&cudaArrayUV_, resourceUV_, 0, 0))) {
+    if (!ck(cuda_utils::cuStreamCreate(&copyStream_, 1))) {
         cleanupCudaResource();
         return false;
     }
@@ -190,11 +166,15 @@ bool Nv12Render_Cuda::initInteropsResource(const decoder_sdk::Frame &frame)
 
 bool Nv12Render_Cuda::renderFrame(const decoder_sdk::Frame &frame)
 {
-    if (!resourceY_ || !resourceUV_ || !cudaArrayY_ || !cudaArrayUV_ || !copyYStream_ ||
-        !copyUVStream_)
+    if (!resourceY_ || !resourceUV_ || !copyStream_)
         return false;
 
     if (!frame.isValid()) {
+        return false;
+    }
+
+    // 资源映射
+    if (!mapCudaResource()) {
         return false;
     }
 
@@ -207,7 +187,10 @@ bool Nv12Render_Cuda::renderFrame(const decoder_sdk::Frame &frame)
     mY.dstArray = cudaArrayY_;
     mY.WidthInBytes = frame.width();
     mY.Height = frame.height();
-    ck(cuda_utils::cuMemcpy2DAsync(&mY, copyYStream_));
+    if (!ck(cuda_utils::cuMemcpy2DAsync(&mY, copyStream_))) {
+        unmapCudaResource();
+        return false;
+    }
 
     // UV 通道处理
     CUDA_MEMCPY2D mUV = {0};
@@ -218,49 +201,18 @@ bool Nv12Render_Cuda::renderFrame(const decoder_sdk::Frame &frame)
     mUV.dstArray = cudaArrayUV_;
     mUV.WidthInBytes = frame.width();
     mUV.Height = frame.height() >> 1;
-    ck(cuda_utils::cuMemcpy2DAsync(&mUV, copyUVStream_));
-
-    // 添加回调，等异步任务结束后，解除条件变量的等待
-    ck(cuda_utils::cuStreamAddCallback(
-        copyYStream_,
-        [](CUstream stream, CUresult result, void *userData) {
-            Nv12Render_Cuda *self = static_cast<Nv12Render_Cuda *>(userData);
-            if (!self)
-                return;
-
-            // 结束条件变量的等待
-            {
-                std::lock_guard<std::mutex> lock(self->conditionalMtx_);
-                self->copyYSucced_.store(true);
-                self->conditional_.notify_all();
-            }
-        },
-        this, 0));
-    ck(cuda_utils::cuStreamAddCallback(
-        copyUVStream_,
-        [](CUstream stream, CUresult result, void *userData) {
-            Nv12Render_Cuda *self = static_cast<Nv12Render_Cuda *>(userData);
-            if (!self)
-                return;
-
-            // 结束条件变量的等待
-            {
-                std::lock_guard<std::mutex> lock(self->conditionalMtx_);
-                self->copyUVSucced_.store(true);
-                self->conditional_.notify_all();
-            }
-        },
-        this, 0));
-
-    // 等待事件通知
-    {
-        std::unique_lock<std::mutex> l(conditionalMtx_);
-        conditional_.wait(l, [this]() { return copyYSucced_.load() && copyUVSucced_.load(); });
+    if (!ck(cuda_utils::cuMemcpy2DAsync(&mUV, copyStream_))) {
+        unmapCudaResource();
+        return false;
     }
 
-    // 重置事件状态
-    copyYSucced_.store(false);
-    copyUVSucced_.store(false);
+    // 显式同步，暂时注释。目前来看，似乎仅unmap就能保证资源的可用及完整
+    // cuda_utils::cuStreamSynchronize(copyStream_);
+
+    // 取消映射
+    if (!unmapCudaResource()) {
+        return false;
+    }
 
     // 绘制
     drawFrame(idY_, idUV_);
@@ -299,15 +251,10 @@ void Nv12Render_Cuda::drawFrame(GLuint idY, GLuint idUV)
 
 void Nv12Render_Cuda::cleanupCudaResource()
 {
-    // 唤醒阻塞的条件变量
-    copyYSucced_.store(true);
-    copyUVSucced_.store(true);
-    conditional_.notify_all();
-
     // 销毁
     if (resourceY_) {
         if (resourceYMapped_) {
-            ck(cuda_utils::cuGraphicsUnmapResources(1, &resourceY_, copyYStream_));
+            ck(cuda_utils::cuGraphicsUnmapResources(1, &resourceY_, copyStream_));
             resourceYMapped_ = false;
         }
         ck(cuda_utils::cuGraphicsUnregisterResource(resourceY_));
@@ -315,7 +262,7 @@ void Nv12Render_Cuda::cleanupCudaResource()
     }
     if (resourceUV_) {
         if (resourceUVMapped_) {
-            ck(cuda_utils::cuGraphicsUnmapResources(1, &resourceUV_, copyUVStream_));
+            ck(cuda_utils::cuGraphicsUnmapResources(1, &resourceUV_, copyStream_));
             resourceUVMapped_ = false;
         }
         ck(cuda_utils::cuGraphicsUnregisterResource(resourceUV_));
@@ -324,18 +271,10 @@ void Nv12Render_Cuda::cleanupCudaResource()
     cudaArrayY_ = nullptr;
     cudaArrayUV_ = nullptr;
 
-    if (copyYStream_) {
-        ck(cuda_utils::cuStreamDestroy(copyYStream_));
-        copyYStream_ = nullptr;
+    if (copyStream_) {
+        ck(cuda_utils::cuStreamDestroy(copyStream_));
+        copyStream_ = nullptr;
     }
-    if (copyUVStream_) {
-        ck(cuda_utils::cuStreamDestroy(copyUVStream_));
-        copyUVStream_ = nullptr;
-    }
-
-    // 重置条件
-    copyYSucced_.store(false);
-    copyUVSucced_.store(false);
 }
 
 void Nv12Render_Cuda::cleanupOpenGLResource()
@@ -346,6 +285,56 @@ void Nv12Render_Cuda::cleanupOpenGLResource()
         *id = 0;
     }
     program_.removeAllShaders();
+}
+
+bool Nv12Render_Cuda::mapCudaResource()
+{
+    // 资源映射
+    if (!ck(cuda_utils::cuGraphicsMapResources(1, &resourceY_, copyStream_))) {
+        unmapCudaResource();
+        return false;
+    }
+    resourceYMapped_ = true;
+    if (!ck(cuda_utils::cuGraphicsSubResourceGetMappedArray(&cudaArrayY_, resourceY_, 0, 0))) {
+        unmapCudaResource();
+        return false;
+    }
+
+    if (!ck(cuda_utils::cuGraphicsMapResources(1, &resourceUV_, copyStream_))) {
+        unmapCudaResource();
+        return false;
+    }
+    resourceUVMapped_ = true;
+    if (!ck(cuda_utils::cuGraphicsSubResourceGetMappedArray(&cudaArrayUV_, resourceUV_, 0, 0))) {
+        unmapCudaResource();
+        return false;
+    }
+
+    return true;
+}
+
+bool Nv12Render_Cuda::unmapCudaResource()
+{
+    // 取消映射
+    bool retY = true;
+    bool retUV = true;
+    if (resourceYMapped_ && resourceY_) {
+        if (ck(cuda_utils::cuGraphicsUnmapResources(1, &resourceY_, copyStream_))) {
+            resourceYMapped_ = false;
+        } else {
+            retY = false;
+        }
+    }
+
+    if (resourceUVMapped_ && resourceUV_) {
+        if (ck(cuda_utils::cuGraphicsUnmapResources(1, &resourceUV_, copyStream_))) {
+            resourceUVMapped_ = false;
+        } else {
+            retUV = false;
+        }
+    }
+
+    return retY && retUV;
 }
 
 #endif

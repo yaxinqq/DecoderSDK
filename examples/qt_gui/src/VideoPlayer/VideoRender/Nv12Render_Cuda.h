@@ -79,18 +79,23 @@ private:
      */
     void cleanupOpenGLResource();
 
+    /**
+     * @brief 映射CUDA资源
+     *
+     * @return 是否映射成功
+     */
+    bool mapCudaResource();
+    /**
+     * @brief 取消映射CUDA资源
+     *
+     * @return 是否取消映射成功
+     */
+    bool unmapCudaResource();
+
 private:
-    // CUDA流同步
-    std::condition_variable conditional_;
-    std::mutex conditionalMtx_;
-
-    std::atomic_bool copyYSucced_ = false;
-    std::atomic_bool copyUVSucced_ = false;
-
     // CUDA的上下文和流
     CUcontext context_ = nullptr;
-    CUstream copyYStream_ = nullptr;
-    CUstream copyUVStream_ = nullptr;
+    CUstream copyStream_ = nullptr;
 
     // CUDA的资源映射对象
     CUgraphicsResource resourceY_ = nullptr;

@@ -33,6 +33,7 @@ CUresult cuGraphicsUnmapResources(unsigned int count, CUgraphicsResource *resour
 CUresult cuGraphicsSubResourceGetMappedArray(CUarray *pArray, CUgraphicsResource resource,
                                              unsigned int arrayIndex, unsigned int mipLevel);
 CUresult cuMemcpy2DAsync(const CUDA_MEMCPY2D *pCopy, CUstream hStream);
+CUresult cuStreamSynchronize(CUstream hStream);
 CUresult cuDevicePrimaryCtxRelease(CUdevice dev);
 CUresult cuGetErrorString(CUresult error, const char **pStr);
 } // namespace cuda_utils
@@ -197,14 +198,18 @@ Native_T *getNativePackedSurface(amf::AMFSurface *pSurface, amf::AMF_MEMORY_TYPE
     return pNativeSurface;
 }
 
+#ifdef DXVA2_AVAILABLE
 inline IDirect3DSurface9 *getPackedSurfaceDX9(amf::AMFSurface *pSurface)
 {
     return getNativePackedSurface<IDirect3DSurface9>(pSurface, amf::AMF_MEMORY_DX9);
 }
+#endif
 
+#ifdef D3D11VA_AVAILABLE
 inline ID3D11Texture2D *getPackedSurfaceDX11(amf::AMFSurface *pSurface)
 {
     return getNativePackedSurface<ID3D11Texture2D>(pSurface, amf::AMF_MEMORY_DX11);
 }
+#endif
 } // namespace amf_utils
 #endif

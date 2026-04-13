@@ -150,6 +150,7 @@ typedef CUresult(CUDAAPI *PFN_cuGraphicsSubResourceGetMappedArray)(CUarray *pArr
                                                                    unsigned int arrayIndex,
                                                                    unsigned int mipLevel);
 typedef CUresult(CUDAAPI *PFN_cuMemcpy2DAsync)(const CUDA_MEMCPY2D *pCopy, CUstream hStream);
+typedef CUresult(CUDAAPI *PFN_cuStreamSynchronize)(CUstream hStream);
 typedef CUresult(CUDAAPI *PFN_cuGetErrorString)(CUresult error, const char **pStr);
 
 // CUDA 函数表
@@ -173,6 +174,7 @@ struct CudaFuncTable {
     PFN_cuGraphicsUnmapResources cuGraphicsUnmapResources = nullptr;
     PFN_cuGraphicsSubResourceGetMappedArray cuGraphicsSubResourceGetMappedArray = nullptr;
     PFN_cuMemcpy2DAsync cuMemcpy2DAsync = nullptr;
+    PFN_cuStreamSynchronize cuStreamSynchronize = nullptr;
     PFN_cuGetErrorString cuGetErrorString = nullptr;
 };
 
@@ -236,6 +238,7 @@ static bool loadCudaLibrary()
     LOAD_CUDA_FUNC(cuGraphicsUnmapResources, "cuGraphicsUnmapResources");
     LOAD_CUDA_FUNC(cuGraphicsSubResourceGetMappedArray, "cuGraphicsSubResourceGetMappedArray");
     LOAD_CUDA_FUNC(cuMemcpy2DAsync, "cuMemcpy2DAsync_v2");
+    LOAD_CUDA_FUNC(cuStreamSynchronize, "cuStreamSynchronize");
     LOAD_CUDA_FUNC(cuGetErrorString, "cuGetErrorString");
 
 #undef LOAD_CUDA_FUNC
@@ -490,6 +493,11 @@ CUresult cuGraphicsSubResourceGetMappedArray(CUarray *pArray, CUgraphicsResource
 CUresult cuMemcpy2DAsync(const CUDA_MEMCPY2D *pCopy, CUstream hStream)
 {
     return g_cudaLibLoaded ? g_cudaFuncs.cuMemcpy2DAsync(pCopy, hStream) : CUDA_ERROR_UNKNOWN;
+}
+
+CUresult cuStreamSynchronize(CUstream hStream)
+{
+    return g_cudaLibLoaded ? g_cudaFuncs.cuStreamSynchronize(hStream) : CUDA_ERROR_UNKNOWN;
 }
 
 CUresult cuDevicePrimaryCtxRelease(CUdevice dev)
