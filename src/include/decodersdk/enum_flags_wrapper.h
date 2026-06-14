@@ -185,12 +185,12 @@ private:
     UnderlyingType value_ = 0;
 };
 
-#define ENABLE_FLAGS(EnumType, FlagsType)                  \
-    template <>                                            \
-    struct decoder_sdk::EnableBitMaskOperators<EnumType> { \
-        static constexpr bool enable = true;               \
-    };                                                     \
-    using FlagsType = decoder_sdk::Flags<EnumType>;
+#define ENABLE_FLAGS(EnumType, FlagsType)     \
+    template <>                               \
+    struct EnableBitMaskOperators<EnumType> { \
+        static constexpr bool enable = true;  \
+    };                                        \
+    using FlagsType = Flags<EnumType>;
 
 } // namespace decoder_sdk
 

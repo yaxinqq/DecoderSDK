@@ -226,6 +226,7 @@ bool DecoderController::resetLoopCount()
 
 const std::optional<StreamInfo> &DecoderController::streamInfo() const
 {
+    static const std::optional<StreamInfo> emptyStreamInfo = std::nullopt;
     return impl_ ? impl_->streamInfo() : std::nullopt;
 }
 
