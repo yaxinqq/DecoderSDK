@@ -3,6 +3,8 @@
 #include <QGraphicsView>
 #include <QWidget>
 
+#include <cmath>
+
 namespace {
 #define EPSILON 1e-6
 #define DOUBLEEPSILON 1e-12

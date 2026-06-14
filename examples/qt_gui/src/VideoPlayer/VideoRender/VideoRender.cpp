@@ -4,6 +4,8 @@
 #include <QOpenGLContext>
 #include <QThread>
 
+#include <cmath>
+
 namespace utils {
 #define EPSILON 1e-6
 #define DOUBLEEPSILON 1e-12
