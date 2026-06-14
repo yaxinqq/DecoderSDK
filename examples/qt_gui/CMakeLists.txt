@@ -81,15 +81,6 @@ if(WIN32)
         d3dcompiler
         dxva2
     )
-    
-    # Windows下的CUDA库
-    if(CUDA_FOUND)
-        list(APPEND GLOBAL_LINK_LIBRARIES
-            cuda
-            cudart
-        )
-        link_directories(${CUDA_LIB_DIR})
-    endif()
 elseif(UNIX AND NOT APPLE)
     # Linux特定库
     list(APPEND GLOBAL_LINK_LIBRARIES
@@ -97,20 +88,6 @@ elseif(UNIX AND NOT APPLE)
         X11
         pthread
     )
-    
-    # Linux下的CUDA库
-    if(CUDA_FOUND)
-        if(CUDAToolkit_FOUND)
-            list(APPEND GLOBAL_LINK_LIBRARIES
-                CUDA::cuda_driver
-                CUDA::cudart
-            )
-        else()
-            list(APPEND GLOBAL_LINK_LIBRARIES
-                ${CUDA_LIBRARIES}
-            )
-        endif()
-    endif()
 elseif(APPLE)
     # macOS特定库
     find_library(OPENGL_LIBRARY OpenGL)

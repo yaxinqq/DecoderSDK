@@ -182,26 +182,10 @@ target_link_directories(${PROJECT_NAME}
         ${FMT_LIB_DIR}
 )
 
-# 如果CUDA可用，添加CUDA库目录
-if(CUDA_FOUND)
-    target_link_directories(${PROJECT_NAME} PRIVATE ${CUDA_LIB_DIR})
-endif()
-
-# 如果QSV可用，添加QSV库目录
-if (QSV_FOUND)
-    target_link_directories(${PROJECT_NAME} PRIVATE ${QSV_LIB_DIR})
-endif()
-
 # 如果VAAPI可用，添加VAAPI库目录
 if(VAAPI_FOUND)
     target_link_directories(${PROJECT_NAME} PRIVATE ${LIBVA_LIB_DIR})
 endif()
-
-# 如果VDPAU可用，添加VDPAU库目录
-if(VDPAU_FOUND)
-    target_link_directories(${PROJECT_NAME} PRIVATE ${VDPAU_LIB_DIR})
-endif()
-
 
 # ffmpeg不区分debug和release
 set(FFMPEG_LIB
@@ -219,13 +203,6 @@ set(FMT_LIB fmt)
 
 # 硬件加速相关库
 set(HARDWARE_ACCEL_LIBS)
-
-# CUDA库
-if(CUDA_FOUND)
-    list(APPEND HARDWARE_ACCEL_LIBS
-        cuda
-    )
-endif()
 
 # Windows平台硬件加速库
 if(WIN32)

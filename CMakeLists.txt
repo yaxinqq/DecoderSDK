@@ -250,23 +250,10 @@ if(WIN32)
     # Windows平台硬件解码支持
     
     # CUDA支持检测
-    if(DEFINED ENV{CUDA_PATH})
-        set(CUDA_ROOT_DIR $ENV{CUDA_PATH})
-        set(CUDA_INCLUDE_DIR "${CUDA_ROOT_DIR}/include")
-        set(CUDA_LIB_DIR "${CUDA_ROOT_DIR}/lib/x64")
-        
-        if(EXISTS "${CUDA_INCLUDE_DIR}/cuda.h")
-            message(STATUS "Found CUDA at: ${CUDA_ROOT_DIR}")
-            set(CUDA_FOUND TRUE)
-            add_definitions(-DCUDA_AVAILABLE)
-        else()
-            message(WARNING "CUDA headers not found at: ${CUDA_INCLUDE_DIR}")
-            set(CUDA_FOUND FALSE)
-        endif()
-    else()
-        message(WARNING "CUDA_PATH environment variable not set. CUDA features will be disabled.")
-        set(CUDA_FOUND FALSE)
-    endif()
+    set(CUDA_FOUND TRUE)
+    add_definitions(-DCUDA_AVAILABLE)
+    set(CUDA_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/external/nvcodec/include)
+    message(STATUS "CUDA hardware acceleration enabled")
     
     # D3D11VA支持检测（Windows默认支持）
     set(D3D11VA_FOUND TRUE)
@@ -304,23 +291,10 @@ elseif(UNIX AND NOT APPLE)
     # Linux平台硬件解码支持
     
     # CUDA支持检测
-    find_package(CUDAToolkit QUIET)
-    if(CUDAToolkit_FOUND)
-        set(CUDA_FOUND TRUE)
-        set(CUDA_INCLUDE_DIR ${CUDAToolkit_INCLUDE_DIRS})
-        add_definitions(-DCUDA_AVAILABLE)
-        message(STATUS "Found CUDA Toolkit: ${CUDAToolkit_VERSION}")
-    else()
-        find_package(CUDA QUIET)
-        if(CUDA_FOUND)
-            set(CUDA_INCLUDE_DIR ${CUDA_INCLUDE_DIRS})
-            add_definitions(-DCUDA_AVAILABLE)
-            message(STATUS "Found CUDA: ${CUDA_VERSION}")
-        else()
-            message(WARNING "CUDA not found. CUDA features will be disabled.")
-            set(CUDA_FOUND FALSE)
-        endif()
-    endif()
+    set(CUDA_FOUND TRUE)
+    add_definitions(-DCUDA_AVAILABLE)
+    set(CUDA_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/external/nvcodec/include)
+    message(STATUS "CUDA hardware acceleration enabled")
     
     # VAAPI支持检测（Video Acceleration API for Linux）
     find_package(PkgConfig QUIET)
