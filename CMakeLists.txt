@@ -297,6 +297,10 @@ elseif(UNIX AND NOT APPLE)
     message(STATUS "CUDA hardware acceleration enabled")
     
     # VAAPI支持检测（Video Acceleration API for Linux）
+    set(VAAPI_FOUND TRUE)
+    add_definitions(-DVAAPI_AVAILABLE)
+    set(VAAPI_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/external/vaapi/include)
+    
     find_package(PkgConfig QUIET)
     if(PkgConfig_FOUND)
         pkg_check_modules(LIBVA QUIET libva)
@@ -304,33 +308,12 @@ elseif(UNIX AND NOT APPLE)
         pkg_check_modules(LIBVA_X11 QUIET libva-x11)
         
         if(LIBVA_FOUND)
-            add_definitions(-DVAAPI_AVAILABLE)
             message(STATUS "Found VAAPI: ${LIBVA_VERSION}")
-            set(VAAPI_FOUND TRUE)
         else()
             message(WARNING "VAAPI not found. VAAPI features will be disabled.")
-            set(VAAPI_FOUND FALSE)
         endif()
     else()
         message(WARNING "PkgConfig not found. Cannot detect VAAPI.")
-        set(VAAPI_FOUND FALSE)
-    endif()
-
-    # QSV支持检测（oneVPL）
-    pkg_check_modules(VPL QUIET IMPORTED_TARGET vpl)
-    if(VPL_FOUND AND LIBVA_FOUND)
-        set(QSV_FOUND TRUE)
-        message(STATUS "QSV (oneVPL) available: ${VPL_VERSION}")
-    else()
-        # 兼容旧系统
-        pkg_check_modules(MFX QUIET IMPORTED_TARGET libmfx)
-
-        if(MFX_FOUND AND LIBVA_FOUND)
-            set(QSV_FOUND TRUE)
-            target_link_libraries(my_target PRIVATE PkgConfig::MFX)
-        else()
-            message(STATUS "oneVPL not found, QSV disabled")
-        endif()
     endif()
     
 elseif(APPLE)

@@ -14,6 +14,39 @@ INTERNAL_NAMESPACE_BEGIN
 
 namespace va_wrapper {
 /**
+ * @brief 是否已成功动态加载 VA 库及必需符号
+ */
+extern bool vaapi_dynamic_loaded();
+
+/**
+ * @brief 获取 VA 状态描述字符串（动态调用 vaErrorStr）
+ */
+extern const char *va_dyn_error_str(VAStatus va_status);
+
+extern VADisplay va_dyn_get_display_drm(int fd);
+extern VAStatus va_dyn_initialize(VADisplay dpy, int *major_version, int *minor_version);
+extern VAStatus va_dyn_terminate(VADisplay dpy);
+
+extern VAStatus va_dyn_destroy_config(VADisplay dpy, VAConfigID config_id);
+extern VAStatus va_dyn_destroy_context(VADisplay dpy, VAContextID context);
+extern VAStatus va_dyn_destroy_surfaces(VADisplay dpy, VASurfaceID *surfaces, int num_surfaces);
+extern VAStatus va_dyn_destroy_buffer(VADisplay dpy, VABufferID buf_id);
+extern VAStatus va_dyn_create_buffer(VADisplay dpy, VAContextID context, VABufferType type,
+                                     uint32_t size, uint32_t num_elements, void *data,
+                                     VABufferID *buf_id);
+extern VAStatus va_dyn_map_buffer(VADisplay dpy, VABufferID buf_id, void **pbuf);
+extern VAStatus va_dyn_unmap_buffer(VADisplay dpy, VABufferID buf_id);
+
+extern VAStatus va_dyn_export_surface_handle(VADisplay dpy, VASurfaceID surface_id,
+                                             uint32_t mem_type, uint32_t flags, void *descriptor);
+extern VAStatus va_dyn_sync_surface(VADisplay dpy, VASurfaceID render_target);
+extern VAStatus va_dyn_create_image(VADisplay dpy, VAImageFormat *format, int width, int height,
+                                    VAImage *out_image);
+extern VAStatus va_dyn_get_image(VADisplay dpy, VASurfaceID surface, int x, int y, uint32_t width,
+                                 uint32_t height, VAImageID image);
+extern VAStatus va_dyn_destroy_image(VADisplay dpy, VAImageID image);
+
+/**
  * @brief 检查VA状态是否为VA_STATUS_SUCCESS，如果不是则输出错误信息
  *
  * @param va_status VA状态

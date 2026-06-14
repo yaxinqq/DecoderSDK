@@ -163,11 +163,6 @@ if(VAAPI_FOUND)
     target_include_directories(${PROJECT_NAME} PRIVATE ${LIBVA_INCLUDE_DIR})
 endif()
 
-# 如果VDPAU可用，添加VDPAU包含目录
-if(VDPAU_FOUND)
-    target_include_directories(${PROJECT_NAME} PRIVATE ${VDPAU_INCLUDE_DIR})
-endif()
-
 # 如果VULKAN可用，添加VULKAN包含目录
 if(VULKAN_FOUND)
     target_include_directories(${PROJECT_NAME} PRIVATE ${VULKAN_INCLUDE_DIR})
@@ -181,11 +176,6 @@ target_link_directories(${PROJECT_NAME}
         ${SPDLOG_LIB_DIR}
         ${FMT_LIB_DIR}
 )
-
-# 如果VAAPI可用，添加VAAPI库目录
-if(VAAPI_FOUND)
-    target_link_directories(${PROJECT_NAME} PRIVATE ${LIBVA_LIB_DIR})
-endif()
 
 # ffmpeg不区分debug和release
 set(FFMPEG_LIB
@@ -216,25 +206,6 @@ if(WIN32)
     
 elseif(UNIX AND NOT APPLE)
     # Linux平台硬件加速库
-    
-    # VAAPI库
-    if(VAAPI_FOUND)
-        list(APPEND HARDWARE_ACCEL_LIBS
-            ${LIBVA_LIBRARIES}
-        )
-        if(LIBVA_DRM_FOUND)
-            list(APPEND HARDWARE_ACCEL_LIBS ${LIBVA_DRM_LIBRARIES})
-        endif()
-        if(LIBVA_X11_FOUND)
-            list(APPEND HARDWARE_ACCEL_LIBS ${LIBVA_X11_LIBRARIES})
-        endif()
-    endif()
-    
-    # VDPAU库
-    if(VDPAU_FOUND)
-        list(APPEND HARDWARE_ACCEL_LIBS ${VDPAU_LIBRARIES})
-    endif()
-    
 elseif(APPLE)
     # macOS平台硬件加速库
     list(APPEND HARDWARE_ACCEL_LIBS

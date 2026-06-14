@@ -5,6 +5,7 @@
 #include <deque>
 #include <mutex>
 #include <optional>
+#include <string>
 
 #include "base/base_define.h"
 #include "base/packet.h"
