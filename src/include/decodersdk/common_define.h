@@ -246,7 +246,7 @@ public:
 
     std::string filePath; // 文件路径
 
-    // 只会在kDecodeFirstFrame事件中携带，其它事件中为空，因为有可能硬解失败回退到软解
+    // 只会在kStreamOpened事件中携带，其它事件中为空
     std::optional<StreamInfo> streamInfo;
 };
 

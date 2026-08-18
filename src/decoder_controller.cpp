@@ -506,6 +506,12 @@ void DecoderController::setFrameRateControl(bool enable)
         config_.enableFrameRateControl = enable;
     }
 
+    if (audioDecoder_) {
+        audioDecoder_->setFrameRateControl(enable);
+        LOG_DEBUG("Audio decoder frame rate control updated");
+    }
+
+
     if (videoDecoder_) {
         videoDecoder_->setFrameRateControl(enable);
         LOG_DEBUG("Video decoder frame rate control updated");
@@ -852,6 +858,7 @@ bool DecoderController::startDecodeInternal()
     bool hasAudioDecoder = false;
     if (demuxer_->hasAudio() && config_.decodeMediaTypes.has(MediaType::kAudio) && audioDecoder_) {
         audioDecoder_->init(config_);
+        audioDecoder_->setFrameRateControl(config_.enableFrameRateControl);
         audioDecoder_->setSpeed(config_.speed);
         if (!audioDecoder_->open()) {
             LOG_ERROR("Failed to open audio decoder");
