@@ -898,10 +898,10 @@ bool Demuxer::openInternal(const std::string &url, const DecoderConfig &config,
 
     // 创建数据包队列
     if (videoStreamIndex_ >= 0 && config.decodeMediaTypes.has(MediaType::kVideo)) {
-        videoPacketQueue_ = std::make_shared<PacketQueue>(1000);
+        videoPacketQueue_ = std::make_shared<PacketQueue>(60 + config.preBufferConfig.videoPreBufferFrames);
     }
     if (audioStreamIndex_ >= 0 && config.decodeMediaTypes.has(MediaType::kAudio)) {
-        audioPacketQueue_ = std::make_shared<PacketQueue>(1000);
+        audioPacketQueue_ = std::make_shared<PacketQueue>(60 + config.preBufferConfig.audioPreBufferPackets);
     }
 
     // 组装流信息
