@@ -84,6 +84,21 @@ bool FrameQueue::tryPop(Frame &frame)
     return pop(frame, 0);
 }
 
+bool FrameQueue::front(Frame &frame) const
+{
+    if (!impl_ || !impl_->get()) {
+        return false;
+    }
+
+    auto internalFrame = std::make_unique<internal::Frame>();
+    const bool success = impl_->get()->front(*internalFrame);
+    if (success) {
+        frame = Frame{std::move(internalFrame)};
+    }
+
+    return success;
+}
+
 bool FrameQueue::empty() const
 {
     return (impl_ && impl_->get()) ? impl_->get()->empty() : true;

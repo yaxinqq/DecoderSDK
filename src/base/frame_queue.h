@@ -61,6 +61,13 @@ public:
     bool tryPop(Frame &frame);
 
     /**
+     * @brief 查看队首帧但不弹出
+     * @param frame 输出参数，存储队首帧的快照
+     * @return 成功返回true，失败返回false
+     */
+    bool front(Frame &frame) const;
+
+    /**
      * @brief 获取可写入的帧指针（用于直接写入）
      * @param timeout 超时时间(毫秒)
      * @return 可写入的帧指针，失败返回nullptr

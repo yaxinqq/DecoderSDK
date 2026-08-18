@@ -77,6 +77,18 @@ bool FrameQueue::tryPop(Frame &frame)
     return pop(frame, 0);
 }
 
+bool FrameQueue::front(Frame &frame) const
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    if (size_ == 0 || aborted_.load() || queue_.empty()) {
+        return false;
+    }
+
+    frame = queue_[head_];
+    return true;
+}
+
 Frame *FrameQueue::getWritableFrame(int timeout)
 {
     std::unique_lock<std::mutex> lock(mutex_);

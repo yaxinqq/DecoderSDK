@@ -43,6 +43,13 @@ public:
      */
     bool tryPop(Frame &frame);
 
+    /**
+     * @brief 查看队首帧但不弹出
+     * @param frame 输出参数，存储队首帧
+     * @return 成功返回true，失败返回false
+     */
+    bool front(Frame &frame) const;
+
     // 查询接口
     /**
      * @brief 是否为空
