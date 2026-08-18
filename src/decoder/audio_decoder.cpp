@@ -181,9 +181,9 @@ void AudioDecoder::decodeLoop()
             }
 
             // 计算帧持续时间(单位 s)
-            double actualSampleRate =
-                needResample_ ? (codecCtx_->sample_rate * speed()) : codecCtx_->sample_rate;
-            const double duration = outputFrame.nbSamples() / actualSampleRate;
+            // 注意：重采样后，虽然样本数变了，但这一帧所代表的流时间（Duration）依然是原始时长
+            const double duration =
+                static_cast<double>(frame.get()->nb_samples) / codecCtx_->sample_rate;
             // 计算PTS（单位s）
             const double pts = calculatePts(outputFrame);
 
@@ -350,7 +350,9 @@ bool AudioDecoder::initResampleContext()
 #if LIBAVUTIL_VERSION_INT >= AV_VERSION_INT(57, 28, 100) // FFmpeg 5.1+
     // 设置输入参数 (新版本API)
     av_opt_set_chlayout(swrCtx_, "in_chlayout", &codecCtx_->ch_layout, 0);
-    av_opt_set_int(swrCtx_, "in_sample_rate", codecCtx_->sample_rate, 0);
+    // 通过调整输入采样率来实现倍速（告诉 swr 输入采样率更高，它会自动下采样减少样本数）
+    int inSampleRate = static_cast<int>(codecCtx_->sample_rate * curSpeed);
+    av_opt_set_int(swrCtx_, "in_sample_rate", inSampleRate, 0);
     av_opt_set_sample_fmt(swrCtx_, "in_sample_fmt", codecCtx_->sample_fmt, 0);
 
     // 设置输出参数 (新版本API)
@@ -359,7 +361,8 @@ bool AudioDecoder::initResampleContext()
     // 设置输入参数 (旧版本API - FFmpeg 4.4.2)
     av_opt_set_int(swrCtx_, "in_channel_layout", codecCtx_->channel_layout, 0);
     av_opt_set_int(swrCtx_, "in_channels", codecCtx_->channels, 0);
-    av_opt_set_int(swrCtx_, "in_sample_rate", codecCtx_->sample_rate, 0);
+    int inSampleRate = static_cast<int>(codecCtx_->sample_rate * curSpeed);
+    av_opt_set_int(swrCtx_, "in_sample_rate", inSampleRate, 0);
     av_opt_set_sample_fmt(swrCtx_, "in_sample_fmt", codecCtx_->sample_fmt, 0);
 
     // 设置输出参数 (旧版本API - FFmpeg 4.4.2)
@@ -367,9 +370,8 @@ bool AudioDecoder::initResampleContext()
     av_opt_set_int(swrCtx_, "out_channels", codecCtx_->channels, 0);
 #endif
 
-    // 根据播放速度调整采样率
-    int outSampleRate = static_cast<int>(codecCtx_->sample_rate * curSpeed);
-    av_opt_set_int(swrCtx_, "out_sample_rate", outSampleRate, 0);
+    // 输出采样率保持原始，这样硬件层不需要频繁重启
+    av_opt_set_int(swrCtx_, "out_sample_rate", codecCtx_->sample_rate, 0);
     av_opt_set_sample_fmt(swrCtx_, "out_sample_fmt", codecCtx_->sample_fmt, 0);
 
     // 初始化重采样上下文
@@ -394,8 +396,8 @@ Frame AudioDecoder::resampleFrame(const Frame &frame, int &errorCode)
 
     // 获得当前速度
     const double curSpeed = speed();
-    const int inputSampleRate = frame.sampleRate();
-    const int outputSampleRate = static_cast<int>(inputSampleRate * curSpeed);
+    const int inputSampleRate = static_cast<int>(frame.sampleRate() * curSpeed);
+    const int outputSampleRate = frame.sampleRate(); // 保持原始采样率输出
 
     // 检查是否需要重新配置 - 兼容不同FFmpeg版本
     bool needReconfig = false;
@@ -494,13 +496,6 @@ Frame AudioDecoder::resampleFrame(const Frame &frame, int &errorCode)
 #if LIBAVUTIL_VERSION_INT >= AV_VERSION_INT(57, 28, 100)
     resampleFrame_.setTimeBase(frame.timeBase());
 #endif
-
-    // 修正duration计算逻辑
-    if (frame.durationByFps() > 0) {
-        // 按比例调整duration（保持为double类型）
-        double newDuration = frame.durationByFps() * outputSampleRate / inputSampleRate;
-        resampleFrame_.setDurationByFps(newDuration);
-    }
 
     // 返回拷贝而不是移动，保持帧复用
     return resampleFrame_;
