@@ -19,6 +19,15 @@ constexpr int kAccumulatedPacketCount = 25;
 
 // 模块名称
 constexpr char kModuleName[] = "Demuxer";
+
+bool isRtspStream(const std::string &url)
+{
+    return url.compare(0, 4, "rtsp") == 0 || url.compare(0, 4, "RTSP") == 0;
+}
+bool isRtmpStream(const std::string &url)
+{
+    return url.compare(0, 4, "rtmp") == 0 || url.compare(0, 4, "RTMP") == 0;
+}
 } // namespace
 
 DECODER_SDK_NAMESPACE_BEGIN
@@ -784,13 +793,14 @@ bool Demuxer::openInternal(const std::string &url, const DecoderConfig &config,
 
     // 设置FFmpeg选项
     AVDictionary *options = nullptr;
-    av_dict_set(&options, "max_delay", "0.0", 0);
+    av_dict_set(&options, "max_delay", "0", 0);
     av_dict_set(&options, "buffer_size", "10000000", 0);
 
     if (isRealTime) {
         av_dict_set(&options, "rtsp_transport",
                     utils::rtspTransport2Str(config.rtspTransport).c_str(), 0);
         av_dict_set(&options, "fflags", "nobuffer", 0);
+        av_dict_set(&options, "flags", "low_delay", 0);
         av_dict_set(&options, "stimeout", "3000000", 0);
         av_dict_set(&options, "timeout", "3000000", 0);
     }
@@ -809,9 +819,16 @@ bool Demuxer::openInternal(const std::string &url, const DecoderConfig &config,
         return false;
     }
 
+    LOG_INFO("Successfully open input: {}", url_);
+
     // 查找流信息
     // 设置最大探测5s
     formatContext_->max_analyze_duration = (int64_t)5 * AV_TIME_BASE;
+    // 如果是rtsp或是rtmp流，则调整fps探测的帧数，减少开流时间
+    if (isRealTime && (isRtspStream(url) || isRtmpStream(url))) {
+        formatContext_->fps_probe_size = 3;
+    }
+
     ret = avformat_find_stream_info(formatContext_, nullptr);
     if (ret < 0) {
         LOG_ERROR("{} Failed to find stream info: {}", url_, utils::avErr2Str(ret));
@@ -819,12 +836,15 @@ bool Demuxer::openInternal(const std::string &url, const DecoderConfig &config,
         avformat_close_input(&formatContext_);
         return false;
     }
+    LOG_INFO("Successfully find stream info: {}", url_);
 
     // 重置到文件开始位置
     if (formatContext_->pb && formatContext_->pb->seekable) {
         const int64_t ret = av_seek_frame(formatContext_, -1, 0, AVSEEK_FLAG_BACKWARD);
         if (ret < 0) {
             LOG_WARN("{} Seek to start failed: {}", url_, utils::avErr2Str(static_cast<int>(ret)));
+        } else {
+            LOG_INFO("Successfully seek to start: {}", url_);
         }
     }
 
