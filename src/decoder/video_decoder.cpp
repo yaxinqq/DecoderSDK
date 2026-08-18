@@ -5,6 +5,7 @@
 
 extern "C" {
 #include <libavutil/error.h>
+#include <libavutil/imgutils.h>
 #include <libavutil/rational.h>
 #include <libavutil/time.h>
 #include <libswscale/swscale.h>
@@ -649,6 +650,20 @@ double VideoDecoder::getFrameRate() const
     return av_q2d(frameRate);
 }
 
+void VideoDecoder::calculateBitsPerPixel()
+{
+    if (bppCalculated_ || !codecCtx_ || codecCtx_->width <= 0 || codecCtx_->height <= 0)
+        return;
+
+    // 通过 FFmpeg 获取该像素格式在指定宽高下的缓冲区大小（字节），再换算为每像素比特数
+    const int bufferSize =
+        av_image_get_buffer_size(codecCtx_->sw_pix_fmt, codecCtx_->width, codecCtx_->height, 1);
+    if (bufferSize > 0) {
+        bitsPerPixel_ = (bufferSize * 8) / (codecCtx_->width * codecCtx_->height);
+    }
+    bppCalculated_ = true;
+}
+
 std::optional<DecoderInfo> VideoDecoder::decoderInfo() const
 {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -659,6 +674,7 @@ std::optional<DecoderInfo> VideoDecoder::decoderInfo() const
     info.codecName = codecCtx_->codec->name;
     info.mediaType = MediaType::kVideo;
     info.hwAccelType = hwAccel_ ? hwAccel_->getType() : HWAccelType::kNone;
+    info.bitsPerPixel = bitsPerPixel_;
     return info;
 }
 
@@ -943,6 +959,7 @@ void VideoDecoder::decodeLoop()
             if (!readFirstFrame) {
                 readFirstFrame = true;
                 errorStartTime.reset(); // 重置错误计时
+                calculateBitsPerPixel();
                 handleFirstFrame();
             }
 

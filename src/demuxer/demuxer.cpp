@@ -487,6 +487,9 @@ void Demuxer::realTimeStreamDemuxLoop(AVPacket *pkt)
     // 丢弃所有内部缓冲数据，确保从最新数据开始读取
     avformat_flush(formatContext_);
 
+    // 初始化码率估算的周期起始时间
+    bitrateEstimateStartTime_ = std::chrono::steady_clock::now();
+
     while (!requestInterruption_.load()) {
         // 实时流不支持seek，清除任何pending的seek请求
         auto pendingSeekMs = seekMsPos_.load();
@@ -507,6 +510,10 @@ void Demuxer::realTimeStreamDemuxLoop(AVPacket *pkt)
         // 读取并处理数据包
         const int result = readAndProcessPacket(pkt, readFirstPacket, readFailedCount);
         if (result == 0) {
+            // 累加收到的字节数，用于实时流码率估算
+            accumulatedBytes_ += pkt->size;
+            updateEstimatedBitrate();
+
             // 如果正在录制，则将需要录制的流写入录制器
             writeToRecorders(pkt);
 
@@ -1021,6 +1028,8 @@ bool Demuxer::closeInternal()
 
     // 清空流信息
     streamInfo_.reset();
+    // 重置码率
+    streamStaticsInfo_.videoBitrate = 0;
 
     // 上报流关闭事件
     const auto event = std::make_shared<StreamEventArgs>(
@@ -1120,6 +1129,32 @@ void Demuxer::stop()
     LOG_INFO("{} demuxer stopped!", url_);
 }
 
+const StreamStaticsInfo &Demuxer::streamStaticsInfo() const
+{
+    return streamStaticsInfo_;
+}
+
+namespace {
+    // 码率估算周期（毫秒）：每隔该时间根据累计字节数计算一次估算码率
+    constexpr auto kBitrateEstimateInterval = std::chrono::milliseconds(1000);
+}
+
+void Demuxer::updateEstimatedBitrate()
+{
+    const auto now = std::chrono::steady_clock::now();
+    const auto elapsed = now - bitrateEstimateStartTime_;
+    if (elapsed < kBitrateEstimateInterval)
+        return;
+
+    // 估算码率(bps) = 累计字节数 × 8 / 经过的秒数
+    const double seconds = std::chrono::duration<double>(elapsed).count();
+    const auto bytes = accumulatedBytes_.exchange(0);
+    streamStaticsInfo_.videoBitrate = static_cast<int>(bytes * 8 / seconds);
+
+    // 重置估算周期起始时间
+    bitrateEstimateStartTime_ = now;
+}
+
 void Demuxer::setupStreamInfo(const std::string_view &url, MediaTypes decodeMediaTypes)
 {
     if (!formatContext_)
@@ -1158,6 +1193,9 @@ void Demuxer::setupStreamInfo(const std::string_view &url, MediaTypes decodeMedi
 
         streamInfo_->videoInfo->colorRange =
             utils::avColorRange2Desc(stream->codecpar->color_range);
+
+        // 文件流时容器层提供的码率，实时流时由 updateEstimatedBitrate 动态更新
+        streamStaticsInfo_.videoBitrate = static_cast<int>(stream->codecpar->bit_rate);
     }
     if (audioStreamIndex_ >= 0 && decodeMediaTypes.has(MediaType::kAudio)) {
         auto *const stream = formatContext_->streams[audioStreamIndex_];

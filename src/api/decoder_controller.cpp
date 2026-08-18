@@ -213,4 +213,9 @@ std::optional<DecoderInfo> DecoderController::decoderInfo(MediaType mediaType) c
 {
     return impl_ ? impl_->decoderInfo(mediaType) : std::nullopt;
 }
+
+StreamStaticsInfo DecoderController::streamStaticsInfo() const
+{
+    return impl_ ? impl_->streamStaticsInfo() : StreamStaticsInfo{};
+}
 } // namespace decoder_sdk

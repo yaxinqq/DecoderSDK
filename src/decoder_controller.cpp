@@ -684,6 +684,11 @@ std::optional<DecoderInfo> DecoderController::decoderInfo(MediaType mediaType) c
     return std::nullopt;
 }
 
+StreamStaticsInfo DecoderController::streamStaticsInfo() const
+{
+    return demuxer_ ? demuxer_->streamStaticsInfo() : StreamStaticsInfo{};
+}
+
 bool DecoderController::openInternal(const std::string &url, const DecoderConfig &config)
 {
     LOG_DEBUG("Opening internal: {}", url);

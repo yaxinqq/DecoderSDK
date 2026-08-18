@@ -205,6 +205,16 @@ struct StreamInfo {
     bool isRealtime = false;
 };
 
+// 流统计信息（解码器生命周期内持续更新）
+//
+// 用于记录流在整个解码过程中的动态统计信息。与 StreamInfo（打开时一次性设置）不同，
+// 本结构内的数据会随解码过程持续变动，应用层应从这里读取实时数据（如码率）。
+struct StreamStaticsInfo {
+    // 视频码率(bps)。实时流时由解复用器基于实际接收数据量动态估算，
+    // 文件流时取自容器层（codecpar->bit_rate）
+    int videoBitrate = 0;
+};
+
 // 解码器信息
 struct DecoderInfo {
     std::string codecName;                     // 编解码器名称
@@ -212,6 +222,7 @@ struct DecoderInfo {
 
     // 视频解码器独有信息
     HWAccelType hwAccelType = HWAccelType::kNone; // 硬件加速类型
+    int bitsPerPixel = 0; // 每像素比特数(bpp)，由解码器基于 av_image_get_buffer_size 计算一次
 };
 
 // 事件参数基类

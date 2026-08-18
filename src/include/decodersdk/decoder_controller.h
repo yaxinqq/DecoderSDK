@@ -267,6 +267,15 @@ public:
      */
     std::optional<DecoderInfo> decoderInfo(MediaType mediaType) const;
 
+    /**
+     * @brief 获取流统计信息
+     *
+     * 返回在整个解码器生命周期内持续更新的流统计信息（如视频码率）。
+     *
+     * @return 流统计信息
+     */
+    StreamStaticsInfo streamStaticsInfo() const;
+
 private:
     std::unique_ptr<internal::DecoderController> impl_;
 };

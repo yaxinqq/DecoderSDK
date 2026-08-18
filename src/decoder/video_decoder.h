@@ -130,6 +130,13 @@ private:
      */
     void handleKeyFrameError(bool &hasKeyFrame, const std::string &errorString);
 
+    /**
+     * @brief 基于解码器实际像素格式和分辨率计算每像素比特数(bpp)
+     *
+     * 通过 av_image_get_buffer_size 获取缓冲区大小后换算，仅计算一次。
+     */
+    void calculateBitsPerPixel();
+
 private:
     // 硬件加速器
     std::shared_ptr<HardwareAccel> hwAccel_;
@@ -161,6 +168,10 @@ private:
 
     // 是否需要手动修改SPS profile
     bool needFixSPSProfile_ = false;
+
+    // 基于 av_image_get_buffer_size 计算得到的每像素比特数，仅计算一次
+    bool bppCalculated_ = false;
+    int bitsPerPixel_ = 0;
 };
 
 INTERNAL_NAMESPACE_END

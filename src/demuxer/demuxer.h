@@ -2,6 +2,7 @@
 #define DECODER_SDK_INTERNAL_DEMUXER_H
 
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <memory>
 #include <mutex>
@@ -177,6 +178,15 @@ public:
      */
     const std::optional<StreamInfo> &streamInfo() const;
 
+    /**
+     * @brief 获取流统计信息
+     *
+     * 返回在整个解码器生命周期内持续更新的流统计信息（如视频码率）。
+     *
+     * @return 流统计信息
+     */
+    const StreamStaticsInfo &streamStaticsInfo() const;
+
 protected:
     /**
      * @brief 解复用线程
@@ -318,6 +328,13 @@ private:
      */
     void setupStreamInfo(const std::string_view &url, MediaTypes decodeMediaTypes);
 
+    /**
+     * @brief 根据累计接收的字节数更新实时流估算码率
+     *
+     * 每收到一个包时调用，当距上次估算超过一个周期时，按累计字节数重新计算码率。
+     */
+    void updateEstimatedBitrate();
+
 private:
     // 解复用器状态
     bool isOpened_ = false;
@@ -378,6 +395,13 @@ private:
 
     // 流信息
     std::optional<StreamInfo> streamInfo_;
+
+    // 流统计信息（解码器生命周期内持续更新）
+    StreamStaticsInfo streamStaticsInfo_;
+
+    // 实时流码率估算（基于实际接收数据量动态估算）
+    std::atomic<int64_t> accumulatedBytes_{0}; // 当前周期内累计收到的字节数
+    std::chrono::steady_clock::time_point bitrateEstimateStartTime_; // 当前估算周期的起始时间
 };
 
 INTERNAL_NAMESPACE_END
