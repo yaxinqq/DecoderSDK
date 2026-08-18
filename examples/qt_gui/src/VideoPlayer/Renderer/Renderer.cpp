@@ -310,6 +310,9 @@ void Renderer::setDecoder(QPointer<IDecodeWorker> decoder)
 
 void Renderer::start()
 {
+    if (isStarted_.load())
+        return;
+
     isStarted_.store(true);
 
     // 将渲染任务加入队列，渲染资源懒加载
@@ -318,6 +321,9 @@ void Renderer::start()
 
 void Renderer::stop()
 {
+    if (!isStarted_.load())
+        return;
+
     isStarted_.store(false);
 }
 

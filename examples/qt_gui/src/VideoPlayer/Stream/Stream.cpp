@@ -271,6 +271,7 @@ void StreamPipeline::onEventUpdated(const QString &url, decoder_sdk::EventType t
             renderer_->setClockSourceType(clockType);
             break;
         }
+        case decoder_sdk::EventType::kDecodeStarted:
         case decoder_sdk::EventType::kDecodeFirstFrame:
             // 开启渲染器
             renderer_->start();
