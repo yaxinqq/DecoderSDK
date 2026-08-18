@@ -34,10 +34,8 @@ DECODER_SDK_NAMESPACE_BEGIN
 INTERNAL_NAMESPACE_BEGIN
 
 Demuxer::Demuxer(std::shared_ptr<EventDispatcher> eventDispatcher,
-                 std::shared_ptr<StreamSyncManager> streamSyncManager,
                  std::shared_ptr<SeekCoordinator> seekCoordinator)
     : eventDispatcher_(eventDispatcher),
-      streamSyncManager_(streamSyncManager),
       seekCoordinator_(seekCoordinator),
       realTimeStreamRecorder_(std::make_unique<RealTimeStreamRecorder>(eventDispatcher)),
       loopMode_(LoopMode::kNone),
@@ -290,7 +288,7 @@ void Demuxer::demuxLoop()
         // 通知 SeekCoordinator 失败
         seekCoordinator_->failSeek(position);
 
-        auto event = std::make_shared<SeekEventArgs>(streamSyncManager_->getMasterClock(), position,
+        auto event = std::make_shared<SeekEventArgs>(position,
                                                      kModuleName,
                                                      utils::eventType2Desc(EventType::kSeekFailed));
         eventDispatcher_->triggerEvent(EventType::kSeekFailed, event);
@@ -461,8 +459,7 @@ void Demuxer::realTimeStreamDemuxLoop(AVPacket *pkt)
             // 通知 SeekCoordinator 失败
             seekCoordinator_->failSeek(position);
 
-            auto event = std::make_shared<SeekEventArgs>(
-                streamSyncManager_->getMasterClock(), position, kModuleName,
+            auto event = std::make_shared<SeekEventArgs>(position, kModuleName,
                 utils::eventType2Desc(EventType::kSeekFailed));
             eventDispatcher_->triggerEvent(EventType::kSeekFailed, event);
             LOG_WARN("Seek not supported for real-time streams, ignoring seek request to {:.2f}s",
@@ -728,7 +725,7 @@ bool Demuxer::handleSeekRequest()
         seekCoordinator_->failSeek(position);
 
         // 发送seek失败的事件
-        auto event = std::make_shared<SeekEventArgs>(streamSyncManager_->getMasterClock(), position,
+        auto event = std::make_shared<SeekEventArgs>(position,
                                                      kModuleName,
                                                      utils::eventType2Desc(EventType::kSeekFailed));
         eventDispatcher_->triggerEvent(EventType::kSeekFailed, event);
@@ -751,15 +748,12 @@ bool Demuxer::handleSeekRequest()
     // 提交 Seek 事务
     seekCoordinator_->commitSeek(position, videoSerial, audioSerial);
 
-    // 更新外部时钟
-    streamSyncManager_->externalClockSeekTo(seekMsPosition * 0.001);
-
     LOG_INFO("{} seek completed to position: {:.2f}s, serials: [v:{}, a:{}]", url_, position,
              videoSerial, audioSerial);
 
     // 发送seek成功的事件
     auto event =
-        std::make_shared<SeekEventArgs>(streamSyncManager_->getMasterClock(), position, kModuleName,
+        std::make_shared<SeekEventArgs>(position, kModuleName,
                                         utils::eventType2Desc(EventType::kSeekSuccess));
     eventDispatcher_->triggerEvent(EventType::kSeekSuccess, event);
 
@@ -858,10 +852,6 @@ bool Demuxer::openInternal(const std::string &url, const DecoderConfig &config,
         av_dict_set(&options, "stimeout", "3000000", 0);
         av_dict_set(&options, "timeout", "3000000", 0);
     }
-
-    // 开启外部时钟
-    streamSyncManager_->externalClockSeekTo(0.0);
-    streamSyncManager_->externalClockSetPaused(isPaused_.load());
 
     // 打开输入
     int ret = avformat_open_input(&formatContext_, url.c_str(), nullptr, &options);
@@ -998,7 +988,6 @@ bool Demuxer::pauseInternal()
     }
 
     isPaused_.store(true);
-    streamSyncManager_->externalClockSetPaused(true);
     return true;
 }
 
@@ -1023,7 +1012,6 @@ bool Demuxer::resumeInternal()
     }
 
     isPaused_.store(false);
-    streamSyncManager_->externalClockSetPaused(false);
     pauseCv_.notify_all();
     return true;
 }

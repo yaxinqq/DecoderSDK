@@ -13,7 +13,6 @@ extern "C" {
 #include "demuxer/demuxer.h"
 #include "event_system/event_dispatcher.h"
 #include "logger/logger.h"
-#include "stream_sync/stream_sync_manager.h"
 #include "utils/common_utils.h"
 
 #ifdef VAAPI_AVAILABLE
@@ -594,10 +593,9 @@ void clearSurfaceCache(std::unordered_map<VASurfaceID, AVBufferRef *> &surfaceCa
 } // namespace
 
 VideoDecoder::VideoDecoder(std::shared_ptr<Demuxer> demuxer,
-                           std::shared_ptr<StreamSyncManager> StreamSyncManager,
                            std::shared_ptr<EventDispatcher> eventDispatcher,
                            std::shared_ptr<SeekCoordinator> seekCoordinator)
-    : DecoderBase(demuxer, StreamSyncManager, eventDispatcher, seekCoordinator)
+    : DecoderBase(demuxer, eventDispatcher, seekCoordinator)
 {
     init({});
 }
@@ -697,7 +695,6 @@ void VideoDecoder::decodeLoop()
 #endif
 
     auto serial = packetQueue->serial();
-    syncController_->updateVideoClock(0.0, serial);
 
     bool hasKeyFrame = false;
     bool readFirstFrame = false;
@@ -741,8 +738,6 @@ void VideoDecoder::decodeLoop()
             if (isPaused_.load())
                 continue;
 
-            // 重置最后帧时间
-            lastFrameTime_ = std::nullopt;
             // 重置第一帧读取状态
             readFirstFrame = false;
             continue;
@@ -753,10 +748,6 @@ void VideoDecoder::decodeLoop()
             // 序列号发生变化时，重置下列数据
             // 重新等待关键帧
             hasKeyFrame = false;
-            // 重置视频时钟
-            syncController_->updateVideoClock(0.0, serial);
-            // 重置最后帧时间
-            lastFrameTime_ = std::nullopt;
             // 清空帧队列
             frameQueue_->clear();
 
@@ -845,10 +836,6 @@ void VideoDecoder::decodeLoop()
 #endif
                     // 重新等待关键帧
                     hasKeyFrame = false;
-                    // 重置视频时钟
-                    syncController_->updateVideoClock(0.0, serial);
-                    // 重置最后帧时间
-                    lastFrameTime_ = std::nullopt;
                 }
 
                 std::this_thread::sleep_for(std::chrono::milliseconds(1));
@@ -939,11 +926,6 @@ void VideoDecoder::decodeLoop()
             // 计算PTS（单位s）
             const double pts = calculatePts(frame);
 
-            // 更新视频时钟
-            if (!std::isnan(pts)) {
-                syncController_->updateVideoClock(pts, serial);
-            }
-
             // 处理 seek 抛帧逻辑 (事务驱动)
             if (shouldDiscardBySeek(pts, serial)) {
                 continue;
@@ -965,15 +947,6 @@ void VideoDecoder::decodeLoop()
             if (occuredError) {
                 occuredError = false;
                 handleDecodeRecovery();
-            }
-
-            // 外部时钟和当前的视频帧pts进行比对，如果差值大于1帧，更新外部时钟
-            const auto externalClock = syncController_->getClock(ClockType::kExternal);
-            const auto diffClock = pts - externalClock;
-            if (utils::greater(diffClock, duration) || forceSyncExternalClock) {
-                LOG_DEBUG("Adjust external clock, diff: {}s, url: {}", diffClock, demuxer_->url());
-                syncController_->externalClockSeekTo(pts);
-                forceSyncExternalClock = false;
             }
 
             // 处理帧格式转换
@@ -1001,9 +974,6 @@ void VideoDecoder::decodeLoop()
                               seiData.payload.size(), seiData.payloadAsString());
                 }
             }
-
-            // 获得当前速度
-            const auto curSpeed = speed();
 
             // 将解码后的帧复制到输出帧
             *outFrame = std::move(outputFrame);
@@ -1058,30 +1028,6 @@ void VideoDecoder::decodeLoop()
                 }
             }
 #endif
-
-            // 如果启用了帧率控制，则根据帧率控制推送速度
-            if (isFrameRateControlEnabled()) {
-                const auto currentTime = std::chrono::system_clock::now();
-                const auto durationMs = duration * 1000;
-
-                const double baseDelay =
-                    calculateFrameDisplayTime(pts, durationMs, currentTime, lastFrameTime_);
-                const double syncDelay =
-                    syncController_->computeVideoDelay(pts, duration, baseDelay, curSpeed);
-
-                // 检查是否需要丢弃此帧
-                if (syncDelay < 0) {
-                    frame.unref();
-                    continue;
-                }
-
-                // 使用同步后的延迟
-                if (utils::greater(syncDelay, 0.0)) {
-                    const auto targetTime =
-                        currentTime + std::chrono::milliseconds(static_cast<int64_t>(syncDelay));
-                    std::this_thread::sleep_until(targetTime);
-                }
-            }
 
             // 提交帧到队列
             frameQueue_->commitFrame();

@@ -17,25 +17,21 @@ extern "C" {
 #include "base/packet_queue.h"
 #include "base/seek_coordinator.h"
 #include "include/decodersdk/common_define.h"
-#include "stream_sync/clock.h"
 
 DECODER_SDK_NAMESPACE_BEGIN
 INTERNAL_NAMESPACE_BEGIN
 
 class EventDispatcher;
 class Demuxer;
-class StreamSyncManager;
 
 class DecoderBase {
 public:
     /**
      * @brief 构造函数
      * @param demuxer 解复用器
-     * @param StreamSyncManager 同步控制器
      * @param eventDispatcher 事件分发器
      */
     DecoderBase(std::shared_ptr<Demuxer> demuxer,
-                std::shared_ptr<StreamSyncManager> StreamSyncManager,
                 std::shared_ptr<EventDispatcher> eventDispatcher,
                 std::shared_ptr<SeekCoordinator> seekCoordinator);
     /**
@@ -111,17 +107,6 @@ public:
      * @return uint32_t 最大帧队列大小
      */
     uint32_t maxFrameQueueSize() const;
-
-    /**
-     * @brief 设置是否按帧率去推送
-     * @param enable 是否按帧率去推送
-     */
-    void setFrameRateControl(bool enable);
-    /**
-     * @brief 获取是否按帧率去推送
-     * @return true 按帧率去推送，false 不按帧率去推送
-     */
-    bool isFrameRateControlEnabled() const;
 
     /**
      * @brief 设置解码最大连续错误容忍次数
@@ -251,18 +236,6 @@ protected:
     bool handleDecodeRecovery();
 
     /**
-     * @brief 计算帧显示时间（单位 ms）
-     * @param pts 帧的pts
-     * @param duration 帧的持续时间
-     * @param currentTime 当前时间点
-     * @param lastFrameTime 上一帧的时间点
-     * @return double 帧显示时间（单位 ms）
-     */
-    double calculateFrameDisplayTime(
-        double pts, double duration, const std::chrono::system_clock::time_point &currentTime,
-        std::optional<std::chrono::system_clock::time_point> &lastFrameTime) const;
-
-    /**
      * @brief 检查并更新序列号
      * @param currentSerial 当前序列号
      * @param packetQueue 数据包队列
@@ -296,24 +269,14 @@ protected:
 
     std::atomic_bool requestInterruption_ = false; // 是否请求中断解码线程
 
-    // 解码时间戳
-    std::optional<std::chrono::system_clock::time_point> lastFrameTime_;
-
     // 配置
     // 速度 此处存为整型，单位为 1000 倍
     std::atomic_uint16_t speed_ = 1000;
 
-    // demuxer是否正在seeking
-    std::atomic_bool demuxerSeeking_ = false;
-    // 是否按帧率去推送
-    std::atomic_bool enableFrameControl_{true};
     // 解码最大连续错误容忍次数
     std::atomic_uint16_t maxConsecutiveErrors_{5};
     // 解码错误后，恢复的时间间隔（ms）
     std::atomic_uint16_t recoveryInterval_{1};
-
-    // 同步控制器
-    std::shared_ptr<StreamSyncManager> syncController_;
 
     // 统计信息
     mutable decoder_sdk::DecoderStatistics statistics_;

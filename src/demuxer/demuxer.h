@@ -17,7 +17,6 @@ extern "C" {
 #include "event_system/event_dispatcher.h"
 #include "jitter_detector.h"
 #include "recorder/real_time_stream_recorder.h"
-#include "stream_sync/stream_sync_manager.h"
 
 DECODER_SDK_NAMESPACE_BEGIN
 INTERNAL_NAMESPACE_BEGIN
@@ -29,7 +28,6 @@ public:
      * @param eventDispatcher 事件分发器
      */
     explicit Demuxer(std::shared_ptr<EventDispatcher> eventDispatcher,
-                     std::shared_ptr<StreamSyncManager> streamSyncManager,
                      std::shared_ptr<SeekCoordinator> seekCoordinator);
     /**
      * @brief 析构函数
@@ -349,8 +347,6 @@ private:
 
     // 事件分发器
     std::shared_ptr<EventDispatcher> eventDispatcher_;
-    // 时间同步器
-    std::shared_ptr<StreamSyncManager> streamSyncManager_;
     // Seek协调器
     std::shared_ptr<SeekCoordinator> seekCoordinator_;
 

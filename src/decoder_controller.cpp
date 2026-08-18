@@ -17,8 +17,7 @@ constexpr char kModuleName[] = "DecoderController";
 DecoderController::DecoderController()
     : eventDispatcher_(std::make_shared<EventDispatcher>()),
       seekCoordinator_(std::make_shared<SeekCoordinator>()),
-      syncController_(std::make_shared<StreamSyncManager>()),
-      demuxer_(std::make_shared<Demuxer>(eventDispatcher_, syncController_, seekCoordinator_)),
+      demuxer_(std::make_shared<Demuxer>(eventDispatcher_, seekCoordinator_)),
       asyncOpenInProgress_(false),
       shouldCancelAsyncOpen_(false)
 {
@@ -78,9 +77,8 @@ DecoderController::~DecoderController()
 bool DecoderController::open(const std::string &url, const DecoderConfig &config)
 {
     LOG_INFO("Opening media synchronously: {}", url);
-    LOG_DEBUG("Config - decodeMediaType: {}, enableAutoReconnect: {}, enableFrameRateControl: {}",
-              static_cast<uint32_t>(config.decodeMediaTypes), config.enableAutoReconnect,
-              config.enableFrameRateControl);
+    LOG_DEBUG("Config - decodeMediaType: {}, enableAutoReconnect: {}",
+              static_cast<uint32_t>(config.decodeMediaTypes), config.enableAutoReconnect);
 
     // 取消任何正在进行的异步打开操作
     cancelAsyncOpen();
@@ -283,11 +281,6 @@ bool DecoderController::resume()
         return false;
     }
 
-    if (demuxer_->isRealTime()) {
-        syncController_->resetClocks();
-        LOG_DEBUG("Reset clocks for real-time stream");
-    }
-
     if (videoDecoder_) {
         videoDecoder_->resume();
         LOG_DEBUG("Video decoder resumed");
@@ -360,14 +353,14 @@ bool DecoderController::seek(double position)
 
     // 发送开始seek的事件
     auto event =
-        std::make_shared<SeekEventArgs>(syncController_->getMasterClock(), position, kModuleName,
+        std::make_shared<SeekEventArgs>(position, kModuleName,
                                         utils::eventType2Desc(EventType::kSeekStarted));
     eventDispatcher_->triggerEvent(EventType::kSeekStarted, event);
 
     LOG_DEBUG("Requesting demuxer to seek to position: {:.3f}s", position);
 
     const auto sendFailedEvent = [this, position]() {
-        auto event = std::make_shared<SeekEventArgs>(syncController_->getMasterClock(), position,
+        auto event = std::make_shared<SeekEventArgs>(position,
                                                      kModuleName,
                                                      utils::eventType2Desc(EventType::kSeekFailed));
         eventDispatcher_->triggerEvent(EventType::kSeekFailed, event);
@@ -434,12 +427,6 @@ bool DecoderController::setSpeed(double speed)
         LOG_DEBUG("Audio decoder speed set to: {:.2f}x", speed);
     }
 
-    // 设置时钟速度
-    if (syncController_) {
-        syncController_->setSpeed(speed);
-        LOG_DEBUG("Sync controller speed set to: {:.2f}x", speed);
-    }
-
     LOG_INFO("Playback speed successfully set to: {:.2f}x", speed);
     return true;
 }
@@ -456,45 +443,11 @@ std::shared_ptr<FrameQueue> DecoderController::audioQueue()
     return audioDecoder_ ? audioDecoder_->frameQueue() : emptyQueue;
 }
 
-void DecoderController::setMasterClock(ClockType type)
-{
-    LOG_DEBUG("Setting master clock type to: {}", static_cast<int>(type));
-    syncController_->setMaster(type);
-    LOG_INFO("Master clock type set successfully");
-}
-
 double DecoderController::getVideoFrameRate() const
 {
     const double frameRate = videoDecoder_ ? videoDecoder_->getFrameRate() : 0.0;
     LOG_TRACE("Video frame rate: {:.2f} fps", frameRate);
     return frameRate;
-}
-
-void DecoderController::setFrameRateControl(bool enable)
-{
-    LOG_INFO("Setting frame rate control: {}", enable ? "enabled" : "disabled");
-
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        config_.enableFrameRateControl = enable;
-    }
-
-    if (audioDecoder_) {
-        audioDecoder_->setFrameRateControl(enable);
-        LOG_DEBUG("Audio decoder frame rate control updated");
-    }
-
-    if (videoDecoder_) {
-        videoDecoder_->setFrameRateControl(enable);
-        LOG_DEBUG("Video decoder frame rate control updated");
-    }
-}
-
-bool DecoderController::isFrameRateControlEnabled() const
-{
-    const bool enabled = videoDecoder_ ? videoDecoder_->isFrameRateControlEnabled() : false;
-    LOG_TRACE("Frame rate control enabled: {}", enabled);
-    return enabled;
 }
 
 double DecoderController::curSpeed() const
@@ -751,13 +704,13 @@ bool DecoderController::openInternal(const std::string &url, const DecoderConfig
 
     // 根据配置初始化解码器
     if (demuxer_->hasVideo() && config_.decodeMediaTypes.has(MediaType::kVideo)) {
-        videoDecoder_ = std::make_shared<VideoDecoder>(demuxer_, syncController_, eventDispatcher_, seekCoordinator_);
+        videoDecoder_ = std::make_shared<VideoDecoder>(demuxer_, eventDispatcher_, seekCoordinator_);
         LOG_DEBUG("Video decoder created for: {}", url);
     }
 
     // 开启音频解码器
     if (demuxer_->hasAudio() && config_.decodeMediaTypes.has(MediaType::kAudio)) {
-        audioDecoder_ = std::make_shared<AudioDecoder>(demuxer_, syncController_, eventDispatcher_, seekCoordinator_);
+        audioDecoder_ = std::make_shared<AudioDecoder>(demuxer_, eventDispatcher_, seekCoordinator_);
         LOG_DEBUG("Audio decoder created for: {}", url);
     }
 
@@ -807,15 +760,10 @@ bool DecoderController::startDecodeInternal()
 {
     LOG_DEBUG("Starting decode internal");
 
-    // 重置同步控制器
-    syncController_->resetClocks();
-    LOG_DEBUG("Sync controller clocks reset");
-
     // 开启视频解码器
     bool hasVideoDecoder = false;
     if (demuxer_->hasVideo() && config_.decodeMediaTypes.has(MediaType::kVideo) && videoDecoder_) {
         videoDecoder_->init(config_);
-        videoDecoder_->setFrameRateControl(config_.enableFrameRateControl);
         videoDecoder_->setSpeed(config_.speed);
         if (!videoDecoder_->open()) {
             LOG_ERROR("Failed to open video decoder");
@@ -830,7 +778,6 @@ bool DecoderController::startDecodeInternal()
     bool hasAudioDecoder = false;
     if (demuxer_->hasAudio() && config_.decodeMediaTypes.has(MediaType::kAudio) && audioDecoder_) {
         audioDecoder_->init(config_);
-        audioDecoder_->setFrameRateControl(config_.enableFrameRateControl);
         audioDecoder_->setSpeed(config_.speed);
         if (!audioDecoder_->open()) {
             LOG_ERROR("Failed to open audio decoder");
@@ -839,26 +786,6 @@ bool DecoderController::startDecodeInternal()
         LOG_DEBUG("Audio decoder initialized and opened");
 
         hasAudioDecoder = true;
-    }
-
-    // 如果是实时流，且只有视频，则不需要帧率控制
-    if (isRealTimeUrl() && hasVideoDecoder && !hasAudioDecoder) {
-        videoDecoder_->setFrameRateControl(false);
-    }
-
-    // 默认使用音频作为主时钟
-    if (demuxer_->hasAudio() && audioDecoder_) {
-        syncController_->setMaster(ClockType::kAudio);
-        LOG_DEBUG("Master clock set to audio");
-    } else if (demuxer_->hasVideo() && videoDecoder_) {
-        // 只有视频时，实时流使用外部时钟，文件流使用视频时钟
-        if (demuxer_->isRealTime()) {
-            syncController_->setMaster(ClockType::kExternal);
-            LOG_DEBUG("Master clock set to external");
-        } else {
-            syncController_->setMaster(ClockType::kVideo);
-            LOG_DEBUG("Master clock set to video");
-        }
     }
 
     // 如果启用了预缓冲，设置等待状态

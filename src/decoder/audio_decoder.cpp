@@ -8,7 +8,6 @@ extern "C" {
 #include "demuxer/demuxer.h"
 #include "event_system/event_dispatcher.h"
 #include "logger/logger.h"
-#include "stream_sync/stream_sync_manager.h"
 #include "utils/common_utils.h"
 
 namespace {
@@ -19,10 +18,9 @@ DECODER_SDK_NAMESPACE_BEGIN
 INTERNAL_NAMESPACE_BEGIN
 
 AudioDecoder::AudioDecoder(std::shared_ptr<Demuxer> demuxer,
-                           std::shared_ptr<StreamSyncManager> StreamSyncManager,
                            std::shared_ptr<EventDispatcher> eventDispatcher,
                            std::shared_ptr<SeekCoordinator> seekCoordinator)
-    : DecoderBase(demuxer, StreamSyncManager, eventDispatcher, seekCoordinator)
+    : DecoderBase(demuxer, eventDispatcher, seekCoordinator)
 {
     init({});
 }
@@ -82,7 +80,6 @@ void AudioDecoder::decodeLoop()
     }
 
     auto serial = packetQueue->serial();
-    syncController_->updateAudioClock(0.0, serial);
 
     bool readFirstFrame = false;
     bool occuredError = false;
@@ -108,20 +105,12 @@ void AudioDecoder::decodeLoop()
             if (requestInterruption_.load()) {
                 break;
             }
-            // 重置最后帧时间
-            lastFrameTime_ = std::nullopt;
             continue;
         }
 
         // 检查序列号变化
         if (checkAndUpdateSerial(serial, packetQueue.get())) {
             // 序列号发生变化时，重置下列数据
-
-            // 重置音频时钟
-            syncController_->updateAudioClock(0.0, serial);
-            // 重置最后帧时间
-            lastFrameTime_ = std::nullopt;
-
             // 清空音频队列
             frameQueue_->clear();
 
@@ -197,9 +186,6 @@ void AudioDecoder::decodeLoop()
             const double duration = outputFrame.nbSamples() / actualSampleRate;
             // 计算PTS（单位s）
             const double pts = calculatePts(outputFrame);
-            if (!std::isnan(pts)) {
-                syncController_->updateAudioClock(pts, serial);
-            }
 
             // 处理 seek 抛帧逻辑 (事务驱动)
             if (shouldDiscardBySeek(pts, serial)) {
@@ -315,31 +301,6 @@ void AudioDecoder::decodeLoop()
             outFrame->setDurationByFps(duration);
             outFrame->setSecPts(pts);
             outFrame->setMediaType(AVMEDIA_TYPE_AUDIO);
-
-            // 计算延时
-            // 如果启用了帧率控制，则根据帧率控制推送速度
-            if (isFrameRateControlEnabled()) {
-                // 计算基本延迟
-                double baseDelay =
-                    calculateFrameDisplayTime(pts, duration * 1000.0, currentTime, lastFrameTime_);
-
-                // // 计算音频缓冲区延迟
-                // double bufferDelay = frameQueue_->size() * duration * 1000.0; //
-                // 估算缓冲区中的音频时长
-
-                // // 使用同步控制器计算实际延迟
-                // double syncDelay = syncController_->computeAudioDelay(pts, baseDelay, speed());
-
-                // // 修正：限制最大延迟，防止延迟累积
-                // const double maxDelay = 100.0; // 最大延迟100ms
-                // syncDelay = std::min(syncDelay, maxDelay);
-
-                // 使用同步后的延迟
-                if (utils::greater(baseDelay, 0.0)) {
-                    std::this_thread::sleep_until(
-                        currentTime + std::chrono::milliseconds(static_cast<int64_t>(baseDelay)));
-                }
-            }
 
             // 提交帧到队列
             frameQueue_->commitFrame();

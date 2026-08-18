@@ -21,7 +21,6 @@ set(MODULE_DIRS
     logger
     muxer
     recorder
-    stream_sync
     utils
 )
 

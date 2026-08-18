@@ -86,30 +86,9 @@ FrameQueue DecoderController::audioQueue()
     return FrameQueue(impl_->audioQueue().get());
 }
 
-void DecoderController::setMasterClock(ClockType type)
-{
-    if (!impl_)
-        return;
-
-    impl_->setMasterClock(type);
-}
-
 double DecoderController::getVideoFrameRate() const
 {
     return impl_ ? impl_->getVideoFrameRate() : 0.0;
-}
-
-void DecoderController::setFrameRateControl(bool enable)
-{
-    if (!impl_)
-        return;
-
-    impl_->setFrameRateControl(enable);
-}
-
-bool DecoderController::isFrameRateControlEnabled() const
-{
-    return impl_ ? impl_->isFrameRateControlEnabled() : false;
 }
 
 double DecoderController::curSpeed() const
@@ -227,7 +206,7 @@ bool DecoderController::resetLoopCount()
 const std::optional<StreamInfo> &DecoderController::streamInfo() const
 {
     static const std::optional<StreamInfo> emptyStreamInfo = std::nullopt;
-    return impl_ ? impl_->streamInfo() : std::nullopt;
+    return impl_ ? impl_->streamInfo() : emptyStreamInfo;
 }
 
 std::optional<DecoderInfo> DecoderController::decoderInfo(MediaType mediaType) const

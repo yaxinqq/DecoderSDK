@@ -269,16 +269,14 @@ public:
 // Seek事件参数
 struct SeekEventArgs : public EventArgs {
 public:
-    SeekEventArgs(double position = 0.0, double targetPosition = 0.0,
-                  const std::string &source = "", const std::string &description = "",
-                  int errcode = 0, const std::string &errorMessage = "")
+    SeekEventArgs(double targetPosition = 0.0, const std::string &source = "", 
+                  const std::string &description = "", int errcode = 0, 
+                  const std::string &errorMessage = "")
         : EventArgs(source, description, errcode, errorMessage),
-          position(position),
           targetPosition(targetPosition)
     {
     }
 
-    double position;       // 当前位置（秒）
     double targetPosition; // 目标位置（秒）
 };
 
@@ -535,8 +533,6 @@ struct DecoderConfig {
         kUdpMulticast, // udp多播
     };
 
-    // 是否开启帧率控制
-    bool enableFrameRateControl = true;
     // 播放速度
     double speed = 1.0;
     // 硬件解码器类型

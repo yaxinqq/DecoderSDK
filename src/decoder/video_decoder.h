@@ -18,11 +18,9 @@ public:
     /**
      * @brief 构造函数
      * @param demuxer 解复用器
-     * @param StreamSyncManager 同步控制器
      * @param eventDispatcher 事件分发器
      */
     VideoDecoder(std::shared_ptr<Demuxer> demuxer,
-                 std::shared_ptr<StreamSyncManager> StreamSyncManager,
                  std::shared_ptr<EventDispatcher> eventDispatcher,
                  std::shared_ptr<SeekCoordinator> seekCoordinator);
     /**

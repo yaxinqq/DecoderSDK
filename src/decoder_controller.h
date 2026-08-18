@@ -11,7 +11,6 @@
 #include "demuxer/demuxer.h"
 #include "event_system/event_dispatcher.h"
 #include "include/decodersdk/common_define.h"
-#include "stream_sync/stream_sync_manager.h"
 
 DECODER_SDK_NAMESPACE_BEGIN
 INTERNAL_NAMESPACE_BEGIN
@@ -133,32 +132,11 @@ public:
     std::shared_ptr<FrameQueue> audioQueue();
 
     /**
-     * @brief 设置主时钟类型
-     *
-     * @param type 主时钟类型
-     */
-    void setMasterClock(ClockType type);
-
-    /**
      * @brief 获取视频帧率
      *
      * @return 视频帧率
      */
     double getVideoFrameRate() const;
-
-    /**
-     * @brief 设置是否启用帧率控制
-     *
-     * @param enable true 启用; false 禁用
-     */
-    void setFrameRateControl(bool enable);
-
-    /**
-     * @brief 获取是否启用帧率控制
-     *
-     * @return true 启用; false 禁用
-     */
-    bool isFrameRateControlEnabled() const;
 
     /**
      * @brief 获取当前播放速度
@@ -390,7 +368,6 @@ private:
 private:
     std::shared_ptr<EventDispatcher> eventDispatcher_;  // 事件分发器
     std::shared_ptr<SeekCoordinator> seekCoordinator_;  // Seek协调器
-    std::shared_ptr<StreamSyncManager> syncController_; // 流同步管理器
 
     std::shared_ptr<Demuxer> demuxer_;           // 解复用器
     std::shared_ptr<VideoDecoder> videoDecoder_; // 视频解码器

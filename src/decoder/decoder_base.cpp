@@ -6,7 +6,6 @@
 #include "demuxer/demuxer.h"
 #include "event_system/event_dispatcher.h"
 #include "logger/logger.h"
-#include "stream_sync/stream_sync_manager.h"
 #include "utils/common_utils.h"
 
 namespace {
@@ -17,15 +16,12 @@ DECODER_SDK_NAMESPACE_BEGIN
 INTERNAL_NAMESPACE_BEGIN
 
 DecoderBase::DecoderBase(std::shared_ptr<Demuxer> demuxer,
-                         std::shared_ptr<StreamSyncManager> StreamSyncManager,
                          std::shared_ptr<EventDispatcher> eventDispatcher,
                          std::shared_ptr<SeekCoordinator> seekCoordinator)
     : demuxer_(demuxer),
-      syncController_(StreamSyncManager),
       eventDispatcher_(eventDispatcher),
       seekCoordinator_(seekCoordinator),
-      frameQueue_(new FrameQueue(kFrameQueueDefaultSize, false, false)),
-      lastFrameTime_(std::nullopt)
+      frameQueue_(new FrameQueue(kFrameQueueDefaultSize, false, false))
 {
     statistics_.reset();
 }
@@ -131,16 +127,6 @@ void DecoderBase::setMaxFrameQueueSize(uint32_t size)
 uint32_t DecoderBase::maxFrameQueueSize() const
 {
     return frameQueue_->capacity();
-}
-
-void DecoderBase::setFrameRateControl(bool enable)
-{
-    utils::atomicUpdateIfNotEqual<bool>(enableFrameControl_, enable);
-}
-
-bool DecoderBase::isFrameRateControlEnabled() const
-{
-    return enableFrameControl_.load();
 }
 
 void DecoderBase::setMaxConsecutiveErrors(uint16_t maxErrors)
@@ -268,45 +254,6 @@ bool DecoderBase::handleDecodeRecovery()
     eventDispatcher_->triggerEvent(EventType::kDecodeRecovery, event);
 
     return true;
-}
-
-double DecoderBase::calculateFrameDisplayTime(
-    double pts, double duration, const std::chrono::system_clock::time_point &currentTime,
-    std::optional<std::chrono::system_clock::time_point> &lastFrameTime) const
-{
-    if (std::isnan(pts)) {
-        return 0.0;
-    }
-
-    // 获取当前播放速度
-    double currentSpeed = speed();
-    if (currentSpeed <= 0.0f) {
-        currentSpeed = 1.0f; // 防止除零错误
-    }
-
-    // 首次调用，初始化
-    if (!lastFrameTime.has_value()) {
-        lastFrameTime = currentTime;
-        return duration;
-    }
-
-    // 基于帧率计算理论帧间隔，并考虑播放速度
-    double frameInterval = duration;
-    frameInterval /= currentSpeed; // 速度越快，帧间隔越短
-
-    // 计算下一帧应该解码的时间点
-    const auto nextFrameTime =
-        *lastFrameTime + std::chrono::microseconds(static_cast<int64_t>(frameInterval * 1000.0));
-
-    // 计算基本延迟时间
-    double baseDelay =
-        std::chrono::duration_cast<std::chrono::microseconds>(nextFrameTime - currentTime).count() /
-        1000.0;
-
-    // 更新上一帧时间为理论的下一帧时间
-    lastFrameTime = nextFrameTime;
-
-    return baseDelay;
 }
 
 bool DecoderBase::checkAndUpdateSerial(uint64_t &currentSerial, PacketQueue *packetQueue)
