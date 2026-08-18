@@ -1,4 +1,4 @@
-﻿#include "include/decodersdk/decoder_controller.h"
+#include "include/decodersdk/decoder_controller.h"
 
 #include "decoder_controller.h"
 
@@ -101,14 +101,14 @@ bool DecoderController::startRecording(const std::string &outputPath)
     return impl_ ? impl_->startRecording(outputPath) : false;
 }
 
-bool DecoderController::stopRecording()
+bool DecoderController::stopRecording(const std::string &outputPath)
 {
-    return impl_ ? impl_->stopRecording() : false;
+    return impl_ ? impl_->stopRecording(outputPath) : false;
 }
 
-bool DecoderController::isRecording() const
+bool DecoderController::isRecording(const std::string &outputPath) const
 {
-    return impl_ ? impl_->isRecording() : false;
+    return impl_ ? impl_->isRecording(outputPath) : false;
 }
 
 void DecoderController::cancelAsyncOpen()

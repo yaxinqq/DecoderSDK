@@ -1,4 +1,4 @@
-﻿#include "demuxer.h"
+#include "demuxer.h"
 
 extern "C" {
 #include <libavutil/avutil.h>
@@ -37,7 +37,6 @@ Demuxer::Demuxer(std::shared_ptr<EventDispatcher> eventDispatcher,
                  std::shared_ptr<SeekCoordinator> seekCoordinator)
     : eventDispatcher_(eventDispatcher),
       seekCoordinator_(seekCoordinator),
-      realTimeStreamRecorder_(std::make_unique<RealTimeStreamRecorder>(eventDispatcher)),
       loopMode_(LoopMode::kNone),
       maxLoops_(-1),
       currentLoopCount_(0)
@@ -169,24 +168,63 @@ bool Demuxer::startRecording(const std::string &outputPath)
         return false;
     }
 
+    if (!isOpened_) {
+        LOG_ERROR("Cannot start recording: stream not opened");
+        return false;
+    }
+
     if (!formatContext_) {
         LOG_ERROR("Cannot start recording: no input format context");
         return false;
     }
 
-    return realTimeStreamRecorder_->startRecording(outputPath, formatContext_, recordMediaTypes_);
+    std::lock_guard<std::mutex> recorderLock(recorderMutex_);
+    if (recorders_.count(outputPath)) {
+        LOG_WARN("Recording already started for path: {}", outputPath);
+        return true;
+    }
+
+    auto recorder = std::make_unique<RealTimeStreamRecorder>(eventDispatcher_);
+    if (recorder->startRecording(outputPath, formatContext_, recordMediaTypes_)) {
+        recorders_[outputPath] = std::move(recorder);
+        return true;
+    }
+
+    return false;
 }
 
-bool Demuxer::stopRecording()
+bool Demuxer::stopRecording(const std::string &outputPath)
 {
-    std::lock_guard<std::mutex> lock(mutex_);
-    return realTimeStreamRecorder_->stopRecording();
+    std::lock_guard<std::mutex> lock(recorderMutex_);
+    if (outputPath.empty()) {
+        for (auto &it : recorders_) {
+            it.second->stopRecording();
+        }
+        recorders_.clear();
+        return true;
+    } else {
+        auto it = recorders_.find(outputPath);
+        if (it != recorders_.end()) {
+            bool result = it->second->stopRecording();
+            recorders_.erase(it);
+            return result;
+        }
+    }
+    return false;
 }
 
-bool Demuxer::isRecording() const
+bool Demuxer::isRecording(const std::string &outputPath) const
 {
-    std::lock_guard<std::mutex> lock(mutex_);
-    return realTimeStreamRecorder_->isRecording();
+    std::lock_guard<std::mutex> lock(recorderMutex_);
+    if (outputPath.empty()) {
+        return !recorders_.empty();
+    } else {
+        auto it = recorders_.find(outputPath);
+        if (it != recorders_.end()) {
+            return it->second->isRecording();
+        }
+    }
+    return false;
 }
 
 bool Demuxer::isPreBufferReady() const
@@ -459,8 +497,8 @@ void Demuxer::realTimeStreamDemuxLoop(AVPacket *pkt)
             // 通知 SeekCoordinator 失败
             seekCoordinator_->failSeek(position);
 
-            auto event = std::make_shared<SeekEventArgs>(position, kModuleName,
-                utils::eventType2Desc(EventType::kSeekFailed));
+            auto event = std::make_shared<SeekEventArgs>(
+                position, kModuleName, utils::eventType2Desc(EventType::kSeekFailed));
             eventDispatcher_->triggerEvent(EventType::kSeekFailed, event);
             LOG_WARN("Seek not supported for real-time streams, ignoring seek request to {:.2f}s",
                      position);
@@ -470,17 +508,7 @@ void Demuxer::realTimeStreamDemuxLoop(AVPacket *pkt)
         const int result = readAndProcessPacket(pkt, readFirstPacket, readFailedCount);
         if (result == 0) {
             // 如果正在录制，则将需要录制的流写入录制器
-            if (realTimeStreamRecorder_->isRecording()) {
-                AVMediaType mediaType = AVMEDIA_TYPE_UNKNOWN;
-                if (recordMediaTypes_.has(MediaType::kVideo) &&
-                    pkt->stream_index == videoStreamIndex_) {
-                    mediaType = AVMEDIA_TYPE_VIDEO;
-                } else if (recordMediaTypes_.has(MediaType::kAudio) &&
-                           pkt->stream_index == audioStreamIndex_) {
-                    mediaType = AVMEDIA_TYPE_AUDIO;
-                }
-                realTimeStreamRecorder_->writePacket(Packet(pkt), mediaType);
-            }
+            writeToRecorders(pkt);
 
             if (!handleReadedVideoPacket(pkt, videoTimeBase, jitterDetector, streamStable,
                                          consecutiveFrameDrops)) {
@@ -758,6 +786,31 @@ bool Demuxer::handleSeekRequest()
     eventDispatcher_->triggerEvent(EventType::kSeekSuccess, event);
 
     return true;
+}
+
+void Demuxer::writeToRecorders(AVPacket *pkt)
+{
+    std::lock_guard<std::mutex> lock(recorderMutex_);
+    if (recorders_.empty()) {
+        return;
+    }
+
+    AVMediaType mediaType = AVMEDIA_TYPE_UNKNOWN;
+    const auto recordType = recordMediaTypes_;
+    if ((recordType.has(MediaType::kVideo)) &&
+        pkt->stream_index == videoStreamIndex_) {
+        mediaType = AVMEDIA_TYPE_VIDEO;
+    } else if ((recordType.has(MediaType::kAudio)) &&
+               pkt->stream_index == audioStreamIndex_) {
+        mediaType = AVMEDIA_TYPE_AUDIO;
+    }
+
+    if (mediaType != AVMEDIA_TYPE_UNKNOWN) {
+        Packet packet(pkt);
+        for (auto &it : recorders_) {
+            it.second->writePacket(packet, mediaType);
+        }
+    }
 }
 
 bool Demuxer::handleReadedVideoPacket(const AVPacket *const packet, const AVRational &videoTimeBase,

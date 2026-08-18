@@ -6,6 +6,7 @@
 #include <memory>
 #include <mutex>
 #include <thread>
+#include <unordered_map>
 
 extern "C" {
 #include <libavformat/avformat.h>
@@ -122,14 +123,16 @@ public:
     bool startRecording(const std::string &outputPath);
     /**
      * @brief 停止录制
+     * @param outputPath 输出路径，如果为空，则停止所有录制。如果不为空，则停止特定的录制
      * @return 是否成功停止录制
      */
-    bool stopRecording();
+    bool stopRecording(const std::string &outputPath = "");
     /**
      * @brief 是否正在录制
+     * @param outputPath 输出路径，如果为空，则返回是否有任意录制。如果不为空，则返回特定录制的状态
      * @return 是否正在录制
      */
-    bool isRecording() const;
+    bool isRecording(const std::string &outputPath = "") const;
 
     /**
      * @brief 检查预缓冲状态
@@ -275,6 +278,12 @@ private:
                                  int &consecutiveFrameDrops);
 
     /**
+     * @brief 写入录制器
+     * @param pkt 数据包
+     */
+    void writeToRecorders(AVPacket *pkt);
+
+    /**
      * @brief 打开解复用器，内部调用，不加锁
      */
     bool openInternal(const std::string &url, const DecoderConfig &config,
@@ -318,6 +327,7 @@ private:
 
     // 同步原语
     mutable std::mutex mutex_;
+    mutable std::mutex recorderMutex_;
 
     // FFmpeg相关
     AVFormatContext *formatContext_ = nullptr;
@@ -341,7 +351,7 @@ private:
     std::atomic_int64_t seekMsPos_ = -1;
 
     // 录制器
-    std::unique_ptr<RealTimeStreamRecorder> realTimeStreamRecorder_;
+    std::unordered_map<std::string, std::unique_ptr<RealTimeStreamRecorder>> recorders_;
     // 需要录制的媒体类型
     MediaTypes recordMediaTypes_ = MediaType::kAll;
 

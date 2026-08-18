@@ -155,15 +155,17 @@ public:
     /**
      * @brief 停止录像
      *
+     * @param outputPath 输出路径，如果为空，则停止所有录像。如果不为空，则停止特定的录像
      * @return true 成功; false 失败
      */
-    bool stopRecording();
+    bool stopRecording(const std::string &outputPath = "");
     /**
      * @brief 获取是否正在录像
      *
+     * @param outputPath 输出路径，如果为空，则返回是否有任意录制。如果不为空，则返回特定录制的状态
      * @return true 正在录像; false 未录像
      */
-    bool isRecording() const;
+    bool isRecording(const std::string &outputPath = "") const;
 
     /**
      * @brief 设置全部事件的监听器

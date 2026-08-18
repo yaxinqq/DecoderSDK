@@ -477,30 +477,32 @@ bool DecoderController::startRecording(const std::string &outputPath)
     return result;
 }
 
-bool DecoderController::stopRecording()
+bool DecoderController::stopRecording(const std::string &outputPath)
 {
-    LOG_INFO("Stopping recording");
+    const std::string pathInLog = outputPath.empty() ? "any" : outputPath;
+    LOG_INFO("Stopping recording for {}", pathInLog);
 
     if (!demuxer_) {
         LOG_ERROR("Cannot stop recording: demuxer is null");
         return false;
     }
 
-    const bool result = demuxer_->stopRecording();
+    const bool result = demuxer_->stopRecording(outputPath);
 
     if (result) {
-        LOG_INFO("Recording stopped successfully");
+        LOG_INFO("Recording stopped successfully for {}", pathInLog);
     } else {
-        LOG_ERROR("Failed to stop recording");
+        LOG_ERROR("Failed to stop recording for {}", pathInLog);
     }
 
     return result;
 }
 
-bool DecoderController::isRecording() const
+bool DecoderController::isRecording(const std::string &outputPath) const
 {
-    const bool recording = demuxer_ && demuxer_->isRecording();
-    LOG_TRACE("Recording status: {}", recording ? "active" : "inactive");
+    const bool recording = demuxer_ && demuxer_->isRecording(outputPath);
+    LOG_TRACE("Recording status for {}: {}", outputPath.empty() ? "any" : outputPath,
+              recording ? "active" : "inactive");
     return recording;
 }
 
