@@ -10,6 +10,7 @@ FrameQueue::FrameQueue(int maxSize, bool keepLast, bool autoInit)
       maxSize_(maxSize),
       keepLast_(keepLast),
       pendingWriteIndex_(-1),
+      frontPts_(0.0),
       serial_(0),
       aborted_(false)
 {
@@ -89,6 +90,11 @@ bool FrameQueue::front(Frame &frame) const
     return true;
 }
 
+double FrameQueue::frontPts() const
+{
+    return frontPts_.load();
+}
+
 Frame *FrameQueue::getWritableFrame(int timeout)
 {
     std::unique_lock<std::mutex> lock(mutex_);
@@ -122,6 +128,11 @@ bool FrameQueue::commitFrame()
     tail_ = (tail_ + 1) % maxSize_;
     size_++;
     pendingWriteIndex_ = -1;
+
+    // 更新队首帧PTS
+    if (size_ > 0) {
+        frontPts_.store(queue_[head_].secPts());
+    }
 
     notifyWaiters();
     return true;
@@ -175,6 +186,7 @@ void FrameQueue::clear()
     tail_ = 0;
     size_ = 0;
     pendingWriteIndex_ = -1;
+    frontPts_.store(0.0);
 
     notifyWaiters();
 }
@@ -255,6 +267,7 @@ bool FrameQueue::setMaxCount(int maxCount)
     tail_ = 0;
     size_ = 0;
     pendingWriteIndex_ = -1;
+    frontPts_.store(0.0);
 
     // 将保存的帧重新放入队列（如果新容量允许）
     int framesToRestore = std::min(static_cast<int>(tempFrames.size()), maxCount);
@@ -262,6 +275,10 @@ bool FrameQueue::setMaxCount(int maxCount)
         queue_[tail_] = std::move(tempFrames[i]);
         tail_ = (tail_ + 1) % maxSize_;
         size_++;
+    }
+
+    if (size_ > 0) {
+        frontPts_.store(queue_[head_].secPts());
     }
 
     // 通知等待的线程
@@ -277,6 +294,7 @@ void FrameQueue::uninit()
     tail_ = 0;
     size_ = 0;
     pendingWriteIndex_ = -1;
+    frontPts_.store(0.0);
 
     if (queue_.empty())
         return;
@@ -314,6 +332,11 @@ bool FrameQueue::pushInternal(const Frame &frame)
     tail_ = (tail_ + 1) % maxSize_;
     size_++;
 
+    // 更新队首帧PTS
+    if (size_ > 0) {
+        frontPts_.store(queue_[head_].secPts());
+    }
+
     notifyWaiters();
     return true;
 }
@@ -327,6 +350,13 @@ bool FrameQueue::popInternal(Frame &frame)
     frame = std::move(queue_[head_]);
     head_ = (head_ + 1) % maxSize_;
     size_--;
+
+    // 更新队首帧PTS
+    if (size_ > 0) {
+        frontPts_.store(queue_[head_].secPts());
+    } else {
+        frontPts_.store(0.0);
+    }
 
     notifyWaiters();
     return true;

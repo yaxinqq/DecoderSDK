@@ -50,6 +50,12 @@ public:
      */
     bool front(Frame &frame) const;
 
+    /**
+     * @brief 获取队首帧的PTS（原子操作，低开销）
+     * @return 队首帧的PTS，如果队列为空返回0.0
+     */
+    double frontPts() const;
+
     // 查询接口
     /**
      * @brief 是否为空

@@ -79,6 +79,15 @@ bool FrameQueue::pop(Frame &frame, int timeout)
     return success;
 }
 
+double FrameQueue::frontPts() const
+{
+    if (!impl_ || !impl_->get()) {
+        return 0.0;
+    }
+
+    return impl_->get()->frontPts();
+}
+
 bool FrameQueue::tryPop(Frame &frame)
 {
     return pop(frame, 0);

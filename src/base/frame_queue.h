@@ -68,6 +68,12 @@ public:
     bool front(Frame &frame) const;
 
     /**
+     * @brief 获取队首帧的PTS（原子操作，低开销）
+     * @return 队首帧的PTS，如果队列为空返回0.0
+     */
+    double frontPts() const;
+
+    /**
      * @brief 获取可写入的帧指针（用于直接写入）
      * @param timeout 超时时间(毫秒)
      * @return 可写入的帧指针，失败返回nullptr
@@ -206,7 +212,9 @@ private:
 
     int pendingWriteIndex_; // 待写入帧的索引
 
-    uint64_t serial_;                   // 当前版本序号
+    std::atomic<double> frontPts_; // 队首帧的PTS（原子变量）
+
+    uint64_t serial_;              // 当前版本序号
     std::atomic<bool> aborted_;    // 是否已中止
     mutable std::mutex mutex_;     // 互斥锁
     std::condition_variable cond_; // 条件变量
