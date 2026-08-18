@@ -1,4 +1,4 @@
-#ifndef DECODER_SDK_DECODER_CONTROLLER
+﻿#ifndef DECODER_SDK_DECODER_CONTROLLER
 #define DECODER_SDK_DECODER_CONTROLLER
 #include "common_define.h"
 #include "frame_queue.h"

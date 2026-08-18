@@ -1,4 +1,4 @@
-#ifndef DECODER_SDK_FRAME_QUEUE_H
+﻿#ifndef DECODER_SDK_FRAME_QUEUE_H
 #define DECODER_SDK_FRAME_QUEUE_H
 #include <memory>
 

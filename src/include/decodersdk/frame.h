@@ -1,4 +1,4 @@
-#ifndef DECODER_SDK_FRAME_H
+﻿#ifndef DECODER_SDK_FRAME_H
 #define DECODER_SDK_FRAME_H
 #include <memory>
 
