@@ -152,6 +152,8 @@ void StreamPipeline::registerPlayer(VideoPlayerImpl *player)
             Qt::UniqueConnection);
     connect(this, &StreamPipeline::streamInfoUpdated, player, &VideoPlayerImpl::onStreamInfoUpdated,
             Qt::UniqueConnection);
+    connect(this, &StreamPipeline::streamStaticsInfoUpdated, player, &VideoPlayerImpl::onStreamStaticsInfoUpdated,
+            Qt::UniqueConnection);
     connect(this, &StreamPipeline::decoderInfoUpdated, player, &VideoPlayerImpl::onDecoderInfoUpdated,
             Qt::UniqueConnection);
 
@@ -182,6 +184,8 @@ void StreamPipeline::unRegisterPlayer(VideoPlayerImpl *player)
                &VideoPlayerImpl::onDecoderEventChanged);
     disconnect(this, &StreamPipeline::streamInfoUpdated, player,
                &VideoPlayerImpl::onStreamInfoUpdated);
+    disconnect(this, &StreamPipeline::streamStaticsInfoUpdated, player,
+               &VideoPlayerImpl::onStreamStaticsInfoUpdated);
     disconnect(this, &StreamPipeline::decoderInfoUpdated, player,
                &VideoPlayerImpl::onDecoderInfoUpdated);
 
@@ -341,6 +345,7 @@ void StreamPipeline::initDecoder(const QString &key)
 
     connect(decoder_, &DecodeWorker::eventUpdated, this, &StreamPipeline::onEventUpdated);
     connect(decoder_, &DecodeWorker::streamInfoUpdated, this, &StreamPipeline::streamInfoUpdated);
+    connect(decoder_, &DecodeWorker::streamStaticsInfoUpdated, this, &StreamPipeline::streamStaticsInfoUpdated);
     connect(decoder_, &DecodeWorker::decoderInfoUpdated, this, &StreamPipeline::decoderInfoUpdated);
     // ===================================================== //
 }

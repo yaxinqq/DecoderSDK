@@ -63,6 +63,8 @@ signals:
                       const std::shared_ptr<decoder_sdk::EventArgs> &event);
     // 向外部发送流信息变更
     void streamInfoUpdated(const std::optional<decoder_sdk::StreamInfo> &info);
+    // 向外部发送流统计信息变更（如实时视频码率）
+    void streamStaticsInfoUpdated(const decoder_sdk::StreamStaticsInfo &info);
     // 向外部发送解码器信息变更
     void decoderInfoUpdated(decoder_sdk::MediaType mediaType, const std::optional<decoder_sdk::DecoderInfo> &info);
 

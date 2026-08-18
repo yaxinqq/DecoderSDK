@@ -46,6 +46,35 @@ namespace {
             return QStringLiteral("%1:1").arg(QString::number(width / (double)height, 'f', 2));
         }
     }
+
+    // 将比特率(bps)格式化为人类可读的字符串
+    QString formatBitrate(const int bitrate)
+    {
+        if (bitrate <= 0) {
+            return QStringLiteral("未知");
+        }
+        if (bitrate >= 1000000) {
+            return QStringLiteral("%1 Mbps").arg(bitrate / 1000000.0, 0, 'f', 2);
+        }
+        if (bitrate >= 1000) {
+            return QStringLiteral("%1 kbps").arg(bitrate / 1000.0, 0, 'f', 2);
+        }
+        return QStringLiteral("%1 bps").arg(bitrate);
+    }
+
+    // 计算视频压缩率（以解码器实际输出像素格式的未压缩数据率为基准）
+    // bpp 由解码器基于 av_image_get_buffer_size 精确计算一次后提供
+    QString calculateCompressionRatio(const int width, const int height, const int frameRate, const int bitrate,
+                                      const int bpp)
+    {
+        if (width <= 0 || height <= 0 || frameRate <= 0 || bitrate <= 0 || bpp <= 0) {
+            return QStringLiteral("未知");
+        }
+        // 未压缩数据率 = 宽 × 高 × bpp × 帧率
+        const double rawBitrate = static_cast<double>(width) * height * bpp * frameRate;
+        const double ratio = rawBitrate / bitrate;
+        return QStringLiteral("%1:1").arg(ratio, 0, 'f', 2);
+    }
 } // namespace
 
 VideoPlayerImpl::VideoPlayerImpl(QObject *parent)
@@ -411,6 +440,12 @@ void VideoPlayerImpl::onStreamInfoUpdated(const std::optional<decoder_sdk::Strea
     resetStatisticalInfoUpdateTimer();
 }
 
+void VideoPlayerImpl::onStreamStaticsInfoUpdated(const decoder_sdk::StreamStaticsInfo &info)
+{
+    streamStaticsInfo_ = info;
+    resetStatisticalInfoUpdateTimer();
+}
+
 void VideoPlayerImpl::onDecoderInfoUpdated(decoder_sdk::MediaType mediaType, const std::optional<decoder_sdk::DecoderInfo> &info)
 {
     decoderInfos_.insert(mediaType, info);
@@ -576,6 +611,22 @@ void VideoPlayerImpl::setupStatisticalInfo()
         statisticalInfo_.append(QStringLiteral("    |--解码器名称：%1\n").arg(QString::fromStdString(audioDecoderInfo->codecName)));
     } else {
         statisticalInfo_.append(QStringLiteral("音频解码器信息 - 暂无\n"));
+    }
+    
+    // 组装实时统计信息
+    if (streamInfo_.has_value()) {
+        statisticalInfo_.append(QStringLiteral("\n实时统计信息\n"));
+        const auto &videoDecoderInfo = decoderInfos_.value(decoder_sdk::MediaType::kVideo);
+        const int bpp = videoDecoderInfo.has_value() ? videoDecoderInfo->bitsPerPixel : 0;
+        statisticalInfo_.append(QStringLiteral("比特率：%1，压缩率：%2\n")
+                                    .arg(formatBitrate(streamStaticsInfo_.videoBitrate),
+                                         calculateCompressionRatio(streamInfo_->videoInfo->width,
+                                                                   streamInfo_->videoInfo->height,
+                                                                   streamInfo_->videoInfo->frameRate,
+                                                                   streamStaticsInfo_.videoBitrate,
+                                                                   bpp)));
+    } else {
+        statisticalInfo_.append(QStringLiteral("实时统计信息 - 暂无\n"));
     }
 
     // 关闭定时器

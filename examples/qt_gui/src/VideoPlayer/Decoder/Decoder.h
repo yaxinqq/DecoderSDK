@@ -144,6 +144,12 @@ signals:
      */
     void streamInfoUpdated(const std::optional<decoder_sdk::StreamInfo> &info);
     /**
+     * @brief 发送流统计信息变更（如实时视频码率）
+     *
+     * @param info 流统计信息
+     */
+    void streamStaticsInfoUpdated(const decoder_sdk::StreamStaticsInfo &info);
+    /**
      * @brief 发送解码器信息变更
      *
      * @param mediaType 媒体类型

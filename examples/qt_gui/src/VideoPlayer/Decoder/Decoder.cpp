@@ -2,6 +2,7 @@
 #include "../Player/VideoPlayerImpl.h"
 
 #include <QThread>
+#include <QTimerEvent>
 
 #pragma region Decoder
 /*!
@@ -61,8 +62,16 @@ signals:
 
     // 发送流信息变更
     void streamInfoUpdated(const std::optional<decoder_sdk::StreamInfo> &info);
+    // 发送流统计信息变更（如实时视频码率）
+    void streamStaticsInfoUpdated(const decoder_sdk::StreamStaticsInfo &info);
     // 发送解码器信息变更
     void decoderInfoUpdated(decoder_sdk::MediaType mediaType, const std::optional<decoder_sdk::DecoderInfo> &info);
+
+protected:
+    /**
+     * @brief 定时器事件，用于定期广播实时流估算码率
+     */
+    void timerEvent(QTimerEvent *event) override;
 
 private:
     // 安全删除这个Decoder，请用这个关闭StreamDecoder
@@ -80,8 +89,23 @@ private:
     // 流事件的回调函数
     void streamEventCallback(decoder_sdk::EventType type, std::shared_ptr<decoder_sdk::EventArgs> event);
 
+    /**
+     * @brief 广播流统计信息
+     */
+    void broadcastStreamStaticsInfo();
+
+    /**
+     * @brief 开启定时拉取统计信息的定时器
+     */
+    void startFetchStaticsInfoTimer();
+    /**
+     * @brief 关闭定时拉取统计信息的定时器
+     */
+    void stopFetchStaticsInfoTimer();
+
 private:
     decoder_sdk::DecoderController controller_;
+    int staticsInfoBroadcastTimerId_ = -1; // 定期广播流信息的定时器ID（用于刷新实时流估算码率）
 };
 
 Decoder::Decoder(QObject *parent)
@@ -126,6 +150,37 @@ void Decoder::broadcastStreamAndDecoderInfo()
     emit streamInfoUpdated(controller_.streamInfo());
     emit decoderInfoUpdated(decoder_sdk::MediaType::kVideo, controller_.decoderInfo(decoder_sdk::MediaType::kVideo));
     emit decoderInfoUpdated(decoder_sdk::MediaType::kAudio, controller_.decoderInfo(decoder_sdk::MediaType::kAudio));
+}
+
+void Decoder::broadcastStreamStaticsInfo()
+{
+    emit streamStaticsInfoUpdated(controller_.streamStaticsInfo());
+}
+
+void Decoder::startFetchStaticsInfoTimer()
+{
+    if (staticsInfoBroadcastTimerId_ > 0) {
+        return;
+    }
+
+    staticsInfoBroadcastTimerId_ = startTimer(std::chrono::seconds(1));
+}
+
+void Decoder::stopFetchStaticsInfoTimer()
+{
+    if (staticsInfoBroadcastTimerId_ < 0)
+        return;
+
+    killTimer(staticsInfoBroadcastTimerId_);
+    staticsInfoBroadcastTimerId_ = -1;
+}
+
+void Decoder::timerEvent(QTimerEvent *event)
+{
+    if (event->timerId() == staticsInfoBroadcastTimerId_) {
+        broadcastStreamStaticsInfo();
+    }
+    QObject::timerEvent(event);
 }
 
 void Decoder::startRecoding(const QString &recordPath)
@@ -227,6 +282,9 @@ bool Decoder::resume()
 
 bool Decoder::close()
 {
+    // 停止定时广播
+    stopFetchStaticsInfoTimer();
+
     if (controller_.isRecording())
         controller_.stopRecording();
     if (!controller_.isDecodeStopped())
@@ -238,12 +296,24 @@ bool Decoder::close()
 void Decoder::openCallback(decoder_sdk::AsyncOpenResult result, bool openSuccess, const std::string &errorMessage)
 {
     emit openResultReady(result == decoder_sdk::AsyncOpenResult::kSuccess, QString::fromStdString(errorMessage));
-    if (result == decoder_sdk::AsyncOpenResult::kSuccess)
+    if (result == decoder_sdk::AsyncOpenResult::kSuccess) {
         controller_.startDecode();
+    }
 }
 
 void Decoder::streamEventCallback(decoder_sdk::EventType type, std::shared_ptr<decoder_sdk::EventArgs> event)
 {
+    switch (type) {
+        case decoder_sdk::EventType::kStreamOpened:
+            QMetaObject::invokeMethod(this, &Decoder::startFetchStaticsInfoTimer, Qt::QueuedConnection);
+            break;
+        case decoder_sdk::EventType::kStreamClose:
+            QMetaObject::invokeMethod(this, &Decoder::stopFetchStaticsInfoTimer, Qt::QueuedConnection);
+            break;
+        default:
+            break;
+    }
+
     emit eventUpdated(QString::fromStdString(controller_.url()), type, event);
 }
 
@@ -316,6 +386,7 @@ DecodeWorker::DecodeWorker(const QString &key, QObject *parent)
 
     connect(decoder_.data(), &Decoder::eventUpdated, this, &DecodeWorker::eventUpdated);
     connect(decoder_.data(), &Decoder::streamInfoUpdated, this, &DecodeWorker::streamInfoUpdated);
+    connect(decoder_.data(), &Decoder::streamStaticsInfoUpdated, this, &DecodeWorker::streamStaticsInfoUpdated);
     connect(decoder_.data(), &Decoder::decoderInfoUpdated, this, &DecodeWorker::decoderInfoUpdated);
     // ===================================================== //
 

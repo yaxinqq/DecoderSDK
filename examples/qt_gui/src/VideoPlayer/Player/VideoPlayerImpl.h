@@ -236,6 +236,7 @@ public slots:
                                const std::shared_ptr<decoder_sdk::EventArgs> &event);
 
     void onStreamInfoUpdated(const std::optional<decoder_sdk::StreamInfo> &info);
+    void onStreamStaticsInfoUpdated(const decoder_sdk::StreamStaticsInfo &info);
     void onDecoderInfoUpdated(decoder_sdk::MediaType mediaType, const std::optional<decoder_sdk::DecoderInfo> &info);
 
 	void onRendererNameChanged(const QString &name);
@@ -370,6 +371,8 @@ private:
 
 	// 媒体信息
     std::optional<decoder_sdk::StreamInfo> streamInfo_;
+	// 流统计信息（解码器生命周期内持续更新，如实时视频码率）
+    decoder_sdk::StreamStaticsInfo streamStaticsInfo_;
 	// 解码器信息
     QMap<decoder_sdk::MediaType, std::optional<decoder_sdk::DecoderInfo>> decoderInfos_;
 	// 渲染器的名称
