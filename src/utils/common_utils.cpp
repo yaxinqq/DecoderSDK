@@ -105,8 +105,7 @@ bool isRealtime(const std::string &url)
     }
 
     if ((u.find("http://") == 0 || u.find("https://") == 0) &&
-        (u.find(".m3u8") != std::string::npos || u.find("/live/") != std::string::npos ||
-         u.find("stream") != std::string::npos)) {
+        (u.find(".m3u8") != std::string::npos || u.find(".flv") != std::string::npos)) {
         return true;
     }
 

@@ -905,10 +905,10 @@ bool Demuxer::openInternal(const std::string &url, const DecoderConfig &config,
     }
 
     // 组装流信息
+    isRealTime_ = isRealTime;
     setupStreamInfo(url, config.decodeMediaTypes);
 
     // 设置状态
-    isRealTime_ = isRealTime;
     isOpened_ = true;
 
     // 设置预缓冲
@@ -1112,6 +1112,8 @@ void Demuxer::setupStreamInfo(const std::string_view &url, MediaTypes decodeMedi
         streamInfo_->audioInfo->sampleRate = stream->codecpar->sample_rate;
         streamInfo_->audioInfo->channels = stream->codecpar->ch_layout.nb_channels;
     }
+
+    streamInfo_->isRealtime = isRealTime_;
 }
 
 INTERNAL_NAMESPACE_END

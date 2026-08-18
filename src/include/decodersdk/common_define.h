@@ -200,6 +200,9 @@ struct StreamInfo {
         int channels;
     };
     std::optional<AudioInfo> audioInfo;
+    
+    // 根据协议、封装格式等信息推测是否为实时流
+    bool isRealtime = false;
 };
 
 // 解码器信息
