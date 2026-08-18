@@ -43,8 +43,11 @@ find_package(Qt5 REQUIRED COMPONENTS
 set(GLOBAL_INCLUDE_DIRS
     ${CMAKE_CURRENT_SOURCE_DIR}/../../src/include
     ${CMAKE_CURRENT_SOURCE_DIR}/src
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/VideoPlayer
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/VideoPlayer/VideoRender
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/VideoPlayer/Base
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/VideoPlayer/Decoder
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/VideoPlayer/Player
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/VideoPlayer/Renderer
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/VideoPlayer/Stream
     ${CMAKE_CURRENT_SOURCE_DIR}/external/vk_bootstrap/include
     ${CMAKE_CURRENT_SOURCE_DIR}/external/vma/include
     ${CMAKE_CURRENT_SOURCE_DIR}/../../external/vulkan/include
@@ -96,20 +99,6 @@ elseif(APPLE)
         ${OPENGL_LIBRARY}
         ${COCOA_LIBRARY}
     )
-    
-    # macOS下的CUDA库
-    if(CUDA_FOUND)
-        if(CUDAToolkit_FOUND)
-            list(APPEND GLOBAL_LINK_LIBRARIES
-                CUDA::cuda_driver
-                CUDA::cudart
-            )
-        else()
-            list(APPEND GLOBAL_LINK_LIBRARIES
-                ${CUDA_LIBRARIES}
-            )
-        endif()
-    endif()
 endif()
 
 # 设置输出目录

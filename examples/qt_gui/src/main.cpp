@@ -1,5 +1,5 @@
-﻿#include "SimplePlayer.h"
-#include "VideoPlayer/CommonUtils.h"
+#include "SimplePlayer.h"
+#include "CommonUtils.h"
 
 #include <QApplication>
 

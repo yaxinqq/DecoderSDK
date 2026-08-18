@@ -133,18 +133,21 @@ endif()
 
 # 设置Visual Studio筛选器（仅Windows/MSVC）
 if(MSVC)
-    # 收集所有源文件但分别处理
-    file(GLOB_RECURSE ALL_SOURCES "*.cpp" "*.h")
-    
-    # 分别收集不同文件夹的文件
+    # 分别收集不同文件夹的文件以创建筛选器
     file(GLOB ROOT_SOURCES "*.cpp" "*.h")
-    file(GLOB VIDEOPLAYER_SOURCES "VideoPlayer/*.cpp" "VideoPlayer/*.h")
-    file(GLOB_RECURSE VIDEORENDER_SOURCES "VideoPlayer/VideoRender/*.cpp" "VideoPlayer/VideoRender/*.h")
+    file(GLOB VIDEOPLAYER_BASE_SOURCES "VideoPlayer/Base/*.cpp" "VideoPlayer/Base/*.h")
+    file(GLOB VIDEOPLAYER_DECODER_SOURCES "VideoPlayer/Decoder/*.cpp" "VideoPlayer/Decoder/*.h")
+    file(GLOB VIDEOPLAYER_PLAYER_SOURCES "VideoPlayer/Player/*.cpp" "VideoPlayer/Player/*.h")
+    file(GLOB VIDEOPLAYER_RENDERER_SOURCES "VideoPlayer/Renderer/*.cpp" "VideoPlayer/Renderer/*.h")
+    file(GLOB VIDEOPLAYER_STREAM_SOURCES "VideoPlayer/Stream/*.cpp" "VideoPlayer/Stream/*.h")
     
     # 创建筛选器
     source_group("Source Files" FILES ${ROOT_SOURCES})
-    source_group("VideoPlayer" FILES ${VIDEOPLAYER_SOURCES})
-    source_group("VideoRender" FILES ${VIDEORENDER_SOURCES})
+    source_group("VideoPlayer/Base" FILES ${VIDEOPLAYER_BASE_SOURCES})
+    source_group("VideoPlayer/Decoder" FILES ${VIDEOPLAYER_DECODER_SOURCES})
+    source_group("VideoPlayer/Player" FILES ${VIDEOPLAYER_PLAYER_SOURCES})
+    source_group("VideoPlayer/Renderer" FILES ${VIDEOPLAYER_RENDERER_SOURCES})
+    source_group("VideoPlayer/Stream" FILES ${VIDEOPLAYER_STREAM_SOURCES})
     
     # 为UI文件创建筛选器
     if(UI_FILES)
