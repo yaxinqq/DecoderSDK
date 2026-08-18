@@ -694,7 +694,10 @@ void VideoDecoder::decodeLoop()
     auto *vaDisplay = hwAccel_ ? hwAccel_->getVADisplay() : nullptr;
 #endif
 
+    // 当前packet queue的序号
     auto serial = packetQueue->serial();
+    // 上一次上报给seek的序号
+    auto lastReportedSerial = serial;
 
     bool hasKeyFrame = false;
     bool readFirstFrame = false;
@@ -931,10 +934,10 @@ void VideoDecoder::decodeLoop()
                 continue;
             }
             // 到达目标位置，上报进度以尝试闭环 Seek 事务
-            if (seekCoordinator_) {
+            if (seekCoordinator_ && serial != lastReportedSerial) {
                 seekCoordinator_->reportReachedTarget(true, serial);
+                lastReportedSerial = serial;
             }
-
 
             // 如果是第一帧，发出事件
             if (!readFirstFrame) {
