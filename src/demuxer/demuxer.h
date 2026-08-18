@@ -13,6 +13,7 @@ extern "C" {
 
 #include "base/base_define.h"
 #include "base/packet.h"
+#include "base/seek_coordinator.h"
 #include "event_system/event_dispatcher.h"
 #include "jitter_detector.h"
 #include "recorder/real_time_stream_recorder.h"
@@ -28,7 +29,8 @@ public:
      * @param eventDispatcher 事件分发器
      */
     explicit Demuxer(std::shared_ptr<EventDispatcher> eventDispatcher,
-                     std::shared_ptr<StreamSyncManager> streamSyncManager);
+                     std::shared_ptr<StreamSyncManager> streamSyncManager,
+                     std::shared_ptr<SeekCoordinator> seekCoordinator);
     /**
      * @brief 析构函数
      */
@@ -349,6 +351,8 @@ private:
     std::shared_ptr<EventDispatcher> eventDispatcher_;
     // 时间同步器
     std::shared_ptr<StreamSyncManager> streamSyncManager_;
+    // Seek协调器
+    std::shared_ptr<SeekCoordinator> seekCoordinator_;
 
     // 预缓冲配置
     uint32_t preBufferVideoFrames_ = 0;

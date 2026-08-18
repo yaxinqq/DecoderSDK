@@ -32,6 +32,10 @@ bool greater(float a, float b, double epsilon = EPSILON);
 bool greaterAndEqual(double a, double b, double epsilon = DOUBLEEPSILON);
 bool greaterAndEqual(float a, float b, double epsilon = EPSILON);
 
+// a < b 返回true
+bool less(double a, double b, double epsilon = DOUBLEEPSILON);
+bool less(float a, float b, double epsilon = EPSILON);
+
 // 高精度休眠函数
 void highPrecisionSleep(
     double ms, std::chrono::steady_clock::time_point startTime = std::chrono::steady_clock::now());

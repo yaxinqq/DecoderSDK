@@ -15,6 +15,7 @@ extern "C" {
 #include "base/base_define.h"
 #include "base/frame_queue.h"
 #include "base/packet_queue.h"
+#include "base/seek_coordinator.h"
 #include "include/decodersdk/common_define.h"
 #include "stream_sync/clock.h"
 
@@ -35,7 +36,8 @@ public:
      */
     DecoderBase(std::shared_ptr<Demuxer> demuxer,
                 std::shared_ptr<StreamSyncManager> StreamSyncManager,
-                std::shared_ptr<EventDispatcher> eventDispatcher);
+                std::shared_ptr<EventDispatcher> eventDispatcher,
+                std::shared_ptr<SeekCoordinator> seekCoordinator);
     /**
      * @brief 析构函数
      */
@@ -74,15 +76,18 @@ public:
     std::shared_ptr<FrameQueue> frameQueue();
 
     /**
-     * @brief 跳转到指定时间戳
-     * @param pos 时间戳（单位 s）
-     */
-    virtual void setSeekPos(double pos);
-    /**
      * @brief 获取当前跳转到的时间戳
      * @return double 时间戳（单位 s）
      */
     double seekPos() const;
+
+    /**
+     * @brief 判定当前帧是否应该因为 Seek 事务被丢弃
+     * @param pts 帧的时间戳 (秒)
+     * @param serial 帧所属的序列号
+     * @return true 应该丢弃; false 应该保留
+     */
+    bool shouldDiscardBySeek(double pts, uint64_t serial) const;
 
     /**
      * @brief 设置倍速
@@ -174,14 +179,13 @@ public:
 
     /**
      * @brief 得到解码器信息
-     * 
+     *
      * @return 解码器信息
      */
     virtual std::optional<DecoderInfo> decoderInfo() const = 0;
 
     /**
-     * @brief 获得解码器名称
-     * 
+     * @brief 获取解码器名称
      * @return 解码器名称
      */
     virtual const char *const decoderName() const = 0;
@@ -298,8 +302,7 @@ protected:
     // 配置
     // 速度 此处存为整型，单位为 1000 倍
     std::atomic_uint16_t speed_ = 1000;
-    // 跳转时间戳 ms，此处存为整型
-    std::atomic_int64_t seekPosMs_ = -1;
+
     // demuxer是否正在seeking
     std::atomic_bool demuxerSeeking_ = false;
     // 是否按帧率去推送
@@ -317,6 +320,7 @@ protected:
 
     // 事件分发器
     std::shared_ptr<EventDispatcher> eventDispatcher_;
+    std::shared_ptr<SeekCoordinator> seekCoordinator_;
 
     // 预缓冲状态
     std::atomic<bool> waitingForPreBuffer_{false};

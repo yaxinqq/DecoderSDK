@@ -16,8 +16,9 @@ constexpr char kModuleName[] = "DecoderController";
 
 DecoderController::DecoderController()
     : eventDispatcher_(std::make_shared<EventDispatcher>()),
+      seekCoordinator_(std::make_shared<SeekCoordinator>()),
       syncController_(std::make_shared<StreamSyncManager>()),
-      demuxer_(std::make_shared<Demuxer>(eventDispatcher_, syncController_)),
+      demuxer_(std::make_shared<Demuxer>(eventDispatcher_, syncController_, seekCoordinator_)),
       asyncOpenInProgress_(false),
       shouldCancelAsyncOpen_(false)
 {
@@ -363,6 +364,8 @@ bool DecoderController::seek(double position)
                                         utils::eventType2Desc(EventType::kSeekStarted));
     eventDispatcher_->triggerEvent(EventType::kSeekStarted, event);
 
+    LOG_DEBUG("Requesting demuxer to seek to position: {:.3f}s", position);
+
     const auto sendFailedEvent = [this, position]() {
         auto event = std::make_shared<SeekEventArgs>(syncController_->getMasterClock(), position,
                                                      kModuleName,
@@ -383,53 +386,23 @@ bool DecoderController::seek(double position)
         return false;
     }
 
-    LOG_DEBUG("Executing seek operation to position: {:.3f}s", position);
+    // 通过 SeekCoordinator 发起事务
+    seekCoordinator_->beginSeekRequest(position);
 
-    // 执行seek操作
-    bool result = demuxer_->seek(position);
+    // 请求 demuxer 执行异步 seek
+    LOG_DEBUG("Requesting demuxer to seek to position: {:.3f}s", position);
+    if (!demuxer_->seek(position)) {
+        LOG_ERROR("Demuxer failed to queue seek request to {:.3f}s", position);
 
-    if (result) {
-        LOG_DEBUG("Seek operation successful, updating clocks and queues");
+        // 闭环状态机
+        seekCoordinator_->failSeek(position);
 
-        // 先重置同步控制器的时钟
-        syncController_->resetClocks();
-
-        // 清空队列，并设置seek节点
-        if (videoDecoder_) {
-            videoDecoder_->frameQueue()->clear();
-            videoDecoder_->setSeekPos(position);
-            LOG_DEBUG("Video decoder queue cleared and seek position set");
-        }
-        if (audioDecoder_) {
-            audioDecoder_->frameQueue()->clear();
-            audioDecoder_->setSeekPos(position);
-            LOG_DEBUG("Audio decoder queue cleared and seek position set");
-        }
-
-        // 重新初始化时钟基准
-        if (audioDecoder_) {
-            syncController_->updateAudioClock(position,
-                                              demuxer_->packetQueue(AVMEDIA_TYPE_AUDIO)->serial());
-            LOG_DEBUG("Audio clock updated for seek");
-        }
-        if (videoDecoder_) {
-            syncController_->updateVideoClock(position,
-                                              demuxer_->packetQueue(AVMEDIA_TYPE_VIDEO)->serial());
-            LOG_DEBUG("Video clock updated for seek");
-        }
-
-        LOG_INFO("Seek completed successfully to position: {:.3f}s", position);
-    } else {
-        LOG_ERROR("Seek failed to position: {:.3f}s", position);
+        // 发送失败事件以通知 UI 或其他组件
+        sendFailedEvent();
+        return false;
     }
 
-    // 发送seek成功的事件
-    event =
-        std::make_shared<SeekEventArgs>(syncController_->getMasterClock(), position, kModuleName,
-                                        utils::eventType2Desc(EventType::kSeekSuccess));
-    eventDispatcher_->triggerEvent(EventType::kSeekSuccess, event);
-
-    return result;
+    return true;
 }
 
 bool DecoderController::setSpeed(double speed)
@@ -510,7 +483,6 @@ void DecoderController::setFrameRateControl(bool enable)
         audioDecoder_->setFrameRateControl(enable);
         LOG_DEBUG("Audio decoder frame rate control updated");
     }
-
 
     if (videoDecoder_) {
         videoDecoder_->setFrameRateControl(enable);
@@ -779,13 +751,13 @@ bool DecoderController::openInternal(const std::string &url, const DecoderConfig
 
     // 根据配置初始化解码器
     if (demuxer_->hasVideo() && config_.decodeMediaTypes.has(MediaType::kVideo)) {
-        videoDecoder_ = std::make_shared<VideoDecoder>(demuxer_, syncController_, eventDispatcher_);
+        videoDecoder_ = std::make_shared<VideoDecoder>(demuxer_, syncController_, eventDispatcher_, seekCoordinator_);
         LOG_DEBUG("Video decoder created for: {}", url);
     }
 
     // 开启音频解码器
     if (demuxer_->hasAudio() && config_.decodeMediaTypes.has(MediaType::kAudio)) {
-        audioDecoder_ = std::make_shared<AudioDecoder>(demuxer_, syncController_, eventDispatcher_);
+        audioDecoder_ = std::make_shared<AudioDecoder>(demuxer_, syncController_, eventDispatcher_, seekCoordinator_);
         LOG_DEBUG("Audio decoder created for: {}", url);
     }
 

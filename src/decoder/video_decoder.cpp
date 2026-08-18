@@ -241,71 +241,31 @@ bool isAnnexBFormat(const uint8_t *data, size_t size)
  * @param size 数据大小
  * @return NALU列表
  */
-std::vector<std::vector<uint8_t>> splitAnnexBNalus(const uint8_t *data, size_t size)
+size_t findAnnexBStartCode(const uint8_t *data, size_t size, size_t from, size_t &startCodeSize)
 {
-    std::vector<std::vector<uint8_t>> nalus;
-    size_t i = 0;
-
-    auto findStartCode = [&](size_t pos) -> size_t {
-        for (size_t p = pos; p + 3 <= size; ++p) {
-            if (p + 4 <= size && data[p] == 0x00 && data[p + 1] == 0x00 && data[p + 2] == 0x00 &&
-                data[p + 3] == 0x01)
-                return p;
-            if (data[p] == 0x00 && data[p + 1] == 0x00 && data[p + 2] == 0x01)
-                return p;
+    // 从指定偏移开始扫描起始码
+    for (size_t p = from; p + 3 <= size; ++p) {
+        // 优先匹配 4 字节起始码 00 00 00 01
+        if (p + 4 <= size && data[p] == 0x00 && data[p + 1] == 0x00 && data[p + 2] == 0x00 &&
+            data[p + 3] == 0x01) {
+            // 返回起始码长度给调用方
+            startCodeSize = 4;
+            // 返回起始码位置
+            return p;
         }
-        return -1;
-    };
-
-    size_t start = findStartCode(0);
-    if (start < 0) {
-        nalus.emplace_back(data, data + size);
-        return nalus;
-    }
-    size_t pos = (size_t)start;
-
-    while (pos < size) {
-        size_t scLen = 3;
-        if (pos + 4 <= size && data[pos] == 0x00 && data[pos + 1] == 0x00 &&
-            data[pos + 2] == 0x00 && data[pos + 3] == 0x01)
-            scLen = 4;
-        else if (!(data[pos] == 0x00 && data[pos + 1] == 0x00 && data[pos + 2] == 0x01))
-            break;
-
-        size_t nalStart = pos + scLen;
-        size_t next = findStartCode(nalStart);
-        size_t nalEnd = (next < 0) ? size : (size_t)next;
-        if (nalStart < nalEnd && nalEnd <= size) {
-            nalus.emplace_back(data + nalStart, data + nalEnd);
+        // 匹配 3 字节起始码 00 00 01
+        if (data[p] == 0x00 && data[p + 1] == 0x00 && data[p + 2] == 0x01) {
+            // 返回起始码长度给调用方
+            startCodeSize = 3;
+            // 返回起始码位置
+            return p;
         }
-        if (next < 0)
-            break;
-        pos = (size_t)next;
     }
-    return nalus;
-}
 
-/**
- * @brief 从AVCC流中分割NALU
- * @param data 输入数据
- * @param size 数据大小
- * @return NALU列表
- */
-std::vector<std::vector<uint8_t>> splitAvccNalus(const uint8_t *data, size_t size)
-{
-    std::vector<std::vector<uint8_t>> nalus;
-    size_t pos = 0;
-
-    while (pos + 4 <= size) {
-        uint32_t nalSize =
-            (data[pos] << 24) | (data[pos + 1] << 16) | (data[pos + 2] << 8) | data[pos + 3];
-        pos += 4;
-        if (pos + nalSize > size)
-            break;
-        nalus.emplace_back(data + pos, data + pos + nalSize);
-        pos += nalSize;
-    }
-    return nalus;
+    // 未找到起始码时长度置 0
+    startCodeSize = 0;
+    // 返回 size 作为“未找到”的哨兵值
+    return size;
 }
 
 /**
@@ -316,17 +276,25 @@ std::vector<std::vector<uint8_t>> splitAvccNalus(const uint8_t *data, size_t siz
  */
 std::vector<uint8_t> removeEPB(const uint8_t *data, size_t size)
 {
+    // 输出 RBSP 数据
     std::vector<uint8_t> out;
+    // 预留容量，减少扩容次数
     out.reserve(size);
+    // 顺序扫描输入字节流
     for (size_t i = 0; i < size; ++i) {
+        // 检测 emulation prevention 三字节序列 00 00 03
         if (i + 2 < size && data[i] == 0x00 && data[i + 1] == 0x00 && data[i + 2] == 0x03) {
+            // 保留前两个 0x00
             out.push_back(0x00);
             out.push_back(0x00);
+            // 跳过 0x03
             i += 2;
             continue;
         }
+        // 非 EPB 序列则原样拷贝
         out.push_back(data[i]);
     }
+    // 返回去除 EPB 后的数据
     return out;
 }
 
@@ -336,38 +304,57 @@ std::vector<uint8_t> removeEPB(const uint8_t *data, size_t size)
  * @param nalSize NALU大小
  * @param codecIsHevc 是否为HEVC编码
  * @return SEI数据列表
+ *
+ * 根据H.264/H.265标准实现：
+ * - payloadType值为5表示user_data_unregistered
+ * - payloadType/payloadSize为可变长编码，使用0xFF累加机制
+ * - UUID占16字节，剩余部分为payload
  */
-std::vector<UserSEIData> parseSeiFromNal(const uint8_t *nal, size_t nalSize, bool codecIsHevc)
+void appendSeiFromNal(const uint8_t *nal, size_t nalSize, bool codecIsHevc,
+                      std::vector<UserSEIData> &results)
 {
+    // 空 NAL 直接返回
     if (nalSize == 0)
-        return {};
+        return;
 
+    // NAL 类型，先置无效值
     int nalUnitType = -1;
+    // 默认按 H.264 头部长度 1 字节
     size_t headerSize = 1;
 
+    // H.264 分支
     if (!codecIsHevc) {
+        // H.264 NAL type 位于低 5 位
         nalUnitType = nal[0] & 0x1F;
+        // 仅处理 SEI(type=6)
         if (nalUnitType != 6)
-            return {}; // H.264 SEI
+            return;
     } else {
+        // HEVC 头部至少 2 字节
         if (nalSize < 2)
-            return {};
+            return;
+        // HEVC NAL type 为 6 位
         nalUnitType = (nal[0] >> 1) & 0x3F;
+        // 仅处理 prefix SEI(type=39) 或 suffix SEI(type=40)
         if (nalUnitType != 39 && nalUnitType != 40)
-            return {}; // HEVC prefix(39)/suffix(40) SEI
+            return;
+        // HEVC NAL 头部长度为 2 字节
         headerSize = 2;
     }
 
-    // 去掉 EPB
+    // 去除 NAL 负载中的 EPB（Emulation Prevention Bytes: 00 00 03），得到 RBSP
     auto rbsp = removeEPB(nal + headerSize, nalSize - headerSize);
+    // RBSP 为空则无可解析内容
     if (rbsp.empty())
-        return {};
+        return;
 
+    // RBSP 当前解析偏移
     size_t off = 0;
-    std::vector<UserSEIData> results;
 
-    while (off + 2 < rbsp.size()) {
-        // 解析 payloadType
+    // 解析所有 SEI message，直到缓冲区用尽
+    while (off < rbsp.size()) {
+        // ========== 解析可变长 payloadType ==========
+        // 按照规范：连续的0xFF字节对应累加255，直到非0xFF字节
         unsigned payloadType = 0;
         while (off < rbsp.size()) {
             uint8_t b = rbsp[off++];
@@ -375,8 +362,13 @@ std::vector<UserSEIData> parseSeiFromNal(const uint8_t *nal, size_t nalSize, boo
             if (b != 0xFF)
                 break;
         }
+        
+        // 如果payloadType解析后已消耗到末尾，无法继续读取payloadSize，退出
+        if (off >= rbsp.size())
+            break;
 
-        // 解析 payloadSize
+        // ========== 解析可变长 payloadSize ==========
+        // 同样的0xFF累加机制
         unsigned payloadSize = 0;
         while (off < rbsp.size()) {
             uint8_t b = rbsp[off++];
@@ -385,53 +377,132 @@ std::vector<UserSEIData> parseSeiFromNal(const uint8_t *nal, size_t nalSize, boo
                 break;
         }
 
+        // ========== 边界保护 ==========
+        // 检查payload数据是否越界
         if (off + payloadSize > rbsp.size())
             break;
 
-        if (payloadType == 5 && payloadSize >= 16) { // user_data_unregistered
+        // ========== 提取 user_data_unregistered SEI (payloadType==5) ==========
+        // 根据规范，此类型SEI的payload结构为：16字节UUID + 内容数据
+        if (payloadType == 5 && payloadSize >= 16) {
             UserSEIData sei;
-            memcpy(sei.uuid.data(), &rbsp[off], 16);
-            sei.payload.assign(rbsp.begin() + off + 16, rbsp.begin() + off + payloadSize);
-            results.push_back(std::move(sei));
+            // 前 16 字节为 UUID
+            memcpy(sei.uuid.data(), rbsp.data() + off, 16);
+            // 剩余部分为用户 payload
+            const size_t payloadLen = payloadSize - 16;
+            sei.payload.resize(payloadLen);
+            if (payloadLen > 0) {
+                memcpy(sei.payload.data(), rbsp.data() + off + 16, payloadLen);
+            }
+            // 追加到输出列表
+            results.emplace_back(std::move(sei));
         }
 
+        // ========== 跳到下一个 SEI message ==========
         off += payloadSize;
     }
-
-    return results;
 }
 
 /**
  * @brief 解析数据包中的SEI信息
  * @param packet 数据包
+ * @param codecIsHevc 编码格式是否为HEVC（H.265）
  * @return SEI数据列表
+ *
+ * 实现细节：
+ * 1. 支持Annex-B和AVCC两种码流格式的自动识别
+ * 2. 按照H.264/H.265标准解析NAL单元中的SEI消息
+ * 3. 正确处理payloadType和payloadSize的可变长编码（0xFF累加机制）
+ * 4. 移除Emulation Prevention Bytes（EPB）恢复RBSP数据
  */
 std::vector<UserSEIData> parseSEIFromPacket(const Packet &packet, bool codecIsHevc)
 {
+    // 包对象、数据指针或大小非法时直接返回空结果
     if (!packet.get() || !packet.get()->data || packet.get()->size <= 0) {
         return {};
     }
 
+    // 原始码流数据指针
     const uint8_t *data = packet.get()->data;
+    // 原始码流总大小
     size_t size = packet.get()->size;
 
-    // 判断是否为Annex-B格式
+    // 判断是否为 Annex-B 格式（否则为AVCC格式）
     bool isAnnexB = isAnnexBFormat(data, size);
 
+    // 最终 SEI 汇总结果
     std::vector<UserSEIData> results;
-    std::vector<std::vector<uint8_t>> nalus;
 
     if (isAnnexB) {
-        nalus = splitAnnexBNalus(data, size);
+        // ========== Annex-B 路径：按起始码逐段提取 NAL ==========
+        // 记录当前起始码长度（3 或 4）
+        size_t startCodeSize = 0;
+        // 查找第一个起始码
+        size_t start = findAnnexBStartCode(data, size, 0, startCodeSize);
+
+        // 若未找到起始码，按单个 NAL 直接解析
+        if (start == size) {
+            appendSeiFromNal(data, size, codecIsHevc, results);
+            return results;
+        }
+
+        // 如果第一个起始码不在位置0
+        // 说明第一个NAL前面没有起始码前缀，需要特别处理
+        if (start > 0) {
+            // 处理第一个NAL（从0到第一个起始码）
+            appendSeiFromNal(data, start, codecIsHevc, results);
+        }
+
+        // 逐个 NAL 扫描并解析 Annex-B 格式的数据
+        while (start < size) {
+            // 当前 NAL 数据起点（跳过起始码）
+            const size_t nalStart = start + startCodeSize;
+            // 边界保护
+            if (nalStart >= size) {
+                break;
+            }
+
+            // 查找下一个起始码
+            size_t nextStartCodeSize = 0;
+            const size_t next = findAnnexBStartCode(data, size, nalStart, nextStartCodeSize);
+            // 当前 NAL 终点为下一个起始码位置或流尾
+            const size_t nalEnd = (next == size) ? size : next;
+            // NAL 区间合法才解析
+            if (nalStart < nalEnd) {
+                appendSeiFromNal(data + nalStart, nalEnd - nalStart, codecIsHevc, results);
+            }
+            // 没有下一个起始码，扫描结束
+            if (next == size) {
+                break;
+            }
+
+            // 滚动到下一个 NAL
+            start = next;
+            startCodeSize = nextStartCodeSize;
+        }
     } else {
-        nalus = splitAvccNalus(data, size);
+        // ========== AVCC 路径：按 4 字节长度前缀逐个读取 NAL ==========
+        size_t pos = 0;
+        while (pos + 4 <= size) {
+            // 读取大端 NAL 长度前缀
+            const uint32_t nalSize = (uint32_t(data[pos]) << 24) | (uint32_t(data[pos + 1]) << 16) |
+                                     (uint32_t(data[pos + 2]) << 8) | uint32_t(data[pos + 3]);
+            // 跳过长度前缀
+            pos += 4;
+            // 越界保护
+            if (pos + nalSize > size) {
+                break;
+            }
+            // 仅解析非空 NAL
+            if (nalSize > 0) {
+                appendSeiFromNal(data + pos, nalSize, codecIsHevc, results);
+            }
+            // 移动到下一个长度前缀
+            pos += nalSize;
+        }
     }
 
-    for (const auto &nalu : nalus) {
-        auto seis = parseSeiFromNal(nalu.data(), nalu.size(), codecIsHevc);
-        results.insert(results.end(), seis.begin(), seis.end());
-    }
-
+    // 返回整包 SEI 结果
     return results;
 }
 
@@ -524,8 +595,9 @@ void clearSurfaceCache(std::unordered_map<VASurfaceID, AVBufferRef *> &surfaceCa
 
 VideoDecoder::VideoDecoder(std::shared_ptr<Demuxer> demuxer,
                            std::shared_ptr<StreamSyncManager> StreamSyncManager,
-                           std::shared_ptr<EventDispatcher> eventDispatcher)
-    : DecoderBase(demuxer, StreamSyncManager, eventDispatcher)
+                           std::shared_ptr<EventDispatcher> eventDispatcher,
+                           std::shared_ptr<SeekCoordinator> seekCoordinator)
+    : DecoderBase(demuxer, StreamSyncManager, eventDispatcher, seekCoordinator)
 {
     init({});
 }
@@ -685,9 +757,9 @@ void VideoDecoder::decodeLoop()
             syncController_->updateVideoClock(0.0, serial);
             // 重置最后帧时间
             lastFrameTime_ = std::nullopt;
+            // 清空帧队列
+            frameQueue_->clear();
 
-            // 结束seeking
-            utils::atomicUpdateIfNotEqual<bool>(demuxerSeeking_, false);
             // 清空解码器缓冲区
             avcodec_flush_buffers(codecCtx_);
         }
@@ -713,18 +785,6 @@ void VideoDecoder::decodeLoop()
         if (!hasKeyFrame && isKeyFrame) {
             forceSyncExternalClock = true;
             hasKeyFrame = true;
-        }
-
-        // 解析数据包中的SEI信息，仅支持H264、H265
-        std::vector<UserSEIData> seiDataList;
-        if (enableParseUserSEIData_ &&
-            (codecId == AV_CODEC_ID_H264 || codecId == AV_CODEC_ID_H265)) {
-            seiDataList = parseSEIFromPacket(packet, codecId == AV_CODEC_ID_H265);
-            LOG_TRACE("Found {} SEI data entries in packet", seiDataList.size());
-            for (const auto &seiData : seiDataList) {
-                LOG_TRACE("SEI UUID: {}, payload size: {}, payload: {}", seiData.uuidHex(),
-                          seiData.payload.size(), seiData.payloadAsString());
-            }
         }
 
         // 处理SPS profile可能存在的错误
@@ -884,23 +944,15 @@ void VideoDecoder::decodeLoop()
                 syncController_->updateVideoClock(pts, serial);
             }
 
-            // 如果当前小于seekPos，丢弃帧
-            {
-                // 如果当前正在seeking，直接跳过
-                if (demuxerSeeking_.load()) {
-                    frame.unref();
-                    continue;
-                }
-
-                const auto targetPos = seekPos();
-                if (utils::greater(targetPos, 0)) {
-                    if (!utils::greaterAndEqual(pts, targetPos)) {
-                        frame.unref();
-                        continue;
-                    }
-                    utils::atomicUpdateIfNotEqual<int64_t>(seekPosMs_, -1);
-                }
+            // 处理 seek 抛帧逻辑 (事务驱动)
+            if (shouldDiscardBySeek(pts, serial)) {
+                continue;
             }
+            // 到达目标位置，上报进度以尝试闭环 Seek 事务
+            if (seekCoordinator_) {
+                seekCoordinator_->reportReachedTarget(true, serial);
+            }
+
 
             // 如果是第一帧，发出事件
             if (!readFirstFrame) {
@@ -936,6 +988,18 @@ void VideoDecoder::decodeLoop()
             if (!outFrame) {
                 frame.unref();
                 break; // 队列满了，退出
+            }
+
+            // 解析数据包中的SEI信息，仅支持H264、H265
+            std::vector<UserSEIData> seiDataList;
+            if (enableParseUserSEIData_ && isKeyFrame &&
+                (codecId == AV_CODEC_ID_H264 || codecId == AV_CODEC_ID_H265)) {
+                seiDataList = parseSEIFromPacket(packet, codecId == AV_CODEC_ID_H265);
+                LOG_TRACE("Found {} SEI data entries in packet", seiDataList.size());
+                for (const auto &seiData : seiDataList) {
+                    LOG_TRACE("SEI UUID: {}, payload size: {}, payload: {}", seiData.uuidHex(),
+                              seiData.payload.size(), seiData.payloadAsString());
+                }
             }
 
             // 获得当前速度

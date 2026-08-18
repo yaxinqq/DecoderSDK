@@ -115,6 +115,7 @@ void StreamSyncManager::resetClocks()
 {
     audioClock_.reset();
     videoClock_.reset();
+    externalClock_.reset();
 
     // 重置统计信息
     smoothedVideoDrift_.store(0.0, std::memory_order_release);

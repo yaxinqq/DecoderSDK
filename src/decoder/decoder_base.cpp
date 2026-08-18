@@ -18,10 +18,12 @@ INTERNAL_NAMESPACE_BEGIN
 
 DecoderBase::DecoderBase(std::shared_ptr<Demuxer> demuxer,
                          std::shared_ptr<StreamSyncManager> StreamSyncManager,
-                         std::shared_ptr<EventDispatcher> eventDispatcher)
+                         std::shared_ptr<EventDispatcher> eventDispatcher,
+                         std::shared_ptr<SeekCoordinator> seekCoordinator)
     : demuxer_(demuxer),
       syncController_(StreamSyncManager),
       eventDispatcher_(eventDispatcher),
+      seekCoordinator_(seekCoordinator),
       frameQueue_(new FrameQueue(kFrameQueueDefaultSize, false, false)),
       lastFrameTime_(std::nullopt)
 {
@@ -74,15 +76,36 @@ std::shared_ptr<FrameQueue> DecoderBase::frameQueue()
     return frameQueue_;
 }
 
-void DecoderBase::setSeekPos(double pos)
-{
-    utils::atomicUpdateIfNotEqual<bool>(demuxerSeeking_, true);
-    utils::atomicUpdateIfNotEqual<int64_t>(seekPosMs_, static_cast<int64_t>(pos * 1000));
-}
-
 double DecoderBase::seekPos() const
 {
-    return seekPosMs_.load() * 0.001;
+    if (!seekCoordinator_)
+        return -1.0;
+    auto state = seekCoordinator_->getState();
+    return (state.phase != SeekPhase::kIdle) ? state.targetPosSec : -1.0;
+}
+
+bool DecoderBase::shouldDiscardBySeek(double pts, uint64_t serial) const
+{
+    if (!seekCoordinator_)
+        return false;
+
+    auto state = seekCoordinator_->getState();
+    // 只有在已提交(Committed)阶段才需要抛帧
+    if (state.phase != SeekPhase::kCommitted) {
+        return false;
+    }
+
+    uint64_t targetSerial =
+        (codecCtx_->codec_type == AVMEDIA_TYPE_VIDEO) ? state.videoSerial : state.audioSerial;
+
+    // 如果序列号匹配，且 PTS 小于目标位置，则需要丢弃
+    if (serial == targetSerial) {
+        if (utils::less(pts, state.targetPosSec)) {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 bool DecoderBase::setSpeed(double speed)
@@ -442,9 +465,16 @@ void DecoderBase::startInternal()
     // 设置帧队列的中止状态与包队列一致
     frameQueue_->setAbortStatus(packetQueue->isAborted());
 
-    // 清空seek节点
-    seekPosMs_.store(0);
     requestInterruption_.store(false);
+
+    // 绑定 PacketQueue 的 flush 回调，用于联动唤醒 FrameQueue
+    // 使用 weak_ptr 确保回调安全，即使 DecoderBase 提前销毁也不会发生崩溃
+    packetQueue->setFlushCallback([weakFq = std::weak_ptr<FrameQueue>(frameQueue_)]() {
+        if (auto fq = weakFq.lock()) {
+            fq->clear();
+        }
+    });
+
     thread_ = std::thread(&DecoderBase::decodeLoop, this);
 
     isStarted_ = true;
@@ -460,6 +490,11 @@ void DecoderBase::stopInternal()
 {
     if (!isStarted_)
         return;
+
+    // 清理回调，防止停止后仍被唤醒
+    if (auto packetQueue = demuxer_->packetQueue(type())) {
+        packetQueue->setFlushCallback(nullptr);
+    }
 
     isPaused_.store(false);
     requestInterruption_.store(true);

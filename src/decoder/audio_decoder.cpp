@@ -20,8 +20,9 @@ INTERNAL_NAMESPACE_BEGIN
 
 AudioDecoder::AudioDecoder(std::shared_ptr<Demuxer> demuxer,
                            std::shared_ptr<StreamSyncManager> StreamSyncManager,
-                           std::shared_ptr<EventDispatcher> eventDispatcher)
-    : DecoderBase(demuxer, StreamSyncManager, eventDispatcher)
+                           std::shared_ptr<EventDispatcher> eventDispatcher,
+                           std::shared_ptr<SeekCoordinator> seekCoordinator)
+    : DecoderBase(demuxer, StreamSyncManager, eventDispatcher, seekCoordinator)
 {
     init({});
 }
@@ -121,8 +122,9 @@ void AudioDecoder::decodeLoop()
             // 重置最后帧时间
             lastFrameTime_ = std::nullopt;
 
-            // 结束seeking状态
-            utils::atomicUpdateIfNotEqual<bool>(demuxerSeeking_, false);
+            // 清空音频队列
+            frameQueue_->clear();
+
             // 清空解码器缓冲区
             avcodec_flush_buffers(codecCtx_);
         }
@@ -199,22 +201,13 @@ void AudioDecoder::decodeLoop()
                 syncController_->updateAudioClock(pts, serial);
             }
 
-            // 如果当前小于seekPos，丢弃帧
-            {
-                // 如果当前正在seeking，直接跳过
-                if (demuxerSeeking_.load()) {
-                    frame.unref();
-                    continue;
-                }
-
-                const auto targetPos = seekPos();
-                if (utils::greater(targetPos, 0)) {
-                    if (!utils::greaterAndEqual(pts, targetPos)) {
-                        frame.unref();
-                        continue;
-                    }
-                    utils::atomicUpdateIfNotEqual<int64_t>(seekPosMs_, -1);
-                }
+            // 处理 seek 抛帧逻辑 (事务驱动)
+            if (shouldDiscardBySeek(pts, serial)) {
+                continue;
+            }
+            // 到达目标位置，上报进度以尝试闭环 Seek 事务
+            if (seekCoordinator_) {
+                seekCoordinator_->reportReachedTarget(false, serial);
             }
 
             // 转换交错格式
@@ -303,7 +296,7 @@ void AudioDecoder::decodeLoop()
                 handleFirstFrame();
             }
 
-            // 如果恢复，则发出事件
+            // 处理恢复
             if (occuredError) {
                 occuredError = false;
                 handleDecodeRecovery();

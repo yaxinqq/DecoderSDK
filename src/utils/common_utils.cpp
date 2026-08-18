@@ -47,6 +47,16 @@ bool greaterAndEqual(float a, float b, double epsilon)
     return greater(a, b, epsilon) || equal(a, b, epsilon);
 }
 
+bool less(double a, double b, double epsilon)
+{
+    return !greaterAndEqual(a, b, epsilon);
+}
+
+bool less(float a, float b, double epsilon)
+{
+    return !greaterAndEqual(a, b, epsilon);
+}
+
 void highPrecisionSleep(double ms, std::chrono::steady_clock::time_point startTime)
 {
     std::this_thread::sleep_until(startTime +

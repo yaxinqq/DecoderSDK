@@ -22,7 +22,8 @@ public:
      */
     AudioDecoder(std::shared_ptr<Demuxer> demuxer,
                  std::shared_ptr<StreamSyncManager> StreamSyncManager,
-                 std::shared_ptr<EventDispatcher> eventDispatcher);
+                 std::shared_ptr<EventDispatcher> eventDispatcher,
+                 std::shared_ptr<SeekCoordinator> seekCoordinator);
     /**
      * @brief 析构函数
      */

@@ -135,6 +135,12 @@ public:
     bool isEmpty() const noexcept;
 
     /**
+     * @brief 设置刷新回调（用于联动唤醒其他组件）
+     * @param callback 回调函数
+     */
+    void setFlushCallback(std::function<void()> callback);
+
+    /**
      * @brief 设置队列最大包数量
      * @param maxCount 最大包数量，必须大于0
      */
@@ -198,6 +204,9 @@ private:
     std::condition_variable pushCond_;
     // 用于pop操作的条件变量
     std::condition_variable popCond_;
+
+    // 刷新回调
+    std::function<void()> flushCallback_;
 };
 
 INTERNAL_NAMESPACE_END

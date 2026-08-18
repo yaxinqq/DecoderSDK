@@ -117,6 +117,11 @@ void PacketQueue::flush()
     // 唤醒所有等待的线程
     pushCond_.notify_all();
     popCond_.notify_all();
+
+    // 如果有刷新回调，则调用它
+    if (flushCallback_) {
+        flushCallback_();
+    }
 }
 
 void PacketQueue::start()
@@ -182,6 +187,12 @@ bool PacketQueue::isEmpty() const noexcept
 {
     std::lock_guard<std::mutex> lock(mutex_);
     return queue_.empty();
+}
+
+void PacketQueue::setFlushCallback(std::function<void()> callback)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    flushCallback_ = std::move(callback);
 }
 
 void PacketQueue::setMaxPacketCount(size_t maxCount)

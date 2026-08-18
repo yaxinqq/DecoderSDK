@@ -5,6 +5,7 @@
 #include <memory>
 
 #include "base/base_define.h"
+#include "base/seek_coordinator.h"
 #include "decoder/audio_decoder.h"
 #include "decoder/video_decoder.h"
 #include "demuxer/demuxer.h"
@@ -388,6 +389,7 @@ private:
 
 private:
     std::shared_ptr<EventDispatcher> eventDispatcher_;  // 事件分发器
+    std::shared_ptr<SeekCoordinator> seekCoordinator_;  // Seek协调器
     std::shared_ptr<StreamSyncManager> syncController_; // 流同步管理器
 
     std::shared_ptr<Demuxer> demuxer_;           // 解复用器
