@@ -1,5 +1,9 @@
 #include "frame.h"
 
+extern "C" {
+#include "libavutil/hwcontext.h"
+}
+
 #ifdef VULKAN_AVAILABLE
 extern "C" {
 #include "libavutil/hwcontext.h"
@@ -137,6 +141,49 @@ void Frame::setDurationByFps(double duration)
 bool Frame::isInHardware() const
 {
     return frame_ && frame_->hw_frames_ctx != nullptr;
+}
+
+bool Frame::downloadToHost(Frame &hostFrame) const
+{
+    hostFrame.release();
+    if (!isInHardware()) {
+        return false;
+    }
+
+    const auto *framesCtx =
+        reinterpret_cast<AVHWFramesContext *>(frame_->hw_frames_ctx->data);
+    if (!framesCtx) {
+        return false;
+    }
+
+    AVFrame *hostAvFrame = av_frame_alloc();
+    if (!hostAvFrame) {
+        return false;
+    }
+
+    hostAvFrame->format = framesCtx->sw_format;
+    hostAvFrame->width = frame_->width;
+    hostAvFrame->height = frame_->height;
+    if (av_frame_get_buffer(hostAvFrame, 0) != 0) {
+        av_frame_free(&hostAvFrame);
+        return false;
+    }
+
+    if (av_hwframe_transfer_data(hostAvFrame, frame_, 0) != 0) {
+        av_frame_free(&hostAvFrame);
+        return false;
+    }
+
+    av_frame_copy_props(hostAvFrame, frame_);
+    hostFrame = Frame(hostAvFrame);
+    av_frame_free(&hostAvFrame);
+
+    hostFrame.setSerial(serial_);
+    hostFrame.setDurationByFps(duration_);
+    hostFrame.setSecPts(pts_);
+    hostFrame.setMediaType(mediaType_);
+    hostFrame.setUserSEIDataList(userSEIDataList_);
+    return true;
 }
 
 void Frame::setSecPts(double pts)

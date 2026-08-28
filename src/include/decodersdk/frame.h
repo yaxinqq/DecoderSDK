@@ -67,6 +67,16 @@ public:
      */
     bool isInHardware() const;
     /**
+     * @brief 将硬件 surface 下载到 CPU-owned 软件帧
+     *
+     *        必须在拥有硬件上下文的线程上调用。目标像素格式取自 hw_frames_ctx 的
+     *        sw_format，通常为 NV12 或 P010。输出帧只负责 CPU 数据，不做缩放和 RGB 转换。
+     *
+     * @param hostFrame 输出参数，失败时保持为空
+     * @return true 下载成功, false 下载失败
+     */
+    bool downloadToHost(Frame &hostFrame) const;
+    /**
      * @brief 获得解码时间戳（单位s）
      * @return double 解码时间戳
      */

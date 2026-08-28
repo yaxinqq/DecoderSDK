@@ -53,6 +53,22 @@ bool Frame::isInHardware() const
     return impl_ ? impl_->isInHardware() : false;
 }
 
+bool Frame::downloadToHost(Frame &hostFrame) const
+{
+    hostFrame = Frame();
+    if (!impl_) {
+        return false;
+    }
+
+    std::unique_ptr<internal::Frame> hostImpl = std::make_unique<internal::Frame>();
+    if (!impl_->downloadToHost(*hostImpl)) {
+        return false;
+    }
+
+    hostFrame = Frame(std::move(hostImpl));
+    return true;
+}
+
 double Frame::secPts() const
 {
     return impl_ ? impl_->secPts() : 0.0;
