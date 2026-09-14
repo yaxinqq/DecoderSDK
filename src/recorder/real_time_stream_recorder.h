@@ -2,6 +2,7 @@
 #define DECODER_SDK_INTERNAL_REAL_TIME_STREAM_RECORDER_H
 #include <atomic>
 #include <condition_variable>
+#include <deque>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -96,6 +97,22 @@ public:
     bool writePacket(const Packet &packet, AVMediaType mediaType);
 
     /**
+     * @brief 设置预缓冲时长（毫秒）。
+     *
+     * 启用后，writePacket() 会将数据包缓存到内部环形缓冲区，
+     * 直到调用 startRecording() 时才将缓冲区内容写入文件。
+     * 时长为 0 表示禁用预缓冲（默认行为）。
+     *
+     * @param durationMs 预缓冲最大时长（毫秒）
+     */
+    void setPrebufferDuration(int64_t durationMs);
+
+    /**
+     * @brief 清除预缓冲区中的所有数据包。
+     */
+    void clearPrebuffer();
+
+    /**
      * @brief 获取录制文件路径
      * @return 录制文件路径
      */
@@ -177,6 +194,14 @@ private:
      */
     static const std::unordered_map<ContainerFormat, ContainerFormatInfo> &getFormatInfoMap();
 
+    /**
+     * @brief 将预缓冲区的数据包刷新到录制文件。
+     *
+     * 在 startRecording() 初始化输出上下文之后调用，
+     * 将缓冲区中的预事件数据写入文件。
+     */
+    void flushPrebufferToRecording();
+
 private:
     // 事件分发器
     std::shared_ptr<EventDispatcher> eventDispatcher_;
@@ -211,6 +236,26 @@ private:
 
     // 当前使用的容器格式
     ContainerFormat currentFormat_ = ContainerFormat::UNKNOWN;
+
+    // 预缓冲环形缓冲区：存储 startRecording 之前收到的数据包
+    struct TimestampedPacket {
+        Packet packet;
+        AVMediaType mediaType;
+    };
+    std::deque<TimestampedPacket> prebuffer_;
+    int64_t prebufferDurationMs_ = 0;  // 0 = 预缓冲禁用
+    int64_t prebufferTotalDurationUs_ = 0;
+    std::mutex prebufferMutex_;  // 保护 prebuffer_ 的并发访问
+
+    // 预缓冲录制器的键（非空表示该录制器由 startPrebufferedRecording 创建）。
+    // 录制停止后，Demuxer 通过此键将录制器重新插入映射以便复用。
+    std::string prebufferKey_;
+
+public:
+    /// 获取预缓冲键。
+    const std::string &prebufferKey() const { return prebufferKey_; }
+    /// 设置预缓冲键（由 Demuxer::startPrebufferedRecording 调用）。
+    void setPrebufferKey(const std::string &key) { prebufferKey_ = key; }
 };
 
 INTERNAL_NAMESPACE_END

@@ -86,6 +86,11 @@ bool RealTimeStreamRecorder::startRecording(const std::string &outputPath,
         return false;
     }
 
+    // 刷新预缓冲数据到录制文件（报警前画面）
+    // 注意：刷新后不清空预缓冲区也不禁用预缓冲，预缓冲继续运行，
+    // 这样下一次 startRecording() 被调用时（如连续报警），仍能获取到最近 N 秒的数据。
+    flushPrebufferToRecording();
+
     // 启动数据包队列
     videoPacketQueue_->start();
     audioPacketQueue_->start();
@@ -156,6 +161,27 @@ bool RealTimeStreamRecorder::isRecording() const
 
 bool RealTimeStreamRecorder::writePacket(const Packet &packet, AVMediaType mediaType)
 {
+    // 预缓冲模式：无论是否处于录制状态，都缓存数据包
+    if (prebufferDurationMs_ > 0) {
+        std::lock_guard<std::mutex> lock(prebufferMutex_);
+        prebuffer_.push_back({packet, mediaType});
+
+        // 累加时长（微秒），用于淘汰旧包
+        if (packet.duration() > 0) {
+            prebufferTotalDurationUs_ += packet.duration();
+        }
+
+        // 淘汰超出预缓冲时长的旧包
+        const int64_t maxDurationUs = prebufferDurationMs_ * 1000;
+        while (!prebuffer_.empty() && prebufferTotalDurationUs_ > maxDurationUs) {
+            const auto &front = prebuffer_.front();
+            if (front.packet.duration() > 0) {
+                prebufferTotalDurationUs_ -= front.packet.duration();
+            }
+            prebuffer_.pop_front();
+        }
+    }
+
     if (!isRecording_.load()) {
         return false;
     }
@@ -171,6 +197,61 @@ bool RealTimeStreamRecorder::writePacket(const Packet &packet, AVMediaType media
     }
 
     return targetQueue->push(packet);
+}
+
+void RealTimeStreamRecorder::setPrebufferDuration(int64_t durationMs)
+{
+    std::lock_guard<std::mutex> lock(prebufferMutex_);
+    prebufferDurationMs_ = durationMs;
+
+    // 如果新时长为 0，清空缓冲区
+    if (durationMs <= 0) {
+        prebuffer_.clear();
+        prebufferTotalDurationUs_ = 0;
+        return;
+    }
+
+    // 如果新时长缩小，立即淘汰多余数据
+    const int64_t maxDurationUs = durationMs * 1000;
+    while (!prebuffer_.empty() && prebufferTotalDurationUs_ > maxDurationUs) {
+        const auto &front = prebuffer_.front();
+        if (front.packet.duration() > 0) {
+            prebufferTotalDurationUs_ -= front.packet.duration();
+        }
+        prebuffer_.pop_front();
+    }
+}
+
+void RealTimeStreamRecorder::clearPrebuffer()
+{
+    std::lock_guard<std::mutex> lock(prebufferMutex_);
+    prebuffer_.clear();
+    prebufferTotalDurationUs_ = 0;
+}
+
+void RealTimeStreamRecorder::flushPrebufferToRecording()
+{
+    // 拷贝预缓冲数据而非 swap：预缓冲是持续维护的环形队列，必须保持不变，
+    // 这样下一次报警触发时，缓冲区里仍然有最近 N 秒的完整数据。
+    std::deque<TimestampedPacket> buffered;
+    {
+        std::lock_guard<std::mutex> lock(prebufferMutex_);
+        buffered = prebuffer_;  // 拷贝，不清空预缓冲
+    }
+
+    if (buffered.empty()) {
+        return;
+    }
+
+    LOG_INFO("Flushing {} prebuffer packets to recording file.", buffered.size());
+
+    bool hasKeyFrame = false;
+    for (const auto &tp : buffered) {
+        if (!tp.packet.isValid()) {
+            continue;
+        }
+        processPacket(tp.packet, tp.mediaType, hasKeyFrame);
+    }
 }
 
 std::string RealTimeStreamRecorder::getRecordingPath() const

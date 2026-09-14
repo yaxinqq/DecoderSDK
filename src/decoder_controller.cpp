@@ -477,6 +477,47 @@ bool DecoderController::startRecording(const std::string &outputPath)
     return result;
 }
 
+bool DecoderController::startPrebufferedRecording(const std::string &outputPath,
+                                                   int64_t prebufferDurationMs)
+{
+    LOG_INFO("Starting prebuffered recording to: {} (buffer {} ms)", outputPath, prebufferDurationMs);
+
+    if (!demuxer_) {
+        LOG_ERROR("Cannot start prebuffered recording: demuxer is null");
+        return false;
+    }
+
+    const bool result = demuxer_->startPrebufferedRecording(outputPath, prebufferDurationMs);
+
+    if (result) {
+        LOG_INFO("Prebuffered recording started successfully to: {}", outputPath);
+    } else {
+        LOG_ERROR("Failed to start prebuffered recording to: {}", outputPath);
+    }
+
+    return result;
+}
+
+bool DecoderController::stopPrebufferedRecording(const std::string &outputPath)
+{
+    LOG_INFO("Stopping prebuffered recording for {}", outputPath);
+
+    if (!demuxer_) {
+        LOG_ERROR("Cannot stop prebuffered recording: demuxer is null");
+        return false;
+    }
+
+    const bool result = demuxer_->stopPrebufferedRecording(outputPath);
+
+    if (result) {
+        LOG_INFO("Prebuffered recording stopped successfully for {}", outputPath);
+    } else {
+        LOG_ERROR("Failed to stop prebuffered recording for {}", outputPath);
+    }
+
+    return result;
+}
+
 bool DecoderController::stopRecording(const std::string &outputPath)
 {
     const std::string pathInLog = outputPath.empty() ? "any" : outputPath;

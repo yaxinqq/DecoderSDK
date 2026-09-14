@@ -101,6 +101,17 @@ bool DecoderController::startRecording(const std::string &outputPath)
     return impl_ ? impl_->startRecording(outputPath) : false;
 }
 
+bool DecoderController::startPrebufferedRecording(const std::string &outputPath,
+                                                   int64_t prebufferDurationMs)
+{
+    return impl_ ? impl_->startPrebufferedRecording(outputPath, prebufferDurationMs) : false;
+}
+
+bool DecoderController::stopPrebufferedRecording(const std::string &outputPath)
+{
+    return impl_ ? impl_->stopPrebufferedRecording(outputPath) : false;
+}
+
 bool DecoderController::stopRecording(const std::string &outputPath)
 {
     return impl_ ? impl_->stopRecording(outputPath) : false;

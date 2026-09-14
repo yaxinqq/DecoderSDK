@@ -135,6 +135,27 @@ public:
      * @return true 成功; false 失败
      */
     bool startRecording(const std::string &outputPath);
+
+    /**
+     * @brief 启动预缓冲录像模式。
+     *
+     * 创建一个处于预缓冲模式的录制器，持续缓存最近 prebufferDurationMs 毫秒的音视频包。
+     * 后续调用 startRecording(outputPath) 激活时，缓冲区数据（报警前画面）会先写入文件。
+     *
+     * @param outputPath 输出路径（作为录制器的标识键）
+     * @param prebufferDurationMs 预缓冲时长（毫秒），0 表示禁用
+     * @return true 成功; false 失败
+     */
+    bool startPrebufferedRecording(const std::string &outputPath, int64_t prebufferDurationMs);
+
+    /**
+     * @brief 停止预缓冲录像（丢弃缓冲数据，不写文件）。
+     *
+     * @param outputPath 输出路径
+     * @return true 成功; false 失败
+     */
+    bool stopPrebufferedRecording(const std::string &outputPath);
+
     /**
      * @brief 停止录像
      *

@@ -122,6 +122,33 @@ public:
      * @return 是否成功开始录制
      */
     bool startRecording(const std::string &outputPath);
+
+    /**
+     * @brief 启动预缓冲录制模式。
+     *
+     * 创建一个处于预缓冲模式的录制器：它会持续接收并缓存最近 prebufferDurationMs
+     * 毫秒的音视频包，但不写入文件。当后续调用 startRecording() 激活时，
+     * 缓冲区中的数据（报警前画面）会先写入文件。
+     *
+     * @param outputPath 输出文件路径（预缓冲录制器的标识键）
+     * @param prebufferDurationMs 预缓冲时长（毫秒），0 表示禁用
+     * @return 是否成功启动
+     */
+    bool startPrebufferedRecording(const std::string &outputPath, int64_t prebufferDurationMs);
+
+    /**
+     * @brief 停止预缓冲录制（丢弃缓冲数据，不写文件）。
+     *
+     * 在流关闭且报警未触发时调用，释放预缓冲资源。
+     *
+     * @param outputPath 输出路径
+     * @return 是否成功停止
+     */
+    bool stopPrebufferedRecording(const std::string &outputPath);
+
+    /// 预缓冲录制器的键前缀。startRecording 遇到此前缀的录制器时会复用它而非新建。
+    static constexpr const char *kPrebufferKeyPrefix = "alarm_prebuffer_";
+
     /**
      * @brief 停止录制
      * @param outputPath 输出路径，如果为空，则停止所有录制。如果不为空，则停止特定的录制

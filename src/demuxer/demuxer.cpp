@@ -179,9 +179,31 @@ bool Demuxer::startRecording(const std::string &outputPath)
     }
 
     std::lock_guard<std::mutex> recorderLock(recorderMutex_);
-    if (recorders_.count(outputPath)) {
-        LOG_WARN("Recording already started for path: {}", outputPath);
-        return true;
+
+    // 如果已存在同路径的录制器
+    auto existingIt = recorders_.find(outputPath);
+    if (existingIt != recorders_.end()) {
+        if (existingIt->second->isRecording()) {
+            LOG_WARN("Recording already started for path: {}", outputPath);
+            return true;
+        }
+        LOG_INFO("Activating prebuffered recorder: {}", outputPath);
+        return existingIt->second->startRecording(outputPath, formatContext_, recordMediaTypes_);
+    }
+
+    // 查找是否存在同流的预缓冲录制器（键以 kPrebufferKeyPrefix 开头）
+    // 如果存在，复用它：从映射中移除旧键，用新路径激活，再插入新键
+    for (auto it = recorders_.begin(); it != recorders_.end(); ++it) {
+        if (it->first.find(kPrebufferKeyPrefix) == 0 && !it->second->isRecording()) {
+            LOG_INFO("Reusing prebuffered recorder for new recording: {} -> {}", it->first, outputPath);
+            auto recorder = std::move(it->second);
+            recorders_.erase(it);
+            if (recorder->startRecording(outputPath, formatContext_, recordMediaTypes_)) {
+                recorders_[outputPath] = std::move(recorder);
+                return true;
+            }
+            return false;
+        }
     }
 
     auto recorder = std::make_unique<RealTimeStreamRecorder>(eventDispatcher_);
@@ -191,6 +213,55 @@ bool Demuxer::startRecording(const std::string &outputPath)
     }
 
     return false;
+}
+
+bool Demuxer::startPrebufferedRecording(const std::string &outputPath, int64_t prebufferDurationMs)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!isRealTime_) {
+        LOG_WARN("Prebuffered recording only supported for real-time streams");
+        return false;
+    }
+
+    if (!isOpened_) {
+        LOG_ERROR("Cannot start prebuffered recording: stream not opened");
+        return false;
+    }
+
+    std::lock_guard<std::mutex> recorderLock(recorderMutex_);
+    if (recorders_.count(outputPath)) {
+        LOG_WARN("Recorder already exists for path: {}", outputPath);
+        return false;
+    }
+
+    auto recorder = std::make_unique<RealTimeStreamRecorder>(eventDispatcher_);
+    recorder->setPrebufferDuration(prebufferDurationMs);
+    recorder->setPrebufferKey(outputPath);  // 记录预缓冲键，录制停止后用于复用
+    recorders_[outputPath] = std::move(recorder);
+
+    LOG_INFO("Prebuffered recording started: {} (buffer {} ms)", outputPath, prebufferDurationMs);
+    return true;
+}
+
+bool Demuxer::stopPrebufferedRecording(const std::string &outputPath)
+{
+    std::lock_guard<std::mutex> lock(recorderMutex_);
+    auto it = recorders_.find(outputPath);
+    if (it == recorders_.end()) {
+        return false;
+    }
+
+    // 如果该录制器已经处于录制状态（被激活过），走正常停止流程
+    if (it->second->isRecording()) {
+        bool result = it->second->stopRecording();
+        recorders_.erase(it);
+        return result;
+    }
+
+    // 否则只是丢弃预缓冲数据
+    recorders_.erase(it);
+    LOG_INFO("Prebuffered recording discarded: {}", outputPath);
+    return true;
 }
 
 bool Demuxer::stopRecording(const std::string &outputPath)
@@ -206,7 +277,17 @@ bool Demuxer::stopRecording(const std::string &outputPath)
         auto it = recorders_.find(outputPath);
         if (it != recorders_.end()) {
             bool result = it->second->stopRecording();
-            recorders_.erase(it);
+            // 如果该录制器原本是预缓冲录制器（有预缓冲键），录制结束后重新插入映射，
+            // 使用预缓冲键作为键，以便下一次 startRecording 可以复用它。
+            const std::string prebufferKey = it->second->prebufferKey();
+            if (!prebufferKey.empty()) {
+                auto recorder = std::move(it->second);
+                recorders_.erase(it);
+                recorders_[prebufferKey] = std::move(recorder);
+                LOG_INFO("Prebuffered recorder kept for reuse with key: {}", prebufferKey);
+            } else {
+                recorders_.erase(it);
+            }
             return result;
         }
     }

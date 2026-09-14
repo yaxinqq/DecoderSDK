@@ -152,6 +152,24 @@ public:
      * @return true 成功; false 失败
      */
     bool startRecording(const std::string &outputPath);
+
+    /**
+     * @brief 启动预缓冲录像模式。
+     *
+     * @param outputPath 输出路径
+     * @param prebufferDurationMs 预缓冲时长（毫秒）
+     * @return true 成功; false 失败
+     */
+    bool startPrebufferedRecording(const std::string &outputPath, int64_t prebufferDurationMs);
+
+    /**
+     * @brief 停止预缓冲录像（丢弃缓冲数据）。
+     *
+     * @param outputPath 输出路径
+     * @return true 成功; false 失败
+     */
+    bool stopPrebufferedRecording(const std::string &outputPath);
+
     /**
      * @brief 停止录像
      *
