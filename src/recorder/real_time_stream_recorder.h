@@ -11,6 +11,9 @@
 
 extern "C" {
 #include <libavformat/avformat.h>
+#include <libavcodec/avcodec.h>
+#include <libswresample/swresample.h>
+#include <libavutil/audio_fifo.h>
 }
 
 #include "base/base_define.h"
@@ -202,6 +205,41 @@ private:
      */
     void flushPrebufferToRecording();
 
+    /**
+     * @brief 初始化音频转码上下文
+     *
+     * 当输入音频编解码器不被输出容器支持时，创建解码器、编码器和重采样上下文，
+     * 将输入音频转码为目标编解码器（如 AAC）。
+     *
+     * @param inStream 输入音频流
+     * @param outStream 输出音频流
+     * @return 是否成功初始化
+     */
+    bool initAudioTranscoder(AVStream *inStream, AVStream *outStream);
+
+    /**
+     * @brief 转码并写入音频数据包
+     *
+     * 解码输入音频帧，重采样为目标格式，编码后写入输出文件。
+     *
+     * @param packet 输入音频数据包
+     * @param outStream 输出音频流
+     * @return 是否成功写入
+     */
+    bool transcodeAndWriteAudioPacket(AVPacket *packet, AVStream *outStream);
+
+    /**
+     * @brief 刷新音频转码器
+     *
+     * 在录制结束时调用，刷新编码器缓冲区中剩余的数据。
+     */
+    void flushAudioTranscoder();
+
+    /**
+     * @brief 释放音频转码资源
+     */
+    void cleanupAudioTranscoder();
+
 private:
     // 事件分发器
     std::shared_ptr<EventDispatcher> eventDispatcher_;
@@ -250,6 +288,19 @@ private:
     // 预缓冲录制器的键（非空表示该录制器由 startPrebufferedRecording 创建）。
     // 录制停止后，Demuxer 通过此键将录制器重新插入映射以便复用。
     std::string prebufferKey_;
+
+    // 音频转码器状态（当输入音频编解码器不被输出容器支持时使用）
+    struct AudioTranscoderState {
+        AVCodecContext *decoderCtx = nullptr;   // 输入音频解码器上下文
+        AVCodecContext *encoderCtx = nullptr;   // 目标音频编码器上下文
+        SwrContext *swrCtx = nullptr;           // 重采样上下文
+        AVAudioFifo *audioFifo = nullptr;        // 音频样本 FIFO 缓冲
+        AVFrame *resampleFrame = nullptr;        // 重采样输出帧（复用缓冲）
+        AVFrame *fifoFrame = nullptr;            // FIFO 读出帧（复用缓冲）
+        int64_t pts = 0;                         // 编码器 PTS（以样本数累加）
+        bool initialized = false;                // 是否已成功初始化
+    };
+    std::unique_ptr<AudioTranscoderState> audioTranscoder_;
 
 public:
     /// 获取预缓冲键。
