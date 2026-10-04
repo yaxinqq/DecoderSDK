@@ -297,6 +297,7 @@ private:
         AVAudioFifo *audioFifo = nullptr;        // 音频样本 FIFO 缓冲
         AVFrame *resampleFrame = nullptr;        // 重采样输出帧（复用缓冲）
         AVFrame *fifoFrame = nullptr;            // FIFO 读出帧（复用缓冲）
+        int outStreamIndex = -1;                 // 输出音频流索引，用于收尾写入时定位正确的轨道
         int64_t pts = 0;                         // 编码器 PTS（以样本数累加）
         bool initialized = false;                // 是否已成功初始化
     };

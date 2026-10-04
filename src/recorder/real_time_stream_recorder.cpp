@@ -1010,6 +1010,9 @@ bool RealTimeStreamRecorder::initAudioTranscoder(AVStream *inStream, AVStream *o
 
     audioTranscoder_->initialized = true;
     audioTranscoder_->pts = 0;
+    // Remember which output stream the transcoded AAC belongs to, so the stop-time flush can route
+    // its packets to the audio track instead of a hard-coded (and usually wrong) stream 0.
+    audioTranscoder_->outStreamIndex = outStream->index;
 
     LOG_INFO("Audio transcoder initialized: {} -> aac",
              avcodec_get_name(inStream->codecpar->codec_id));
@@ -1198,11 +1201,30 @@ void RealTimeStreamRecorder::flushAudioTranscoder()
     avcodec_send_frame(audioTranscoder_->encoderCtx, nullptr);
 
     // 接收剩余的编码数据包
+    const int outStreamIndex = audioTranscoder_->outStreamIndex;
+    if (outStreamIndex < 0 || outStreamIndex >= static_cast<int>(outputFormatCtx_->nb_streams)) {
+        LOG_ERROR("Flush audio transcoder: invalid output stream index {}", outStreamIndex);
+        return;
+    }
+    AVStream *outStream = outputFormatCtx_->streams[outStreamIndex];
+
     AVPacket *outPacket = av_packet_alloc();
     if (outPacket) {
         int ret;
         while ((ret = avcodec_receive_packet(audioTranscoder_->encoderCtx, outPacket)) == 0) {
-            outPacket->stream_index = 0;  // 音频流索引
+            // Route to the AAC output stream and rescale timestamps from the encoder time base,
+            // exactly like the live transcode path. Writing stream 0 here would place audio samples
+            // on the video track and produce an unplayable file.
+            outPacket->stream_index = outStreamIndex;
+            outPacket->pts = av_rescale_q(outPacket->pts,
+                                          audioTranscoder_->encoderCtx->time_base,
+                                          outStream->time_base);
+            outPacket->dts = av_rescale_q(outPacket->dts,
+                                          audioTranscoder_->encoderCtx->time_base,
+                                          outStream->time_base);
+            outPacket->duration = av_rescale_q(outPacket->duration,
+                                               audioTranscoder_->encoderCtx->time_base,
+                                               outStream->time_base);
             av_interleaved_write_frame(outputFormatCtx_, outPacket);
         }
         av_packet_free(&outPacket);
