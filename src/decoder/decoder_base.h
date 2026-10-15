@@ -24,16 +24,21 @@ INTERNAL_NAMESPACE_BEGIN
 class EventDispatcher;
 class Demuxer;
 
+constexpr int kFrameQueueDefaultSize = 3; // 默认帧队列容量，由 DecoderController 创建队列时使用
+
 class DecoderBase {
 public:
     /**
      * @brief 构造函数
      * @param demuxer 解复用器
      * @param eventDispatcher 事件分发器
+     * @param seekCoordinator Seek协调器
+     * @param frameQueue 帧队列，由外部创建并管理生命周期，DecoderBase 只使用
      */
     DecoderBase(std::shared_ptr<Demuxer> demuxer,
                 std::shared_ptr<EventDispatcher> eventDispatcher,
-                std::shared_ptr<SeekCoordinator> seekCoordinator);
+                std::shared_ptr<SeekCoordinator> seekCoordinator,
+                std::shared_ptr<FrameQueue> frameQueue);
     /**
      * @brief 析构函数
      */
@@ -272,7 +277,7 @@ protected:
     AVStream *stream_ = nullptr; // 流信息
 
     std::shared_ptr<Demuxer> demuxer_;       // 解复用器
-    std::shared_ptr<FrameQueue> frameQueue_; // 帧队列
+    std::shared_ptr<FrameQueue> frameQueue_; // 帧队列，外部传入，生命周期不由 DecoderBase 负责
 
     std::thread thread_;                // 解码线程
     std::atomic_bool isPaused_ = false; // 解码线程暂停运行状态

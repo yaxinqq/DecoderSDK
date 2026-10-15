@@ -19,10 +19,13 @@ public:
      * @brief 构造函数
      * @param demuxer 解复用器
      * @param eventDispatcher 事件分发器
+     * @param seekCoordinator Seek协调器
+     * @param frameQueue 帧队列，由外部创建并管理生命周期
      */
     VideoDecoder(std::shared_ptr<Demuxer> demuxer,
                  std::shared_ptr<EventDispatcher> eventDispatcher,
-                 std::shared_ptr<SeekCoordinator> seekCoordinator);
+                 std::shared_ptr<SeekCoordinator> seekCoordinator,
+                 std::shared_ptr<FrameQueue> frameQueue);
     /**
      * @brief 析构函数
      */

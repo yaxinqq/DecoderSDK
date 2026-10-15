@@ -5,6 +5,7 @@
 #include <memory>
 
 #include "base/base_define.h"
+#include "base/frame_queue.h"
 #include "base/seek_coordinator.h"
 #include "decoder/audio_decoder.h"
 #include "decoder/video_decoder.h"
@@ -377,16 +378,18 @@ private:
     void cleanupReconnectState();
 
 private:
-    std::shared_ptr<EventDispatcher> eventDispatcher_;  // 事件分发器
-    std::shared_ptr<SeekCoordinator> seekCoordinator_;  // Seek协调器
+    std::shared_ptr<EventDispatcher> eventDispatcher_; // 事件分发器
+    std::shared_ptr<SeekCoordinator> seekCoordinator_; // Seek协调器
 
-    std::shared_ptr<Demuxer> demuxer_;           // 解复用器
-    std::shared_ptr<VideoDecoder> videoDecoder_; // 视频解码器
-    std::shared_ptr<AudioDecoder> audioDecoder_; // 音频解码器
+    std::shared_ptr<Demuxer> demuxer_;                  // 解复用器
+    std::shared_ptr<FrameQueue> videoFrameQueue_;       // 视频帧队列，生命周期归 DecoderController，decoder 仅借用
+    std::shared_ptr<FrameQueue> audioFrameQueue_;       // 音频帧队列，生命周期归 DecoderController，decoder 仅借用
+    std::shared_ptr<VideoDecoder> videoDecoder_;        // 视频解码器
+    std::shared_ptr<AudioDecoder> audioDecoder_;        // 音频解码器
 
-    DecoderConfig config_;   // 解码器配置项
-    bool isDecoding_{false}; // 是否正在解码
-    bool isPaused_{false};   // 是否已暂停
+    DecoderConfig config_;                // 解码器配置项
+    std::atomic<bool> isDecoding_{false}; // 是否正在解码
+    bool isPaused_{false};                // 是否已暂停
 
     // 预缓冲状态
     std::atomic<PreBufferState> preBufferState_{PreBufferState::kDisabled};
