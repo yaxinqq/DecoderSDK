@@ -398,39 +398,6 @@ bool DecoderController::seek(double position)
     return true;
 }
 
-bool DecoderController::setSpeed(double speed)
-{
-    LOG_INFO("Setting playback speed to: {:.2f}x", speed);
-    std::lock_guard<std::mutex> lock(mutex_);
-
-    if (speed <= 0.0f) {
-        LOG_ERROR("Invalid speed value: {:.2f}, must be greater than 0", speed);
-        return false;
-    }
-
-    // 如果是实时流，则不支持设置速度
-    if (!demuxer_ || demuxer_->isRealTime()) {
-        LOG_WARN("Speed control not supported for real-time streams");
-        return false;
-    }
-
-    config_.speed = speed;
-    LOG_DEBUG("Speed configuration updated to: {:.2f}x", speed);
-
-    // 设置解码器速度
-    if (videoDecoder_) {
-        videoDecoder_->setSpeed(speed);
-        LOG_DEBUG("Video decoder speed set to: {:.2f}x", speed);
-    }
-    if (audioDecoder_) {
-        audioDecoder_->setSpeed(speed);
-        LOG_DEBUG("Audio decoder speed set to: {:.2f}x", speed);
-    }
-
-    LOG_INFO("Playback speed successfully set to: {:.2f}x", speed);
-    return true;
-}
-
 std::shared_ptr<FrameQueue> DecoderController::videoQueue()
 {
     return videoFrameQueue_;
@@ -452,13 +419,6 @@ double DecoderController::getVideoFrameRate() const
     const double frameRate = decoder ? decoder->getFrameRate() : 0.0;
     LOG_TRACE("Video frame rate: {:.2f} fps", frameRate);
     return frameRate;
-}
-
-double DecoderController::curSpeed() const
-{
-    std::lock_guard<std::mutex> lock(mutex_);
-    LOG_TRACE("Current speed: {:.2f}x", config_.speed);
-    return config_.speed;
 }
 
 bool DecoderController::startRecording(const std::string &outputPath)
@@ -787,7 +747,6 @@ bool DecoderController::startDecodeInternal()
     bool hasVideoDecoder = false;
     if (demuxer_->hasVideo() && config_.decodeMediaTypes.has(MediaType::kVideo) && videoDecoder_) {
         videoDecoder_->init(config_);
-        videoDecoder_->setSpeed(config_.speed);
         videoFrameQueue_->init();
         if (!videoDecoder_->open()) {
             videoFrameQueue_->uninit();
@@ -802,8 +761,6 @@ bool DecoderController::startDecodeInternal()
     // 开启音频解码器
     bool hasAudioDecoder = false;
     if (demuxer_->hasAudio() && config_.decodeMediaTypes.has(MediaType::kAudio) && audioDecoder_) {
-        audioDecoder_->init(config_);
-        audioDecoder_->setSpeed(config_.speed);
         audioFrameQueue_->init();
         if (!audioDecoder_->open()) {
             audioFrameQueue_->uninit();

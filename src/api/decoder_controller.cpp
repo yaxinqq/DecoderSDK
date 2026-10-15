@@ -65,11 +65,6 @@ bool DecoderController::seek(double position)
     return impl_ ? impl_->seek(position) : false;
 }
 
-bool DecoderController::setSpeed(double speed)
-{
-    return impl_ ? impl_->setSpeed(speed) : false;
-}
-
 FrameQueue DecoderController::videoQueue()
 {
     if (!impl_)
@@ -89,11 +84,6 @@ FrameQueue DecoderController::audioQueue()
 double DecoderController::getVideoFrameRate() const
 {
     return impl_ ? impl_->getVideoFrameRate() : 0.0;
-}
-
-double DecoderController::curSpeed() const
-{
-    return impl_ ? impl_->curSpeed() : 0.0;
 }
 
 bool DecoderController::startRecording(const std::string &outputPath)

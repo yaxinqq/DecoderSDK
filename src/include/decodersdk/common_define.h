@@ -549,8 +549,6 @@ struct DecoderConfig {
         kUdpMulticast, // udp多播
     };
 
-    // 播放速度
-    double speed = 1.0;
     // 硬件解码器类型
     HWAccelType hwAccelType = HWAccelType::kAuto;
     // 派生的硬件解码器后端的设备类型
@@ -598,9 +596,6 @@ struct DecoderConfig {
         // 预缓冲完成后是否自动开始解码
         bool autoStartAfterPreBuffer = true;
     } preBufferConfig;
-
-    // 音频采样格式是否交错
-    bool audioInterleaved = true;
 
     // rtsp协议使用的传输协议
     RtspTransport rtspTransport = RtspTransport::kTcp;
