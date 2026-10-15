@@ -362,19 +362,36 @@ void Demuxer::distributePacket(AVPacket *pkt)
     Packet packet(pkt);
 
     if (pkt->stream_index == videoStreamIndex_) {
-        if (videoPacketQueue_ && !isPaused_.load()) {
-            packet.setSerial(videoPacketQueue_->serial());
-            videoPacketQueue_->push(packet, -1);
-        }
+        enqueueDecodePacket(videoPacketQueue_, packet);
     } else if (pkt->stream_index == audioStreamIndex_) {
-        if (audioPacketQueue_ && !isPaused_.load()) {
-            packet.setSerial(audioPacketQueue_->serial());
-            audioPacketQueue_->push(packet, -1);
-        }
+        enqueueDecodePacket(audioPacketQueue_, packet);
     }
 
     // 检查预缓冲状态
     checkPreBufferStatus();
+}
+
+void Demuxer::enqueueDecodePacket(const std::shared_ptr<PacketQueue> &queue, Packet &packet)
+{
+    if (!queue || isPaused_.load()) {
+        return;
+    }
+
+    packet.setSerial(queue->serial());
+
+    if (!isRealTime_) {
+        // 文件流没有时间压力，用背压让读线程跟随解码进度，避免丢包破坏播放完整性
+        queue->push(packet, -1);
+        return;
+    }
+
+    // 实时流的源由外部驱动，阻塞读线程既追不回延迟，又会连带停掉同线程的录制喂包。
+    // 队列满说明解码侧已经落后，整体丢弃积压数据；序列号变化会让解码器重置并重等关键帧。
+    if (!queue->push(packet, 0) && !queue->isAborted()) {
+        queue->flush();
+        LOG_WARN("{} real-time decode queue is full, flushed to resync to the latest frame",
+                 url_);
+    }
 }
 
 void Demuxer::fileStreamDemuxLoop(AVPacket *pkt)

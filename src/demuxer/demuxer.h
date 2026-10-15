@@ -275,7 +275,7 @@ private:
 
     /**
      * @brief 处理已经读取好的视频数据包
-     *
+     * 
      * @param packet 数据包
      * @param videoTimeBase 视频流时间基
      * @param jitterDetector jitter探测器
@@ -292,6 +292,17 @@ private:
      * @param pkt 数据包
      */
     void writeToRecorders(AVPacket *pkt);
+
+    /**
+     * @brief 将数据包投递到解码队列
+     *
+     * 文件流依赖背压让读线程跟随解码进度；实时流不阻塞读线程，队列满时整体清空积压
+     * 并触发解码器重同步，避免解码侧停滞（暂停、预缓冲等待、解码变慢）连带停掉录制喂包。
+     *
+     * @param queue 目标解码队列，为空时直接返回
+     * @param packet 数据包，序列号在函数内按队列当前值填充
+     */
+    void enqueueDecodePacket(const std::shared_ptr<PacketQueue> &queue, Packet &packet);
 
     /**
      * @brief 打开解复用器，内部调用，不加锁
