@@ -352,16 +352,14 @@ bool DecoderController::seek(double position)
     std::lock_guard<std::mutex> lock(mutex_);
 
     // 发送开始seek的事件
-    auto event =
-        std::make_shared<SeekEventArgs>(position, kModuleName,
-                                        utils::eventType2Desc(EventType::kSeekStarted));
+    auto event = std::make_shared<SeekEventArgs>(position, kModuleName,
+                                                 utils::eventType2Desc(EventType::kSeekStarted));
     eventDispatcher_->triggerEvent(EventType::kSeekStarted, event);
 
     LOG_DEBUG("Requesting demuxer to seek to position: {:.3f}s", position);
 
     const auto sendFailedEvent = [this, position]() {
-        auto event = std::make_shared<SeekEventArgs>(position,
-                                                     kModuleName,
+        auto event = std::make_shared<SeekEventArgs>(position, kModuleName,
                                                      utils::eventType2Desc(EventType::kSeekFailed));
         eventDispatcher_->triggerEvent(EventType::kSeekFailed, event);
     };
@@ -445,7 +443,13 @@ std::shared_ptr<FrameQueue> DecoderController::audioQueue()
 
 double DecoderController::getVideoFrameRate() const
 {
-    const double frameRate = videoDecoder_ ? videoDecoder_->getFrameRate() : 0.0;
+    std::shared_ptr<VideoDecoder> decoder;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        decoder = videoDecoder_;
+    }
+
+    const double frameRate = decoder ? decoder->getFrameRate() : 0.0;
     LOG_TRACE("Video frame rate: {:.2f} fps", frameRate);
     return frameRate;
 }
@@ -674,11 +678,19 @@ const std::optional<StreamInfo> &DecoderController::streamInfo() const
 
 std::optional<DecoderInfo> DecoderController::decoderInfo(MediaType mediaType) const
 {
-    if (mediaType == MediaType::kVideo && videoDecoder_) {
-        return videoDecoder_->decoderInfo();
+    std::shared_ptr<VideoDecoder> video;
+    std::shared_ptr<AudioDecoder> audio;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        video = videoDecoder_;
+        audio = audioDecoder_;
     }
-    if (mediaType == MediaType::kAudio && audioDecoder_) {
-        return audioDecoder_->decoderInfo();
+
+    if (mediaType == MediaType::kVideo && video) {
+        return video->decoderInfo();
+    }
+    if (mediaType == MediaType::kAudio && audio) {
+        return audio->decoderInfo();
     }
 
     return std::nullopt;
