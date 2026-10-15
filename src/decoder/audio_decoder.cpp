@@ -43,9 +43,8 @@ AVMediaType AudioDecoder::type() const
     return AVMEDIA_TYPE_AUDIO;
 }
 
-std::optional<DecoderInfo> AudioDecoder::decoderInfo() const
+std::optional<DecoderInfo> AudioDecoder::buildDecoderInfo() const
 {
-    std::lock_guard<std::mutex> lock(mutex_);
     if (!isOpened_ || !codecCtx_)
         return std::nullopt;
 

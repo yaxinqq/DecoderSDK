@@ -209,13 +209,32 @@ double DecoderBase::calculatePts(const Frame &frame) const
 
 bool DecoderBase::handleFirstFrame()
 {
+    std::optional<DecoderInfo> cachedInfo;
+    {
+        std::lock_guard<std::mutex> lock(decoderInfoMutex_);
+        decoderInfoCache_ = buildDecoderInfo();
+        cachedInfo = decoderInfoCache_;
+    }
+
     auto event =
         std::make_shared<DecoderEventArgs>(utils::avMediaType2MediaType(type()), decoderName(),
                                            utils::eventType2Desc(EventType::kDecodeFirstFrame));
-    event->decoderInfo = decoderInfo();
+    event->decoderInfo = std::move(cachedInfo);
     eventDispatcher_->triggerEvent(EventType::kDecodeFirstFrame, event);
 
     return true;
+}
+
+std::optional<DecoderInfo> DecoderBase::decoderInfo() const
+{
+    std::lock_guard<std::mutex> lock(decoderInfoMutex_);
+    return decoderInfoCache_;
+}
+
+void DecoderBase::clearDecoderInfoCache()
+{
+    std::lock_guard<std::mutex> lock(decoderInfoMutex_);
+    decoderInfoCache_.reset();
 }
 
 bool DecoderBase::handleDecodeError(int errorCode)
@@ -453,6 +472,7 @@ void DecoderBase::stopInternal()
     if (thread_.joinable()) {
         thread_.join();
     }
+    clearDecoderInfoCache();
     isStarted_ = false;
 
     // 发送解码已停止的事件

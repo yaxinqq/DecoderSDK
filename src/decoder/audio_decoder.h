@@ -40,13 +40,6 @@ public:
     AVMediaType type() const override;
 
     /**
-     * @brief 得到解码器信息
-     *
-     * @return 解码器信息
-     */
-    std::optional<DecoderInfo> decoderInfo() const override;
-
-    /**
      * @brief 获得解码器名称
      *
      * @return 解码器名称
@@ -58,6 +51,11 @@ protected:
      * @brief 解码循环
      */
     virtual void decodeLoop() override;
+    /**
+     * @brief 组装解码器信息快照
+     * @return 解码器信息
+     */
+    std::optional<DecoderInfo> buildDecoderInfo() const override;
 
 private:
     /**

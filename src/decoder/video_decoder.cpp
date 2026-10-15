@@ -664,9 +664,8 @@ void VideoDecoder::calculateBitsPerPixel()
     bppCalculated_ = true;
 }
 
-std::optional<DecoderInfo> VideoDecoder::decoderInfo() const
+std::optional<DecoderInfo> VideoDecoder::buildDecoderInfo() const
 {
-    std::lock_guard<std::mutex> lock(mutex_);
     if (!isOpened_ || !codecCtx_)
         return std::nullopt;
 
