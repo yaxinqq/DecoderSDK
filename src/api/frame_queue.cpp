@@ -2,6 +2,8 @@
 
 #include "base/frame_queue.h"
 
+#include <utility>
+
 namespace decoder_sdk {
 
 class FrameQueueImpl {
@@ -106,6 +108,15 @@ bool FrameQueue::front(Frame &frame) const
     }
 
     return success;
+}
+
+void FrameQueue::setFrameProducedCallback(std::function<void()> callback)
+{
+    if (!impl_ || !impl_->get()) {
+        return;
+    }
+
+    impl_->get()->setFrameProducedCallback(std::move(callback));
 }
 
 bool FrameQueue::empty() const

@@ -27,28 +27,43 @@ FrameQueue::~FrameQueue()
 
 bool FrameQueue::push(const Frame &frame, int timeout)
 {
-    std::unique_lock<std::mutex> lock(mutex_);
+    bool pushed = false;
+    bool producedWake = false;
+    {
+        std::unique_lock<std::mutex> lock(mutex_);
 
-    // 检查是否有空间
-    auto hasSpace = [this]() { return size_ < maxSize_ || aborted_.load(); };
+        // 检查是否有空间
+        auto hasSpace = [this]() { return size_ < maxSize_ || aborted_.load(); };
 
-    if (timeout == 0) {
-        if (!hasSpace()) {
+        if (timeout == 0) {
+            if (!hasSpace()) {
+                return false;
+            }
+        } else if (timeout > 0) {
+            if (!cond_.wait_for(lock, std::chrono::milliseconds(timeout), hasSpace)) {
+                return false;
+            }
+        } else {
+            cond_.wait(lock, hasSpace);
+        }
+
+        if (aborted_.load() || queue_.empty()) {
             return false;
         }
-    } else if (timeout > 0) {
-        if (!cond_.wait_for(lock, std::chrono::milliseconds(timeout), hasSpace)) {
-            return false;
-        }
-    } else {
-        cond_.wait(lock, hasSpace);
+
+        const bool wasEmpty = size_ == 0;
+        pushed = pushInternal(frame);
+
+        // 只在队列从空变为非空时通知，避免消费方正在连续取帧时被逐帧打断。
+        producedWake = pushed && wasEmpty;
     }
 
-    if (aborted_.load() || queue_.empty()) {
-        return false;
+    // 回调只在空队列被唤醒时触发，且必须尽快返回，避免阻塞本线程的解码流程。
+    if (producedWake) {
+        notifyFrameProduced();
     }
 
-    return pushInternal(frame);
+    return pushed;
 }
 
 bool FrameQueue::pop(Frame &frame, int timeout)
@@ -99,7 +114,9 @@ Frame *FrameQueue::getWritableFrame(int timeout)
 {
     std::unique_lock<std::mutex> lock(mutex_);
 
-    auto hasSpace = [this]() { return size_ < maxSize_ || aborted_.load(); };
+    auto hasSpace = [this]() {
+        return size_ < maxSize_ || aborted_.load();
+    };
 
     if (timeout == 0) {
         if (!hasSpace()) {
@@ -113,7 +130,8 @@ Frame *FrameQueue::getWritableFrame(int timeout)
         cond_.wait(lock, hasSpace);
     }
 
-    if (aborted_.load() || size_ >= maxSize_ || queue_.empty()) {
+    if (aborted_.load() || size_ >= maxSize_ ||
+        queue_.empty()) {
         return nullptr;
     }
 
@@ -123,18 +141,30 @@ Frame *FrameQueue::getWritableFrame(int timeout)
 
 bool FrameQueue::commitFrame()
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    bool producedWake = false;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
 
-    tail_ = (tail_ + 1) % maxSize_;
-    size_++;
-    pendingWriteIndex_ = -1;
+        const bool wasEmpty = size_ == 0;
+        tail_ = (tail_ + 1) % maxSize_;
+        size_++;
+        pendingWriteIndex_ = -1;
 
-    // 更新队首帧PTS
-    if (size_ > 0) {
-        frontPts_.store(queue_[head_].secPts());
+        // 更新队首帧PTS
+        if (size_ > 0) {
+            frontPts_.store(queue_[head_].secPts());
+        }
+
+        notifyWaiters();
+
+        // 只在队列从空变为非空时通知，避免消费方正在连续取帧时被逐帧打断。
+        producedWake = wasEmpty;
     }
 
-    notifyWaiters();
+    // 回调必须在锁外调用，并且只用于唤醒消费方，禁止长时间阻塞。
+    if (producedWake) {
+        notifyFrameProduced();
+    }
     return true;
 }
 
@@ -362,9 +392,20 @@ bool FrameQueue::popInternal(Frame &frame)
     return true;
 }
 
-void FrameQueue::notifyWaiters()
-{
+void FrameQueue::notifyWaiters() {
     cond_.notify_all();
+}
+
+void FrameQueue::setFrameProducedCallback(std::function<void()> callback)
+{
+    frameProducedCallback_ = std::move(callback);
+}
+
+void FrameQueue::notifyFrameProduced()
+{
+    if (frameProducedCallback_) {
+        frameProducedCallback_();
+    }
 }
 
 bool FrameQueue::handleKeepLastCase(Frame &frame)

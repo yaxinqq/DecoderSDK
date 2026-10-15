@@ -1,5 +1,6 @@
-﻿#ifndef DECODER_SDK_FRAME_QUEUE_H
+#ifndef DECODER_SDK_FRAME_QUEUE_H
 #define DECODER_SDK_FRAME_QUEUE_H
+#include <functional>
 #include <memory>
 
 #include "frame.h"
@@ -49,6 +50,17 @@ public:
      * @return 成功返回true，失败返回false
      */
     bool front(Frame &frame) const;
+
+    /**
+     * @brief 设置帧入队成功后的轻量通知回调
+     *
+     * 回调应在帧生产开始前设置，并在队列由空变为非空时、于产生帧的线程上立即执行，
+     * 只应唤醒消费方。禁止在回调中执行锁等待、I/O、网络、OpenGL/解码等长时间阻塞操作，
+     * 否则可能明显拖慢解码线程。
+     *
+     * @param callback 轻量唤醒回调，传入空函数可取消
+     */
+    void setFrameProducedCallback(std::function<void()> callback);
 
     /**
      * @brief 获取队首帧的PTS（原子操作，低开销）
