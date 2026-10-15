@@ -326,8 +326,7 @@ void Demuxer::demuxLoop()
         // 通知 SeekCoordinator 失败
         seekCoordinator_->failSeek(position);
 
-        auto event = std::make_shared<SeekEventArgs>(position,
-                                                     kModuleName,
+        auto event = std::make_shared<SeekEventArgs>(position, kModuleName,
                                                      utils::eventType2Desc(EventType::kSeekFailed));
         eventDispatcher_->triggerEvent(EventType::kSeekFailed, event);
         LOG_WARN("{} demux loop ended with pending seek to {:.2f}s, sending SeekFailed event", url_,
@@ -760,8 +759,7 @@ bool Demuxer::handleSeekRequest()
         seekCoordinator_->failSeek(position);
 
         // 发送seek失败的事件
-        auto event = std::make_shared<SeekEventArgs>(position,
-                                                     kModuleName,
+        auto event = std::make_shared<SeekEventArgs>(position, kModuleName,
                                                      utils::eventType2Desc(EventType::kSeekFailed));
         eventDispatcher_->triggerEvent(EventType::kSeekFailed, event);
         return false;
@@ -787,9 +785,8 @@ bool Demuxer::handleSeekRequest()
              videoSerial, audioSerial);
 
     // 发送seek成功的事件
-    auto event =
-        std::make_shared<SeekEventArgs>(position, kModuleName,
-                                        utils::eventType2Desc(EventType::kSeekSuccess));
+    auto event = std::make_shared<SeekEventArgs>(position, kModuleName,
+                                                 utils::eventType2Desc(EventType::kSeekSuccess));
     eventDispatcher_->triggerEvent(EventType::kSeekSuccess, event);
 
     return true;
@@ -958,16 +955,16 @@ bool Demuxer::openInternal(const std::string &url, const DecoderConfig &config,
 
     // 创建数据包队列
     if (videoStreamIndex_ >= 0 && config.decodeMediaTypes.has(MediaType::kVideo)) {
-        videoPacketQueue_ = std::make_shared<PacketQueue>(60 + config.preBufferConfig.videoPreBufferFrames);
+        videoPacketQueue_ =
+            std::make_shared<PacketQueue>(60 + config.preBufferConfig.videoPreBufferFrames);
     }
     if (audioStreamIndex_ >= 0 && config.decodeMediaTypes.has(MediaType::kAudio)) {
-        audioPacketQueue_ = std::make_shared<PacketQueue>(60 + config.preBufferConfig.audioPreBufferPackets);
+        audioPacketQueue_ =
+            std::make_shared<PacketQueue>(60 + config.preBufferConfig.audioPreBufferPackets);
     }
 
-    // 组装流信息
+    // 是否是实时视频
     isRealTime_ = isRealTime;
-    setupStreamInfo(url, config.decodeMediaTypes);
-
     // 设置状态
     isOpened_ = true;
 
@@ -983,6 +980,9 @@ bool Demuxer::openInternal(const std::string &url, const DecoderConfig &config,
 
     // 设置待录制的媒体类型
     recordMediaTypes_ = config.recordMediaTypes;
+    
+    // 组装流信息
+    setupStreamInfo(url, config.decodeMediaTypes);
 
     // 启动解复用器
     start();
@@ -1205,6 +1205,7 @@ void Demuxer::setupStreamInfo(const std::string_view &url, MediaTypes decodeMedi
     }
 
     streamInfo_->isRealtime = isRealTime_;
+    streamInfo_->preBufferEnabled = preBufferEnabled_;
 }
 
 INTERNAL_NAMESPACE_END
