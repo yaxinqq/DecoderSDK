@@ -86,6 +86,17 @@ public:
      */
     bool commitFrame();
 
+    /**
+     * @brief 设置帧入队成功后的轻量通知回调
+     *
+     * 该回调应在帧生产开始前设置，并在队列从空变为非空时、于产生帧的线程上被调用。
+     * 它只用于唤醒消费方，必须立刻返回；禁止在回调中执行锁等待、I/O、网络、
+     * OpenGL/解码等长时间阻塞操作，否则会阻塞解码线程后续帧产出。
+     *
+     * @param callback 轻量唤醒回调，传入空函数可取消
+     */
+    void setFrameProducedCallback(std::function<void()> callback);
+
     // 查询接口
     /**
      * @brief 是否为空
@@ -118,6 +129,7 @@ public:
      * @brief 清除队列
      */
     void clear();
+
     /**
      * @brief 设置中止状态
      * @param abort true - 中止；false - 继续
@@ -179,6 +191,11 @@ private:
     void notifyWaiters();
 
     /**
+     * @brief 通知帧已入队
+     */
+    void notifyFrameProduced();
+
+    /**
      * @brief 处理保留最后一帧的情况
      * @param frame 输出参数，存储弹出的帧
      * @return 成功返回true，失败返回false
@@ -214,10 +231,11 @@ private:
 
     std::atomic<double> frontPts_; // 队首帧的PTS（原子变量）
 
-    uint64_t serial_;              // 当前版本序号
-    std::atomic<bool> aborted_;    // 是否已中止
-    mutable std::mutex mutex_;     // 互斥锁
-    std::condition_variable cond_; // 条件变量
+    uint64_t serial_;                         // 当前版本序号
+    std::atomic<bool> aborted_{false};        // 是否已中止
+    mutable std::mutex mutex_;                // 互斥锁
+    std::condition_variable cond_;            // 条件变量
+    std::function<void()> frameProducedCallback_; // 帧入队后的轻量唤醒回调
 };
 
 DECODER_SDK_NAMESPACE_END
