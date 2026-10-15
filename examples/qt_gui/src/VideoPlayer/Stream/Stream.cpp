@@ -23,6 +23,9 @@ static std::atomic_int g_decodingDecoder = 0;
 #endif
 
 namespace {
+    // 当前进程内全部 StreamPipeline 共用的 ID 源，只用于运行时实例识别。
+    std::atomic<quint64> g_nextPipelineId{ 1 };
+
     Stream::ClockSourceType determineClockSource(const decoder_sdk::StreamInfo &info)
     {
         if (info.isRealtime) {
@@ -45,6 +48,7 @@ namespace {
 StreamPipeline::StreamPipeline(const QString &key, QObject *parent /*= nullptr*/)
     : QThread(parent)
     , key_{ key }
+    , pipelineId_{ g_nextPipelineId.fetch_add(1, std::memory_order_relaxed) }
 {
     initDecoder(key);
     initRenderer(key);
@@ -82,13 +86,13 @@ StreamPipeline::~StreamPipeline()
 #endif
 }
 
-void StreamPipeline::appendTask(DecodeWorker::Task task)
+bool StreamPipeline::appendTask(DecodeWorker::Task task)
 {
     std::lock_guard l(mutex_);
 
     // 已接受终态 kClose 后不再接受新任务，避免向正在关闭的管线继续投递。
-    if (decoderPreparingToClose_.load()) {
-        return;
+    if (openState_.load() == OpenState::kClosing) {
+        return false;
     }
 
     // 判断任务是否需要执行，不需要执行，则判断能否降级
@@ -97,7 +101,7 @@ void StreamPipeline::appendTask(DecodeWorker::Task task)
         // 原始任务
         const auto originTask = task;
         if (!tryDowngradeTask(task)) {
-            return;
+            return false;
         }
         // 降级任务成功，输出日志
         qDebug() << QStringLiteral("[StreamPipeline] Stream: %1 downgrade the task! Origin Task: %2, Downgrade Task: %3")
@@ -113,13 +117,14 @@ void StreamPipeline::appendTask(DecodeWorker::Task task)
     tasks_.clear();
     tasks_.append(TaskEntry{ task, sequence });
 
-    // 如果当前的任务是关闭，则通知外部
+    // 如果当前的任务是关闭，则进入终态
     if (task == DecodeWorker::Task::kClose) {
-        decoderPreparingToClose_.store(true);
+        openState_.store(OpenState::kClosing);
     }
 
     // 唤醒消费者
     condition_.notify_one();
+    return true;
 }
 
 void StreamPipeline::requestStop()
@@ -129,33 +134,56 @@ void StreamPipeline::requestStop()
     quit();
 }
 
-void StreamPipeline::open(const QString &url, const decoder_sdk::DecoderConfig &config)
+bool StreamPipeline::ensureOpen(const QString &url, const decoder_sdk::DecoderConfig &config)
 {
-    // 只开启一次，后续加进来的player，会调用resume，防止当前解码器正在暂停
-    if (!once_.load()) {
-        once_.store(true);
-        emit requestToOpenAsync(url, config);
-    } else {
-        appendTask(DecodeWorker::Task::kResume);
+    OpenState expected = openState_.load();
+    for (;;) {
+        switch (expected) {
+            case OpenState::kClosing:
+                return false;
+            case OpenState::kOpening:
+                // 重复打开不能越过尚未完成的首次打开而错误地降级为恢复播放。
+                return true;
+            case OpenState::kNotOpened:
+            case OpenState::kFailed:
+                if (openState_.compare_exchange_weak(expected, OpenState::kOpening)) {
+                    emit requestToOpenAsync(url, config);
+                    return true;
+                }
+                break;
+            case OpenState::kOpened:
+                if (!appendTask(DecodeWorker::Task::kResume)) {
+                    return false;
+                }
 
-        // 广播流信息和解码器信息，通知后续加入的player
-        emit requestToBroadcastStreamAndDecoderInfo();
+                // 广播流信息和解码器信息，通知后续加入的player
+                emit requestToBroadcastStreamAndDecoderInfo();
+                return true;
+        }
     }
 }
 
-bool StreamPipeline::isRecodering() const
+bool StreamPipeline::isRecodering(const QString &recorderFilePath) const
 {
-    return isRecording_;
+    if (!decoder_)
+        return false;
+
+    return decoder_->isRecording(recorderFilePath);
 }
 
-bool StreamPipeline::decoderPreparingToClose() const
+bool StreamPipeline::isClosing() const
 {
-    return decoderPreparingToClose_.load();
+    return openState_.load() == OpenState::kClosing;
 }
 
 QString StreamPipeline::key() const
 {
     return key_;
+}
+
+quint64 StreamPipeline::pipelineId() const
+{
+    return pipelineId_;
 }
 
 void StreamPipeline::registerPlayer(VideoPlayerImpl *player)
@@ -276,16 +304,23 @@ void StreamPipeline::run()
     }
 }
 
-void StreamPipeline::setRecordingStatus(bool status)
-{
-    isRecording_ = status;
-}
-
 void StreamPipeline::onOpenResultReady(bool res, const QString &errorMsg)
 {
-    // 这里不管成功还是失败，都开启事件循环，不能影响后续任务的接收
-    // 开启事件循环
-    start();
+    OpenState expected = OpenState::kOpening;
+    if (res) {
+        openState_.compare_exchange_strong(expected, OpenState::kOpened);
+    } else {
+        if (!errorMsg.isEmpty()) {
+            qWarning() << QStringLiteral("[StreamPipeline] Open failed for %1: %2")
+                              .arg(key_, errorMsg);
+        }
+        openState_.compare_exchange_strong(expected, OpenState::kFailed);
+    }
+
+    // 打开期间可能已经收到关闭任务，因此无论结果如何都需要启动消费线程。
+    if (!isRunning()) {
+        start();
+    }
 }
 
 void StreamPipeline::onDecoderRequestToDelete()
@@ -301,7 +336,7 @@ void StreamPipeline::onDecoderRequestToDelete()
     }
 
     // 向外通知
-    emit aboutToDelete(key_);
+    emit aboutToDelete(key_, pipelineId_);
 
     // 销毁自身
     deleteLater();
@@ -311,8 +346,7 @@ void StreamPipeline::onEventUpdated(const QString &url, decoder_sdk::EventType t
                                     const std::shared_ptr<decoder_sdk::EventArgs> &event)
 {
     switch (type) {
-        case decoder_sdk::EventType::kStreamOpened:
-        {
+        case decoder_sdk::EventType::kStreamOpened: {
             // 根据流的音频、视频是否参与解码以及是否为实时流，来设置render的主时钟类型
             Stream::ClockSourceType clockType = Stream::ClockSourceType::kNone;
 
@@ -337,18 +371,13 @@ void StreamPipeline::onEventUpdated(const QString &url, decoder_sdk::EventType t
         case decoder_sdk::EventType::kSeekSuccess:
             renderer_->resetTimeline();
             break;
-        case decoder_sdk::EventType::kRecordingStarted:
-            // 设置当前的录像状态
-            setRecordingStatus(true);
-            break;
         case decoder_sdk::EventType::kRecordingStopped:
-            // 设置当前的录像状态
-            setRecordingStatus(false);
+            // 如果当前没有player和这个Worker绑定，执行录像结束的默认操作
             break;
         case decoder_sdk::EventType::kRecordingError:
             // 如果当前没有player和这个Worker绑定，执行录像错误的默认操作
             if (refPlayers_.isEmpty()) {
-                emit requestToStopRecording();
+                emit requestToStopRecording(QString());
             }
             break;
         default:

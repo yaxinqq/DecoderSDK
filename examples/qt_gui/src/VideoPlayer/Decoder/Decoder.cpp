@@ -1,4 +1,4 @@
-#include "Decoder.h"
+﻿#include "Decoder.h"
 #include "../Player/VideoPlayerImpl.h"
 
 #include <QThread>
@@ -34,9 +34,11 @@ public:
     void broadcastStreamAndDecoderInfo();
 
     // 开启录像，结果根据event变更进行处理
-    void startRecoding(const QString &recordPath);
+    void startRecoding(const QString &recorderFilePath);
     // 关闭录像，结果根据event变更进行处理
-    void stopRecording();
+    void stopRecording(const QString &recorderFilePath);
+    // 是否正在录像
+    bool isRecording(const QString &recorderFilePath) const;
     // 进行跳转
     void seek(double pos);
     // 设置倍速
@@ -205,19 +207,25 @@ void Decoder::timerEvent(QTimerEvent *event)
     QObject::timerEvent(event);
 }
 
-void Decoder::startRecoding(const QString &recordPath)
+void Decoder::startRecoding(const QString &recorderFilePath)
 {
-    if (controller_.isRecording())
+    const auto strPath = recorderFilePath.toLocal8Bit().toStdString();
+    if (controller_.isRecording(strPath))
         return;
-
-    controller_.startRecording(recordPath.toLocal8Bit().toStdString());
+        
+    controller_.startRecording(strPath);
 }
 
-void Decoder::stopRecording()
+void Decoder::stopRecording(const QString &recorderFilePath)
 {
     if (!controller_.isRecording())
         return;
-    controller_.stopRecording();
+    controller_.stopRecording(recorderFilePath.toLocal8Bit().toStdString());
+}
+
+bool Decoder::isRecording(const QString &recorderFilePath) const
+{
+    return controller_.isRecording(recorderFilePath.toLocal8Bit().toStdString());
 }
 
 void Decoder::seek(double pos)
@@ -287,6 +295,9 @@ void Decoder::safeDelete()
 
 bool Decoder::pause()
 {
+    if (controller_.isDecodePaused())
+        return true;
+
     bool ret = controller_.pause();
     if (controller_.isRealTimeUrl())
         ret = controller_.stopDecode();
@@ -295,6 +306,9 @@ bool Decoder::pause()
 
 bool Decoder::resume()
 {
+    if (!controller_.isDecodePaused())
+        return true;
+
     bool ret = false;
     if (controller_.isRealTimeUrl())
         ret = controller_.startDecode();
@@ -358,9 +372,9 @@ signals:
     void requestToBroadcastStreamAndDecoderInfo();
 
     // 开启录像，结果根据event变更进行处理
-    void requestToStartRecoding(const QString &recordDir);
+    void requestToStartRecoding(const QString &recorderFilePath);
     // 关闭录像，结果根据event变更进行处理
-    void requestToStopRecording();
+    void requestToStopRecording(const QString &recorderFilePath);
     // 进行跳转
     void requestToSeek(double pos);
     // 设置倍速
@@ -454,14 +468,14 @@ void DecodeWorker::broadcastStreamAndDecoderInfo()
     emit helper_->requestToBroadcastStreamAndDecoderInfo();
 }
 
-void DecodeWorker::startRecoding(const QString &recordPath)
+void DecodeWorker::startRecoding(const QString &recorderFilePath)
 {
-    emit helper_->requestToStartRecoding(recordPath);
+    emit helper_->requestToStartRecoding(recorderFilePath);
 }
 
-void DecodeWorker::stopRecording()
+void DecodeWorker::stopRecording(const QString &recorderFilePath)
 {
-    emit helper_->requestToStopRecording();
+    emit helper_->requestToStopRecording(recorderFilePath);
 }
 
 void DecodeWorker::seek(double pos)
@@ -506,6 +520,14 @@ double DecodeWorker::frontPts(decoder_sdk::MediaType type)
         return 0.0;
 
     return decoder_->frontPts(type);
+}
+
+bool DecodeWorker::isRecording(const QString &recorderFilePath) const
+{
+    if (!decoder_)
+        return false;
+
+    return decoder_->isRecording(recorderFilePath);
 }
 #pragma endregion
 

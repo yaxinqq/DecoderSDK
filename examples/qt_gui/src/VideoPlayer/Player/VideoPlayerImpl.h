@@ -6,6 +6,7 @@
 #include "decodersdk/frame.h"
 
 #include <QObject>
+#include <QElapsedTimer>
 #include <QFont>
 #include <QImage>
 
@@ -56,8 +57,10 @@ public:
 	 * @param widgetRect 容器大小
 	 * @param needRenderedRect 需要被渲染区域的大小，区域的位置是相对于OpenGL窗口的（如QOpenGLWidget）,该区域坐标系是openGL坐标系，原点在区域左下点，x轴、y轴方向和世界坐标系相反
 	 * @param referencePt OpenGL窗口的参考原点，
+	 * @param devicePixelRatio 当前绘制表面的设备像素比
 	 */
-	void paintGL(const QRect& widgetRect, const QRect& needRenderedRect, const QPoint& referencePt);
+	void paintGL(const QRect &widgetRect, const QRect &needRenderedRect, const QPoint &referencePt,
+	             qreal devicePixelRatio);
 	/*
 	 * @brief 绘制普通的内容，比如帧数。光栅化显示
 	 *
@@ -78,8 +81,9 @@ public:
 	 *
      * @param needRenderedRect 需要被渲染区域的大小，区域的位置是相对于OpenGL窗口的（如QOpenGLWidget）,该区域坐标系是openGL坐标系，原点在区域左下点，x轴、y轴方向和世界坐标系相反
 	 * @param referencePt OpenGL窗口的参考原点，
+	 * @param devicePixelRatio 当前绘制表面的设备像素比
 	 */
-	void clear(const QRect& needRenderedRect, const QPoint& referencePt);
+	void clear(const QRect &needRenderedRect, const QPoint &referencePt, qreal devicePixelRatio);
 
 	/*
 	 * @brief 通过painter的方法去清屏，把屏幕刷成黑色
@@ -277,6 +281,11 @@ signals:
 	 *
 	 */
     void recordStopped(const QString &filePath);
+    /*
+     * @brief 录像出现异常
+     *
+     */
+    void recordErrored(const QString &filePath);
 
 	/*
 	 * @brief 流地址关闭，无法连接
@@ -306,30 +315,29 @@ signals:
 	 */
 	void aboutToDestroyed(const QString &uuid);
 
-protected:
-    void timerEvent(QTimerEvent *event) override;
-
 private slots:
 	void onPlayerStateChanged(Stream::PlayerState state);
+    void onFpsTimerTimeout();
 
 private:
-	/*
-	 * @brief 计算视频帧显示区域
-	 *
-	 * @param needRenderedRect 需要被渲染的区域
-	 */
-	QRect calculateVideoRect(const QRect& needRenderedRect);
+    /*
+     * @brief 计算视频帧显示区域，needRenderedRect 可能已经经过 View transform
+     *
+     * @param needRenderedRect 需要被渲染的区域
+     */
+    QRect calculateVideoRect(const QRect &needRenderedRect);
 
 	/**
-	 * @brief 组装统计信息
-	 * 
+	 * @brief 统计文本存在脏数据且统计面板可见时才重新组装文本
+	 *
 	 */
-	void setupStatisticalInfo();
-    /**
-     * @brief 重置统计信息延时更新的计时器
-     *
-     */
-    void resetStatisticalInfoUpdateTimer();
+	void updateStatisticsIfDirty();
+
+	/**
+	 * @brief 标记统计文本需要重建，但不立即执行任何文本组装
+	 *
+	 */
+	void invalidateStatistics();
 
 	/**
 	 * @brief 设置纹理尺寸
@@ -347,6 +355,14 @@ private:
      */
     void setDisplayRenderer(const QString &playerId, std::weak_ptr<DisplayRenderer> render = {});
 
+    /**
+     * @brief 重置FPS统计窗口
+     *
+     * 清空窗口内计数和已显示的FPS，并重新开始计时；用于开始播放和停止播放时避免
+     * 使用跨状态或跨播放周期的陈旧样本。
+     */
+    void resetFpsStatistics();
+
 private:
 	std::weak_ptr<DisplayRenderer> render_;
 
@@ -355,9 +371,19 @@ private:
 
 	// FPS
 	bool fpsVisible_ = false;
-	int frameCount_ = 0;
-	int fps_ = 0;
+	// 当前FPS统计窗口内，界面实际进入paintGL绘制的次数
+	int paintFrameCount_ = 0;
+	// 当前FPS统计窗口内，渲染器实际输出textureReady的次数；不含UI层重绘合并的影响
+	int renderFrameCount_ = 0;
+	// 最近一个统计窗口内的界面绘制FPS
+	int paintFps_ = 0;
+	// 最近一个统计窗口内的实际渲染FPS
+	int renderFps_ = 0;
+	// FPS统计窗口的真实耗时基准；QTimer触发间隔受事件循环影响，不能假定恒为1000ms
+	QElapsedTimer fpsWindowTimer_;
+	// FPS文案的最大预估宽度，用于右上角绘制时预留横向空间
 	int fpsTextWidth_;
+	// FPS文案高度
 	int fpsTextHeight_;
 
 	QFont painterFont_;
@@ -380,8 +406,8 @@ private:
 	
 	// 统计信息
     QString statisticalInfo_;
-	// 延时更新统计信息的计时器
-    int updateStatisticalInfoTimerId_ = -1;
+	// 是否有数据源或显示区域变化导致统计文本需要重建
+	bool statisticsDirty_ = true;
 
 	// 视频处理参数
     Stream::VideoProcessParam processParam_;

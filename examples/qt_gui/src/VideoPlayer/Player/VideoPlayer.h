@@ -189,20 +189,23 @@ public:
     /*
      * @brief 开启录像
      *
-     * @param recodDir 保存录像的目录
+     * @param recorderFilePath 录像文件的路径
      */
-    virtual void startRecoding(const QString &recodDir);
+    virtual void startRecoding(const QString &recorderFilePath);
 
     /*
      * @brief 停止录像
      *
+     * @param recorderFilePath 录像文件的路径
      */
-    virtual void stopRecoding();
+    virtual void stopRecoding(const QString &recorderFilePath);
 
     /*
      * @brief 是否正在录像
+     * 
+     * @param recorderFilePath 录像文件的路径
      */
-    virtual bool isRecording() const;
+    virtual bool isRecording(const QString &recorderFilePath) const;
 
     /*
      * @brief 获得默认录像文件名称
@@ -264,6 +267,12 @@ signals:
      * @param filePath 录制文件路径
      */
     void recordStopped(const QString filePath);
+    /*
+     * @brief 录像出现错误
+     *
+     * @param filePath 录制文件路径
+     */
+    void recordErrored(const QString filePath);
 
     /**
      * @brief 跳转开始
@@ -278,7 +287,6 @@ protected:
     void initializeGL() override;
     void resizeGL(int w, int h) override;
     void paintGL() override;
-    void paintEvent(QPaintEvent *e) override;
     void mousePressEvent(QMouseEvent *event) override;
     void mouseMoveEvent(QMouseEvent *event) override;
     void mouseReleaseEvent(QMouseEvent *event) override;
@@ -304,9 +312,6 @@ private:
     void resetDigitalZoomInteractionState();
 
 private:
-    // 当前是否需要render frame
-    std::atomic_bool needToRender_ = false;
-
     // ================== 电子放大相关 ================== //
     // 是否启用鼠标电子放大控制，默认关闭以避免影响现有交互
     bool digitalZoomControlEnabled_ = false;

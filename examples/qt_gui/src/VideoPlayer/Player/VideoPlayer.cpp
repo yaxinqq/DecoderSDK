@@ -64,6 +64,7 @@ VideoPlayer::VideoPlayer(QWidget *parent)
     connect(impl_, &VideoPlayerImpl::errorOccured, this, &VideoPlayer::errorOccured);
     connect(impl_, &VideoPlayerImpl::recordStarted, this, &VideoPlayer::recordStarted);
     connect(impl_, &VideoPlayerImpl::recordStopped, this, &VideoPlayer::recordStopped);
+    connect(impl_, &VideoPlayerImpl::recordErrored, this, &VideoPlayer::recordErrored);
     connect(impl_, &VideoPlayerImpl::totalTimeRecved, this, &VideoPlayer::totalTimeRecved);
     connect(impl_, &VideoPlayerImpl::ptsChanged, this, &VideoPlayer::ptsChanged);
     connect(impl_, &VideoPlayerImpl::seekStarted, this, &VideoPlayer::seekStarted);
@@ -222,17 +223,17 @@ float VideoPlayer::hue() const
     return impl_->hue();
 }
 
-void VideoPlayer::startRecoding(const QString &recodDir)
+void VideoPlayer::startRecoding(const QString &recorderFilePath)
 {
     // do nothing
 }
 
-void VideoPlayer::stopRecoding()
+void VideoPlayer::stopRecoding(const QString &recorderFilePath)
 {
     // do nothing
 }
 
-bool VideoPlayer::isRecording() const
+bool VideoPlayer::isRecording(const QString &recorderFilePath) const
 {
     // do nothing
     return false;
@@ -272,22 +273,12 @@ void VideoPlayer::resizeGL(int w, int h)
 void VideoPlayer::paintGL()
 {
     const auto wgtRect = rect();
-    impl_->paintGL(wgtRect, wgtRect, wgtRect.bottomLeft());
-}
+    impl_->paintGL(wgtRect, wgtRect, wgtRect.bottomLeft(), devicePixelRatioF());
 
-void VideoPlayer::paintEvent(QPaintEvent *e)
-{
-    QPainter painter(this);
-    const auto wgtRect = rect();
-
-    if (!needToRender_.load()) {
-        impl_->paintCommon(&painter, wgtRect);
-        return;
+    {
+        QPainter painter(this);
+        impl_->paintCommon(&painter, rect());
     }
-
-    QOpenGLWidget::paintEvent(e);
-    needToRender_.store(false);
-    impl_->paintCommon(&painter, rect());
 }
 
 void VideoPlayer::mousePressEvent(QMouseEvent *event)
@@ -308,23 +299,12 @@ void VideoPlayer::mousePressEvent(QMouseEvent *event)
         originPos_ = event->pos();
         if (rubberBand_) {
             rubberBand_->setGeometry(QRect(originPos_.value(), QSize()));
-            rubberBand_->show();
         }
-        event->accept();
-        return;
-    }
-
-    if (event->button() == Qt::MiddleButton) {
+    } else if (event->button() == Qt::MiddleButton) {
         resetDigitalZoomRect();
-        event->accept();
-        return;
-    }
-
-    if (event->button() == Qt::RightButton) {
+    } else if (event->button() == Qt::RightButton) {
         rightBtnPressed_ = true;
         pressedPos_ = event->pos();
-        event->accept();
-        return;
     }
 
     // 默认情况
@@ -345,6 +325,10 @@ void VideoPlayer::mouseMoveEvent(QMouseEvent *event)
     }
 
     if (leftBtnPressed_ && rubberBand_ && originPos_.has_value() && (event->buttons() & Qt::LeftButton)) {
+        if (!rubberBand_->isVisible()) {
+            rubberBand_->show();
+        }
+
         QRect rubberBandRect(originPos_.value(), constrainPointToRect(event->pos(), validRect));
         rubberBandRect = rubberBandRect.normalized();
         if (!validRect.contains(rubberBandRect)) {
@@ -424,7 +408,19 @@ void VideoPlayer::mouseReleaseEvent(QMouseEvent *event)
 
 void VideoPlayer::mouseDoubleClickEvent(QMouseEvent *event)
 {
-    QOpenGLWidget::mouseDoubleClickEvent(event);
+    if (!digitalZoomControlEnabled_) {
+        QOpenGLWidget::mouseDoubleClickEvent(event);
+        return;
+    }
+
+    if (event->button() == Qt::RightButton) {
+        resetDigitalZoomRect();
+    } else {
+        QOpenGLWidget::mouseDoubleClickEvent(event);
+        return;
+    }
+
+    event->accept();
 }
 
 void VideoPlayer::wheelEvent(QWheelEvent *event)
@@ -447,7 +443,6 @@ void VideoPlayer::wheelEvent(QWheelEvent *event)
 
 void VideoPlayer::aboutToRenderFrame()
 {
-    needToRender_.store(true);
     update();
 }
 

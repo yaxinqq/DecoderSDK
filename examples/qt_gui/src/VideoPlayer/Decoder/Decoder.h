@@ -69,13 +69,15 @@ public:
     /**
      * @brief 开启录像，结果根据event变更进行处理
      *
-     * @param recordPath 录像路径
+     * @param recorderFilePath 录像文件路径
      */
-    void startRecoding(const QString &recordPath);
+    void startRecoding(const QString &recorderFilePath);
     /**
      * @brief 关闭录像，结果根据event变更进行处理
+     * 
+     * @param recorderFilePath 录像文件路径
      */
-    void stopRecording();
+    void stopRecording(const QString &recorderFilePath);
     /**
      * @brief 进行跳转
      *
@@ -126,6 +128,14 @@ public:
      * @return 队首帧的PTS
      */
     double frontPts(decoder_sdk::MediaType type) override;
+
+    /**
+     * @brief 是否正在录制
+     *
+     * @param recorderFilePath 可提供的录制文件路径，用于多文件同时录制的应用场景
+     * @return 是否正在录制
+     */
+    bool isRecording(const QString &recorderFilePath = QString()) const override;
 
 signals:
     /**

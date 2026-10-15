@@ -15,6 +15,7 @@
 #include <QUuid>
 
 #include <algorithm>
+#include <utility>
 
 namespace {
     float clampBrightness(const float value)
@@ -47,6 +48,16 @@ namespace {
         }
     }
 
+    QRect toDevicePixelRect(const QPoint &origin, const QSize &size, qreal devicePixelRatio)
+    {
+        const qreal scale = devicePixelRatio > 0.0 ? devicePixelRatio : 1.0;
+        const int left = qRound(origin.x() * scale);
+        const int top = qRound(origin.y() * scale);
+        const int right = qRound((origin.x() + size.width()) * scale);
+        const int bottom = qRound((origin.y() + size.height()) * scale);
+        return QRect(left, top, qMax(0, right - left), qMax(0, bottom - top));
+    }
+
     // 将比特率(bps)格式化为人类可读的字符串
     QString formatBitrate(const int bitrate)
     {
@@ -75,6 +86,108 @@ namespace {
         const double ratio = rawBitrate / bitrate;
         return QStringLiteral("%1:1").arg(ratio, 0, 'f', 2);
     }
+
+    // 构建媒体源的基础信息；streamInfo为空时返回统一的暂无占位文案
+    QString buildBasicStatisticsInfo(const std::optional<decoder_sdk::StreamInfo> &streamInfo)
+    {
+        if (!streamInfo.has_value()) {
+            return QStringLiteral("基本信息 - 暂无\n");
+        }
+
+        QString info = QStringLiteral("基本信息\n");
+        info += QStringLiteral("流地址：%1\n封装格式：%2\n")
+                    .arg(QString::fromStdString(streamInfo->url),
+                         QString::fromStdString(streamInfo->inputFormat));
+
+        if (streamInfo->videoInfo.has_value()) {
+            info += QStringLiteral("视频流信息\n");
+            info += QStringLiteral("帧大小：%1x%2(%3)，平均帧率：%4，颜色空间：%5\n")
+                        .arg(QString::number(streamInfo->videoInfo->width),
+                             QString::number(streamInfo->videoInfo->height),
+                             getAspectRatioString(streamInfo->videoInfo->width, streamInfo->videoInfo->height),
+                             QString::number(streamInfo->videoInfo->frameRate),
+                             QString::fromStdString(streamInfo->videoInfo->colorRange));
+        }
+
+        if (streamInfo->audioInfo.has_value()) {
+            info += QStringLiteral("音频流信息\n");
+            info += QStringLiteral("采样率：%1，声道：%2\n")
+                        .arg(QString::number(streamInfo->audioInfo->sampleRate),
+                             QString::number(streamInfo->audioInfo->channels));
+        }
+
+        info += QLatin1Char('\n');
+        return info;
+    }
+
+    // 构建解码器输入与播放端输出信息；只展示已经收到过的音视频解码器
+    QString buildDecoderStatisticsInfo(const QMap<decoder_sdk::MediaType, std::optional<decoder_sdk::DecoderInfo>> &decoderInfos,
+                                       const QString &rendererName, const QRect &widgetRect, const QRect &videoRect)
+    {
+        QString info;
+        const auto videoDecoderInfo = decoderInfos.constFind(decoder_sdk::MediaType::kVideo);
+        if (videoDecoderInfo != decoderInfos.constEnd() && videoDecoderInfo->has_value()) {
+            info += QStringLiteral("视频解码器信息\n");
+            info += QStringLiteral("输入\n");
+            info += QStringLiteral("    |--解码器名称：%1，硬件加速类型：%2\n")
+                        .arg(QString::fromStdString((*videoDecoderInfo)->codecName),
+                             QString::fromStdString(decoder_sdk::getHwAccelTypeDesc((*videoDecoderInfo)->hwAccelType)));
+
+            info += QStringLiteral("输出\n");
+            info += QStringLiteral("    |--渲染器名称：%1\n").arg(rendererName);
+            info += QStringLiteral("    |--渲染设备：%1\n").arg(getCurrentGLRenderer());
+            info += QStringLiteral("    |--输出窗口大小：%1x%2(%3)，视频帧大小：%4x%5(%6)\n")
+                        .arg(QString::number(widgetRect.width()),
+                             QString::number(widgetRect.height()),
+                             getAspectRatioString(widgetRect.width(), widgetRect.height()),
+                             QString::number(videoRect.width()),
+                             QString::number(videoRect.height()),
+                             getAspectRatioString(videoRect.width(), videoRect.height()));
+            info += QLatin1Char('\n');
+        } else {
+            info += QStringLiteral("视频解码器信息 - 暂无\n");
+        }
+
+        const auto audioDecoderInfo = decoderInfos.constFind(decoder_sdk::MediaType::kAudio);
+        if (audioDecoderInfo != decoderInfos.constEnd() && audioDecoderInfo->has_value()) {
+            info += QStringLiteral("音频解码器信息\n");
+            info += QStringLiteral("输入\n");
+            info += QStringLiteral("    |--解码器名称：%1\n")
+                        .arg(QString::fromStdString((*audioDecoderInfo)->codecName));
+        } else {
+            info += QStringLiteral("音频解码器信息 - 暂无\n");
+        }
+        return info;
+    }
+
+    // 构建实时码率统计；缺少视频信息时不进行压缩率计算
+    QString buildRealtimeStatisticsInfo(const std::optional<decoder_sdk::StreamInfo> &streamInfo,
+                                        const QMap<decoder_sdk::MediaType, std::optional<decoder_sdk::DecoderInfo>> &decoderInfos,
+                                        const decoder_sdk::StreamStaticsInfo &streamStaticsInfo)
+    {
+        if (!streamInfo.has_value()) {
+            return QStringLiteral("实时统计信息 - 暂无\n");
+        }
+
+        const auto videoDecoderInfo = decoderInfos.constFind(decoder_sdk::MediaType::kVideo);
+        const int bpp = videoDecoderInfo != decoderInfos.constEnd() && videoDecoderInfo->has_value()
+                            ? (*videoDecoderInfo)->bitsPerPixel
+                            : 0;
+
+        QString compressionRatio = QStringLiteral("未知");
+        if (streamInfo->videoInfo.has_value()) {
+            compressionRatio = calculateCompressionRatio(streamInfo->videoInfo->width,
+                                                        streamInfo->videoInfo->height,
+                                                        streamInfo->videoInfo->frameRate,
+                                                        streamStaticsInfo.videoBitrate,
+                                                        bpp);
+        }
+
+        QString info = QStringLiteral("\n实时统计信息\n");
+        info += QStringLiteral("比特率：%1，压缩率：%2\n")
+                    .arg(formatBitrate(streamStaticsInfo.videoBitrate), compressionRatio);
+        return info;
+    }
 } // namespace
 
 VideoPlayerImpl::VideoPlayerImpl(QObject *parent)
@@ -84,20 +197,17 @@ VideoPlayerImpl::VideoPlayerImpl(QObject *parent)
     , uuid_{ QUuid::createUuid().toString(QUuid::StringFormat::WithoutBraces) }
 {
     QTimer *timer = new QTimer(this);
-    timer->setTimerType(Qt::PreciseTimer);
     timer->setInterval(1000);
-    connect(timer, &QTimer::timeout, [this]() {
-        fps_ = frameCount_;
-        frameCount_ = 0;
-        emit aboutToUpdate();
-    });
+    timer->setTimerType(Qt::VeryCoarseTimer);
+    connect(timer, &QTimer::timeout, this, &VideoPlayerImpl::onFpsTimerTimeout);
     timer->start();
+    resetFpsStatistics();
 
     painterFont_ = qGuiApp->font();
     painterFont_.setPixelSize(30);
     painterFont_.setWeight(QFont::Bold);
     QFontMetrics fm(painterFont_);
-    fpsTextWidth_ = fm.horizontalAdvance(QString("FPS: 99")) + 10;
+    fpsTextWidth_ = fm.horizontalAdvance(QStringLiteral("渲染FPS: 999，绘制FPS: 999")) + 10;
     fpsTextHeight_ = fm.height();
 
     fpsVisible_ = true;
@@ -121,7 +231,8 @@ void VideoPlayerImpl::initialize(QOpenGLContext *context, QSurface *surface)
 {
 }
 
-void VideoPlayerImpl::paintGL(const QRect &widgetRect, const QRect &needRenderedRect, const QPoint &referencePt)
+void VideoPlayerImpl::paintGL(const QRect &widgetRect, const QRect &needRenderedRect,
+                              const QPoint &referencePt, qreal devicePixelRatio)
 {
     // widgetRect_ = widgetRect;
     QOpenGLContext *curContext = QOpenGLContext::currentContext();
@@ -129,27 +240,28 @@ void VideoPlayerImpl::paintGL(const QRect &widgetRect, const QRect &needRendered
         return;
 
     // 黑色背景
-    clear(needRenderedRect, referencePt);
+    clear(needRenderedRect, referencePt, devicePixelRatio);
+    ++paintFrameCount_;
 
     if (render_.expired())
         return;
 
     if (playerState_ == Stream::PlayerState::Playing || playerState_ == Stream::PlayerState::Pause) {
-        if (playerState_ == Stream::PlayerState::Playing)
-            frameCount_++;
-
-        QRect videoRect = calculateVideoRect(needRenderedRect);
+        QRect renderedVideoRect = calculateVideoRect(needRenderedRect);
         // 调整视频绘制区域
-        const auto diff = videoRect.bottomLeft() - referencePt;
-        curContext->functions()->glViewport(diff.x(), -diff.y(), videoRect.width(), videoRect.height());
+        const auto diff = renderedVideoRect.bottomLeft() - referencePt;
+        const QRect deviceViewportRect =
+            toDevicePixelRect(QPoint(diff.x(), -diff.y()), renderedVideoRect.size(), devicePixelRatio);
+        curContext->functions()->glViewport(deviceViewportRect.x(), deviceViewportRect.y(),
+                                            deviceViewportRect.width(), deviceViewportRect.height());
 
         // 调整到自身坐标系
-        videoRect = QRect(videoRect.topLeft() - needRenderedRect.topLeft(), videoRect.size());
-        if (videoRect != videoRect_) {
+        const QRect localVideoRect = calculateVideoRect(widgetRect_);
+        if (localVideoRect != videoRect_) {
             // 在实际赋值时，videoRect应该保持自身坐标系
-            videoRect_ = videoRect;
+            videoRect_ = localVideoRect;
             emit videoRectChanged(videoRect_);
-            resetStatisticalInfoUpdateTimer();
+            invalidateStatistics();
         }
 
         // 渲染帧
@@ -172,11 +284,11 @@ void VideoPlayerImpl::resize(int w, int h)
             emit videoRectChanged(videoRect_);
         }
 
-        resetStatisticalInfoUpdateTimer();
+        invalidateStatistics();
     }
 }
 
-void VideoPlayerImpl::clear(const QRect &needRenderedRect, const QPoint &referencePt)
+void VideoPlayerImpl::clear(const QRect &needRenderedRect, const QPoint &referencePt, qreal devicePixelRatio)
 {
     QOpenGLContext *curContext = QOpenGLContext::currentContext();
     if (!curContext)
@@ -186,11 +298,13 @@ void VideoPlayerImpl::clear(const QRect &needRenderedRect, const QPoint &referen
     auto *const f = curContext->functions();
 
     const auto diff = needRenderedRect.bottomLeft() - referencePt;
-    f->glViewport(diff.x(), -diff.y(), needRenderedRect.width(), needRenderedRect.height());
+    const QRect deviceRect =
+        toDevicePixelRect(QPoint(diff.x(), -diff.y()), needRenderedRect.size(), devicePixelRatio);
+    f->glViewport(deviceRect.x(), deviceRect.y(), deviceRect.width(), deviceRect.height());
 
     // 启用裁剪
     f->glEnable(GL_SCISSOR_TEST);
-    f->glScissor(diff.x(), -diff.y(), needRenderedRect.width(), needRenderedRect.height());
+    f->glScissor(deviceRect.x(), deviceRect.y(), deviceRect.width(), deviceRect.height());
 
     // 设置清除颜色为黑色并清除
     f->glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
@@ -228,16 +342,19 @@ void VideoPlayerImpl::paintCommon(QPainter *painter, const QRect &widgetRect)
     if (fpsVisible_) {
         painter->setPen(QColor(255, 242, 0));
 
-        //// 绘制统计信息
-        //painter->fillRect(widgetRect, QColor(0, 0, 0, 127));
+        // updateStatisticsIfDirty();
 
-        //QTextOption textOpt;
-        //textOpt.setAlignment(Qt::AlignVCenter | Qt::AlignLeft);
-        //textOpt.setWrapMode(QTextOption::WrapAtWordBoundaryOrAnywhere);
-        //painter->drawText(widgetRect.adjusted(30, 0, 0, 0), statisticalInfo_, textOpt);
+        // // 绘制统计信息
+        // painter->fillRect(widgetRect, QColor(0, 0, 0, 127));
+
+        // QTextOption textOpt;
+        // textOpt.setAlignment(Qt::AlignVCenter | Qt::AlignLeft);
+        // textOpt.setWrapMode(QTextOption::WrapAtWordBoundaryOrAnywhere);
+        // painter->drawText(widgetRect.adjusted(30, 0, 0, 0), statisticalInfo_, textOpt);
 
         // 绘制FPS
-        painter->drawText(widgetRect_.topRight() - QPoint(fpsTextWidth_, -fpsTextHeight_), QString("FPS: %1").arg(fps_));
+        painter->drawText(widgetRect_.topRight() - QPoint(fpsTextWidth_, -fpsTextHeight_),
+                          QStringLiteral("渲染FPS: %1，绘制FPS: %2").arg(renderFps_).arg(paintFps_));
     }
 
     painter->restore();
@@ -257,16 +374,32 @@ void VideoPlayerImpl::renderToImage(QImage &image)
     renderToImage(QSize(frameWidth_, frameHeight_), image);
 }
 
+void VideoPlayerImpl::resetFpsStatistics()
+{
+    renderFrameCount_ = 0;
+    paintFrameCount_ = 0;
+    renderFps_ = 0;
+    paintFps_ = 0;
+    fpsWindowTimer_.restart();
+}
+
 void VideoPlayerImpl::setPlayerState(Stream::PlayerState state)
 {
+    if (playerState_ == state)
+        return;
+
+    // 只在新进入Playing或Stop时重建FPS窗口，重复的PLAY状态不丢弃统计样本。
+    const bool shouldResetFps = state == Stream::PlayerState::Stop ||
+                                (state == Stream::PlayerState::Playing &&
+                                 playerState_ != Stream::PlayerState::Playing);
+
     playerState_ = state;
 #if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
     emit playerStateChanged(playerState_);
 #endif
 
-    if (playerState_ == Stream::PlayerState::Playing) {
-    } else if (playerState_ == Stream::PlayerState::Pause) {
-    } else if (playerState_ == Stream::PlayerState::Stop) {
+    if (shouldResetFps) {
+        resetFpsStatistics();
     }
 
     emit aboutToUpdate();
@@ -382,7 +515,7 @@ void VideoPlayerImpl::onDecoderEventChanged(const QString &url, decoder_sdk::Eve
             if (auto *const streamEvent = dynamic_cast<decoder_sdk::StreamEventArgs *>(event.get());
                 streamEvent && streamEvent->streamInfo.has_value()) {
                 streamInfo_ = streamEvent->streamInfo;
-                resetStatisticalInfoUpdateTimer();
+                invalidateStatistics();
 
                 emit totalTimeRecved(streamInfo_->totalTime.value_or(-1));
             }
@@ -399,7 +532,7 @@ void VideoPlayerImpl::onDecoderEventChanged(const QString &url, decoder_sdk::Eve
             if (auto *const decoderEvent = dynamic_cast<decoder_sdk::DecoderEventArgs *>(event.get());
                 decoderEvent && decoderEvent->decoderInfo.has_value()) {
                 decoderInfos_.insert(decoderEvent->mediaType, decoderEvent->decoderInfo);
-                resetStatisticalInfoUpdateTimer();
+                invalidateStatistics();
             }
             break;
         }
@@ -417,6 +550,7 @@ void VideoPlayerImpl::onDecoderEventChanged(const QString &url, decoder_sdk::Eve
             break;
         case decoder_sdk::EventType::kRecordingError:
             emit errorOccured(Stream::ErrorType::kRecordError);
+            emit recordErrored(utils::getFilePathFromRecordEvent(event));
             break;
         case decoder_sdk::EventType::kSeekStarted:
             emit seekStarted();
@@ -437,35 +571,40 @@ void VideoPlayerImpl::onDecoderEventChanged(const QString &url, decoder_sdk::Eve
 void VideoPlayerImpl::onStreamInfoUpdated(const std::optional<decoder_sdk::StreamInfo> &info)
 {
     streamInfo_ = info;
-    resetStatisticalInfoUpdateTimer();
+    invalidateStatistics();
 }
 
 void VideoPlayerImpl::onStreamStaticsInfoUpdated(const decoder_sdk::StreamStaticsInfo &info)
 {
     streamStaticsInfo_ = info;
-    resetStatisticalInfoUpdateTimer();
+    invalidateStatistics();
 }
 
 void VideoPlayerImpl::onDecoderInfoUpdated(decoder_sdk::MediaType mediaType, const std::optional<decoder_sdk::DecoderInfo> &info)
 {
     decoderInfos_.insert(mediaType, info);
-    resetStatisticalInfoUpdateTimer();
+    invalidateStatistics();
 }
 
 void VideoPlayerImpl::onRendererNameChanged(const QString &name)
 {
     rendererName_ = name;
-    resetStatisticalInfoUpdateTimer();
+    invalidateStatistics();
 }
 
 void VideoPlayerImpl::onTextureReady(const Stream::VideoFrameParam &videoFrameParam)
 {
-    if (playerState_ == Stream::PlayerState::Stop || playerState_ == Stream::PlayerState::Pause)
-        return;
-
     if ((playerState_ == Stream::PlayerState::Start || playerState_ == Stream::PlayerState::Resume)) {
         setPlayerState(Stream::PlayerState::Playing);
     }
+
+    // textureReady由Renderer在成功绘制后发出，因此这里统计的是实际渲染帧，而非界面重绘帧。
+    if (playerState_ != Stream::PlayerState::Stop) {
+        ++renderFrameCount_;
+    }
+
+    if (playerState_ == Stream::PlayerState::Stop || playerState_ == Stream::PlayerState::Pause)
+        return;
 
     if (playerState_ == Stream::PlayerState::Playing) {
         strText_.clear();
@@ -509,13 +648,19 @@ void VideoPlayerImpl::onPlayerStateChanged(Stream::PlayerState state)
     }
 }
 
-void VideoPlayerImpl::timerEvent(QTimerEvent *event)
+void VideoPlayerImpl::onFpsTimerTimeout()
 {
-    if (event->timerId() == updateStatisticalInfoTimerId_) {
-        setupStatisticalInfo();
-    }
+    // QTimer只能保证大致按周期触发；用单调时钟的真实间隔换算，避免UI线程繁忙时低估FPS。
+    const qint64 elapsedMs = fpsWindowTimer_.elapsed();
+    const double elapsedSeconds = elapsedMs / 1000.0;
 
-    QObject::timerEvent(event);
+    renderFps_ = elapsedSeconds > 0.0 ? qRound(renderFrameCount_ / elapsedSeconds) : 0;
+    paintFps_ = elapsedSeconds > 0.0 ? qRound(paintFrameCount_ / elapsedSeconds) : 0;
+
+    renderFrameCount_ = 0;
+    paintFrameCount_ = 0;
+    fpsWindowTimer_.restart();
+    emit aboutToUpdate();
 }
 
 QRect VideoPlayerImpl::calculateVideoRect(const QRect &needRenderedRect)
@@ -524,8 +669,8 @@ QRect VideoPlayerImpl::calculateVideoRect(const QRect &needRenderedRect)
         return QRect();
     }
 
-    const auto width = widgetRect_.width();
-    const auto height = widgetRect_.height();
+    const auto width = needRenderedRect.width();
+    const auto height = needRenderedRect.height();
 
     QRect videoRect;
     if (aspectRatioMode() == Stream::AspectRatioMode::KeepAspectRatio) // 保持宽高比
@@ -547,103 +692,24 @@ QRect VideoPlayerImpl::calculateVideoRect(const QRect &needRenderedRect)
     return videoRect;
 }
 
-void VideoPlayerImpl::setupStatisticalInfo()
+void VideoPlayerImpl::updateStatisticsIfDirty()
 {
-    statisticalInfo_.clear();
-
-    // 组装流信息
-    if (streamInfo_.has_value()) {
-        statisticalInfo_.append(QStringLiteral("基本信息\n"));
-        statisticalInfo_.append(QStringLiteral("流地址：%1\n封装格式：%2\n")
-                                    .arg(QString::fromStdString(streamInfo_->url), QString::fromStdString(streamInfo_->inputFormat)));
-        if (streamInfo_->videoInfo.has_value()) {
-            statisticalInfo_.append(QStringLiteral("视频流信息\n"));
-            statisticalInfo_.append(QStringLiteral("帧大小：%1x%2(%3)，平均帧率：%4，颜色空间：%5\n")
-                                        .arg(QString::number(streamInfo_->videoInfo->width),
-                                             QString::number(streamInfo_->videoInfo->height),
-                                             getAspectRatioString(streamInfo_->videoInfo->width, streamInfo_->videoInfo->height),
-                                             QString::number(streamInfo_->videoInfo->frameRate),
-                                             QString::fromStdString(streamInfo_->videoInfo->colorRange)));
-        }
-        if (streamInfo_->audioInfo.has_value()) {
-            statisticalInfo_.append(QStringLiteral("音频流信息\n"));
-            statisticalInfo_.append(QStringLiteral("采样率：%1，声道：%2\n")
-                                        .arg(QString::number(streamInfo_->audioInfo->sampleRate),
-                                             QString::number(streamInfo_->audioInfo->channels)));
-        }
-
-        statisticalInfo_.append(QLatin1Char('\n'));
-    } else {
-        statisticalInfo_.append(QStringLiteral("基本信息 - 暂无\n"));
+    if (!statisticsDirty_) {
+        return;
     }
 
-    // 组装解码器信息
-    if (decoderInfos_.contains(decoder_sdk::MediaType::kVideo) &&
-        decoderInfos_[decoder_sdk::MediaType::kVideo].has_value()) {
-        const auto &videoDecoderInfo = decoderInfos_[decoder_sdk::MediaType::kVideo];
-        statisticalInfo_.append(QStringLiteral("视频解码器信息\n"));
-        statisticalInfo_.append(QStringLiteral("输入\n"));
-        statisticalInfo_.append(QStringLiteral("    |--解码器名称：%1，硬件加速类型：%2\n")
-                                    .arg(QString::fromStdString(videoDecoderInfo->codecName),
-                                         QString::fromStdString(decoder_sdk::getHwAccelTypeDesc(videoDecoderInfo->hwAccelType))));
-
-        statisticalInfo_.append(QStringLiteral("输出\n"));
-        statisticalInfo_.append(QStringLiteral("    |--渲染器名称：%1\n").arg(rendererName_));
-        statisticalInfo_.append(QStringLiteral("    |--渲染设备：%1\n").arg(getCurrentGLRenderer()));
-        statisticalInfo_.append(QStringLiteral("    |--输出窗口大小：%1x%2(%3)，视频帧大小：%4x%5(%6)\n")
-                                    .arg(QString::number(widgetRect_.width()),
-                                         QString::number(widgetRect_.height()),
-                                         getAspectRatioString(widgetRect_.width(), widgetRect_.height()),
-                                         QString::number(videoRect_.width()),
-                                         QString::number(videoRect_.height()),
-                                         getAspectRatioString(videoRect_.width(), videoRect_.height())));
-
-        statisticalInfo_.append(QLatin1Char('\n'));
-    } else {
-        statisticalInfo_.append(QStringLiteral("视频解码器信息 - 暂无\n"));
-    }
-
-    if (decoderInfos_.contains(decoder_sdk::MediaType::kAudio) &&
-        decoderInfos_[decoder_sdk::MediaType::kAudio].has_value()) {
-        const auto &audioDecoderInfo = decoderInfos_[decoder_sdk::MediaType::kAudio];
-        statisticalInfo_.append(QStringLiteral("音频解码器信息\n"));
-        statisticalInfo_.append(QStringLiteral("输入\n"));
-        statisticalInfo_.append(QStringLiteral("    |--解码器名称：%1\n").arg(QString::fromStdString(audioDecoderInfo->codecName)));
-    } else {
-        statisticalInfo_.append(QStringLiteral("音频解码器信息 - 暂无\n"));
-    }
-    
-    // 组装实时统计信息
-    if (streamInfo_.has_value()) {
-        statisticalInfo_.append(QStringLiteral("\n实时统计信息\n"));
-        const auto &videoDecoderInfo = decoderInfos_.value(decoder_sdk::MediaType::kVideo);
-        const int bpp = videoDecoderInfo.has_value() ? videoDecoderInfo->bitsPerPixel : 0;
-        statisticalInfo_.append(QStringLiteral("比特率：%1，压缩率：%2\n")
-                                    .arg(formatBitrate(streamStaticsInfo_.videoBitrate),
-                                         calculateCompressionRatio(streamInfo_->videoInfo->width,
-                                                                   streamInfo_->videoInfo->height,
-                                                                   streamInfo_->videoInfo->frameRate,
-                                                                   streamStaticsInfo_.videoBitrate,
-                                                                   bpp)));
-    } else {
-        statisticalInfo_.append(QStringLiteral("实时统计信息 - 暂无\n"));
-    }
-
-    // 关闭定时器
-    if (updateStatisticalInfoTimerId_ >= 0) {
-        killTimer(updateStatisticalInfoTimerId_);
-        updateStatisticalInfoTimerId_ = -1;
-    }
+    QString info;
+    info.reserve(2048);
+    info += buildBasicStatisticsInfo(streamInfo_);
+    info += buildDecoderStatisticsInfo(decoderInfos_, rendererName_, widgetRect_, videoRect_);
+    info += buildRealtimeStatisticsInfo(streamInfo_, decoderInfos_, streamStaticsInfo_);
+    statisticalInfo_ = std::move(info);
+    statisticsDirty_ = false;
 }
 
-void VideoPlayerImpl::resetStatisticalInfoUpdateTimer()
+void VideoPlayerImpl::invalidateStatistics()
 {
-    if (updateStatisticalInfoTimerId_ >= 0) {
-        killTimer(updateStatisticalInfoTimerId_);
-        updateStatisticalInfoTimerId_ = -1;
-    }
-
-    updateStatisticalInfoTimerId_ = startTimer(std::chrono::milliseconds(1));
+    statisticsDirty_ = true;
 }
 
 void VideoPlayerImpl::setFrameSize(int width, int height)

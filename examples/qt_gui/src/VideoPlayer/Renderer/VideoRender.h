@@ -221,6 +221,95 @@ private:
     bool applyClippingStitch(const QSharedPointer<QOpenGLFramebufferObject> &sourceFbo,
                              const QSharedPointer<QOpenGLFramebufferObject> &outputFbo);
 
+    /**
+     * @brief 将源FBO整帧blit到目标FBO
+     *
+     * @param sourceFbo 源纹理
+     * @param outputFbo 目标纹理
+     * @return 是否blit成功
+     */
+    bool blitFbo(const QSharedPointer<QOpenGLFramebufferObject> &sourceFbo,
+                 const QSharedPointer<QOpenGLFramebufferObject> &outputFbo);
+
+    /**
+     * @brief 读取裁剪拼接状态和最终输出尺寸
+     * @param outputSize 输出尺寸（OUT）
+     * @return 是否启用裁剪拼接
+     */
+    bool readClippingStitchState(QSize &outputSize) const;
+
+    /**
+     * @brief 裁剪拼接模式下按帧尺寸准备公共输入FBO
+     * @param stitchEnabled 是否启用裁剪拼接
+     * @param frame 视频帧
+     */
+    void prepareClippingInputFboIfNeeded(bool stitchEnabled,
+                                         const decoder_sdk::Frame &frame);
+
+    /**
+     * @brief 将视频帧渲染到指定FBO
+     * @param targetFbo 目标FBO
+     * @param viewportSize 视口尺寸
+     * @param frame 视频帧
+     * @return 是否渲染成功
+     */
+    bool renderFrameToFbo(const QSharedPointer<QOpenGLFramebufferObject> &targetFbo,
+                          const QSize &viewportSize, const decoder_sdk::Frame &frame);
+
+    /**
+     * @brief 渲染裁剪拼接模式的公共输入
+     * @param frame 视频帧
+     * @param interopSucceeded interop是否成功
+     * @return 是否渲染成功
+     */
+    bool renderClippingSource(const decoder_sdk::Frame &frame, bool interopSucceeded);
+
+    /**
+     * @brief 创建或复用多DisplayRenderer公共中间FBO
+     * @param finalOutputSize 最终输出尺寸
+     * @param useCommonRenderTarget 是否需要公共中间FBO
+     * @return 公共中间FBO，不可用时返回nullptr
+     */
+    QSharedPointer<QOpenGLFramebufferObject> acquireCommonRenderTarget(
+        const QSize &finalOutputSize, bool useCommonRenderTarget);
+
+    /**
+     * @brief 将已渲染的公共结果分发到所有DisplayRenderer后台FBO
+     * @param frame 视频帧
+     * @param renderers 显示渲染器列表
+     * @param finalOutputSize 最终输出尺寸
+     * @param stitchEnabled 是否启用裁剪拼接
+     * @param commonSourceFbo 公共中间FBO，可能为空
+     * @return 是否全部分发成功
+     */
+    bool dispatchToRenderers(
+        const decoder_sdk::Frame &frame,
+        const std::vector<std::shared_ptr<DisplayRenderer>> &renderers,
+        const QSize &finalOutputSize, bool stitchEnabled,
+        const QSharedPointer<QOpenGLFramebufferObject> &commonSourceFbo);
+
+    /**
+     * @brief 等待当前帧GPU命令完成
+     */
+    void synchronizeGpu();
+
+    /**
+     * @brief 将所有DisplayRenderer的后台FBO交换到前台
+     * @param renderers 显示渲染器列表
+     */
+    void presentToRenderers(
+        const std::vector<std::shared_ptr<DisplayRenderer>> &renderers);
+
+    /**
+     * @brief 回写最终输出尺寸和PTS
+     * @param videoFrameParam 输出参数
+     * @param finalOutputSize 最终输出尺寸
+     * @param frame 视频帧
+     */
+    void updateVideoFrameParam(Stream::VideoFrameParam *videoFrameParam,
+                               const QSize &finalOutputSize,
+                               const decoder_sdk::Frame &frame) const;
+
 private:
     // interop互操作资源是否准备好
     std::atomic_bool interopResourceReady_;
@@ -239,6 +328,8 @@ private:
     mutable QMutex clippingMtx_;
     // 裁剪输入纹理
     QSharedPointer<QOpenGLFramebufferObject> clippingInputFbo_;
+    // 多DisplayRenderer共用的中间渲染目标，避免逐target重复shader绘制
+    QSharedPointer<QOpenGLFramebufferObject> commonRenderTargetFbo_;
     // 裁剪源区域
     QVector<QRect> clippingSourceRegions_;
     // 拼接目标区域

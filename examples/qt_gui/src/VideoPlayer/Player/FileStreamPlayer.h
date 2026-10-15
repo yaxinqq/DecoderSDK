@@ -58,21 +58,23 @@ public:
     /**
      * @brief 开启录像
      *
-     * @param recodDir 保存录像的目录
+     * @param recorderFilePath 录像文件的路径
      */
-    virtual void startRecoding(const QString &recodDir) override;
+    virtual void startRecoding(const QString &recorderFilePath) override;
 
     /**
      * @brief 停止录像
      *
+     * @param recorderFilePath 录像文件的路径
      */
-    virtual void stopRecoding() override;
+    virtual void stopRecoding(const QString &recorderFilePath) override;
     /**
      * @brief 是否正在录像
      *
+     * @param recorderFilePath 录像文件的路径
      * @return 是否正在录像
      */
-    virtual bool isRecording() const override;
+    virtual bool isRecording(const QString &recorderFilePath) const override;
 
 private:
     QString streamUrl_;

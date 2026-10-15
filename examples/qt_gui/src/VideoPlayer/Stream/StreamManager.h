@@ -23,6 +23,9 @@ class VideoPlayerImpl;
  *
  * \brief 应用层的流管理器
  *
+ * \note 所有会修改 Active、Retiring 或 player 映射的接口都必须在
+ *       StreamManager 对象所属线程中调用，避免并发修改内部映射。
+ *
  * \author ZYX
  * \date 2023-10-24
  */
@@ -82,23 +85,25 @@ public:
      * @brief 开启录像
      *
      * @param player 播放器
-     * @param recodDir 保存录像的目录
+     * @param recorderFilePath 录像文件路径
      */
-    bool startRecoding(VideoPlayerImpl *player, const QString &recodDir);
+    bool startRecoding(VideoPlayerImpl *player, const QString &recorderFilePath);
 
     /*
      * @brief 停止录像
      *
      * @param player 播放器
+     * @param recorderFilePath 录像文件路径
      */
-    bool stopRecoding(VideoPlayerImpl *player);
+    bool stopRecoding(VideoPlayerImpl *player, const QString &recorderFilePath);
 
     /*
      * @brief 是否正在录像
      *
      * @param player 播放器
+     * @param recorderFilePath 录像文件路径
      */
-    bool isRecoding(VideoPlayerImpl *player);
+    bool isRecoding(VideoPlayerImpl *player, const QString &recorderFilePath);
 
     /*
      * @brief 跳转
@@ -181,11 +186,12 @@ public:
 
 private slots:
     /*
-     * @brief 响应 StreamDecoderWorker准备被删除 的信号
+     * @brief 响应 StreamPipeline 准备被删除的信号
      *
      * @param key worker的标识符
+     * @param pipelineId pipeline的进程内唯一标识
      */
-    void onWorkerAboutToDelete(const QString &key);
+    void onWorkerAboutToDelete(const QString &key, quint64 pipelineId);
 
     /*
      * @brief 响应 player 即将被销毁的信号，按稳定uuid统一解绑并清理映射
@@ -200,6 +206,15 @@ private slots:
     void onAppAboutToQuit();
 
 private:
+    /*
+     * @brief Active或Retiring pipeline的稳定记录
+     */
+    struct PipelineRecord {
+        QString key;                      // Pipeline对应的源key
+        quint64 pipelineId = 0;           // Pipeline的进程内唯一标识
+        QPointer<StreamPipeline> pipeline; // Pipeline指针，销毁后自动置空
+    };
+
     /*
      * @brief 根据播放器找到其对应的管线
      *
@@ -218,6 +233,64 @@ private:
                                             QString &key);
 
     /*
+     * @brief 创建并注册一个新的Active pipeline
+     *
+     * @param key pipeline对应的源key
+     * @return 创建成功的pipeline
+     */
+    StreamPipeline *createPipeline(const QString &key);
+
+    /*
+     * @brief 将已进入终态关闭的Active pipeline移入Retiring集合
+     *
+     * 此函数只转移所有权和映射，不等待pipeline关闭，也不删除pipeline。
+     *
+     * @param worker 已经开始关闭的pipeline
+     */
+    void retirePipeline(StreamPipeline *worker);
+
+    /*
+     * @brief 清理所有仍指向指定pipeline的player映射
+     *
+     * @param worker 已进入Active或Retiring状态的pipeline
+     */
+    void removePlayerBindingsForPipeline(StreamPipeline *worker);
+
+    /*
+     * @brief 更新指定key的Retiring阈值告警状态
+     *
+     * 告警采用边沿触发，只有首次超过阈值时输出warning，数量回落到阈值以内后重新武装。
+     *
+     * @param key pipeline对应的源key
+     */
+    void updateRetiringWarning(const QString &key);
+
+    /*
+     * @brief 将最早的Retiring pipeline强制删除请求排队到下一轮事件循环
+     *
+     * 该函数只负责排队，不执行等待或删除。实际删除由
+     * forceDeleteOldestRetiringPipeline处理。
+     *
+     * 如需临时关闭强制回收，只注释retirePipeline中这一函数的调用即可。
+     * 被注释后不会再创建新的强制回收链，但已经排入下一轮事件循环的任务仍可能
+     * 完成一次当前删除并按原逻辑继续排队。不要注释函数定义，否则会产生链接错误。
+     *
+     * @param key pipeline对应的源key
+     */
+    void queueForceDeleteOldestRetiringPipeline(const QString &key);
+
+    /*
+     * @brief 强制删除指定key中最早的Retiring pipeline
+     *
+     * 该函数通过QMetaObject::invokeMethod按Qt::QueuedConnection方式调用，
+     * 运行在StreamManager所属线程。删除过程会执行requestStop、wait和delete，
+     * 并确保当前open流程已经完成新pipeline的创建和ensureOpen调用。
+     *
+     * @param key pipeline对应的源key
+     */
+    Q_INVOKABLE void forceDeleteOldestRetiringPipeline(const QString &key);
+
+    /*
      * @brief 初始化默认的解码器配置
      */
     void initDefaultDecoderConfig();
@@ -231,10 +304,16 @@ private:
     explicit StreamManager(QObject *parent = nullptr);
     ~StreamManager();
 
-    // VideoPlayer uuid和Pipeline之间的映射，避免裸指针key悬空或被地址复用命中
+    // VideoPlayer uuid和Active Pipeline之间的映射
     QMap<QString, QPointer<StreamPipeline>> mapPipelineByPlayer_;
-    // Pipeline的SourceKey和Pipeline之间的映射
-    QMap<QString, StreamPipeline *> mapPipelineByKey_;
+    // Active Pipeline的SourceKey和Pipeline记录之间的映射
+    QMap<QString, PipelineRecord> mapActivePipelineByKey_;
+    // Retiring Pipeline的pipelineId和Pipeline记录之间的映射
+    QMap<quint64, PipelineRecord> mapRetiringPipelineById_;
+    // 每个SourceKey当前仍在Retiring中的pipeline数量
+    QMap<QString, int> retiringCountByKey_;
+    // 每个SourceKey是否已经输出过超阈值告警
+    QMap<QString, bool> retiringWarningActiveByKey_;
 
     // 默认的解码器配置
     decoder_sdk::DecoderConfig defaultDecoderConfig_;

@@ -35,23 +35,26 @@ public:
     // 恢复播放视频
     virtual void resume() override;
 
-    /*
+	/*
      * @brief 开启录像
      *
-     * @param recoderPath 保存录像的文件地址
+     * @param recorderFilePath 录像文件路径
      */
-    void startRecoding(const QString &recoderPath);
+    virtual void startRecoding(const QString &recorderFilePath) override;
 
     /*
      * @brief 停止录像
      *
+	 * @param recorderFilePath 录像文件路径
      */
-    void stopRecoding();
+    virtual void stopRecoding(const QString &recorderFilePath) override;
 
     /*
      * @brief 是否正在录像
+	 * 
+	 * @param recorderFilePath 录像文件路径
      */
-    bool isRecording() const;
+    virtual bool isRecording(const QString &recorderFilePath) const override;
 
     bool seek(double pts);
 
@@ -79,6 +82,16 @@ private slots:
     void onStreamClosed();
 
 private:
-    // 关流
-    void closeStream();
+	/**
+     * @brief 关闭的内部实现，决定是否复用底层的stream
+     * 
+     * @param canReuse 是否复用，仅对当前对应的流进行复用
+     */
+	void closeStream(bool canReuse);
+	/**
+     * @brief 关闭的内部实现，决定是否复用底层的stream
+     * 
+     * @param canReuse 是否复用
+     */
+    void closeInternal(bool canReuse);
 };
