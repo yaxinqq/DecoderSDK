@@ -91,18 +91,6 @@ public:
     bool shouldDiscardBySeek(double pts, uint64_t serial) const;
 
     /**
-     * @brief 设置倍速
-     * @param speed 倍速
-     * @return true 成功，false 失败
-     */
-    bool setSpeed(double speed);
-    /**
-     * @brief 获取倍速
-     * @return double 倍速
-     */
-    double speed() const;
-
-    /**
      * @brief 设置最大帧队列大小
      * @param size 最大帧队列大小
      */
@@ -287,9 +275,6 @@ protected:
     std::atomic_bool requestInterruption_ = false; // 是否请求中断解码线程
 
     // 配置
-    // 速度 此处存为整型，单位为 1000 倍
-    std::atomic_uint16_t speed_ = 1000;
-
     // 解码最大连续错误容忍次数
     std::atomic_uint16_t maxConsecutiveErrors_{5};
     // 解码错误后，恢复的时间间隔（ms）

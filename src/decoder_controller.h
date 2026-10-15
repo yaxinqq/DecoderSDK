@@ -110,13 +110,6 @@ public:
      * @return true 成功; false 失败
      */
     bool seek(double position);
-    /**
-     * @brief 设置播放速度
-     *
-     * @param speed 播放速度
-     * @return true 成功; false 失败
-     */
-    bool setSpeed(double speed);
 
     /**
      * @brief 获取视频帧队列
@@ -138,13 +131,6 @@ public:
      * @return 视频帧率
      */
     double getVideoFrameRate() const;
-
-    /**
-     * @brief 获取当前播放速度
-     *
-     * @return 播放速度
-     */
-    double curSpeed() const;
 
     /**
      * @brief 开始录像，暂时将输出文件保存为.mp4格式

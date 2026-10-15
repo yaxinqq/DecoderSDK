@@ -58,9 +58,10 @@ double Frame::secPts() const
     return impl_ ? impl_->secPts() : 0.0;
 }
 
-std::vector<UserSEIData> Frame::userSEIDataList() const
+const std::vector<UserSEIData> &Frame::userSEIDataList() const
 {
-    return impl_ ? impl_->userSEIDataList() : std::vector<UserSEIData>();
+    static std::vector<UserSEIData> emptySEIData;
+    return impl_ ? impl_->userSEIDataList() : emptySEIData;
 }
 
 HWAccelType Frame::backendHwType() const

@@ -1,6 +1,7 @@
 #ifndef DECODER_SDK_DECODER_SDK_DEF_H
 #define DECODER_SDK_DECODER_SDK_DEF_H
 
+#include "audio_converter.h"
 #include "common_define.h"
 #include "decoder_controller.h"
 #include "frame.h"

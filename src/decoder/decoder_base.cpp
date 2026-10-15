@@ -102,21 +102,6 @@ bool DecoderBase::shouldDiscardBySeek(double pts, uint64_t serial) const
     return false;
 }
 
-bool DecoderBase::setSpeed(double speed)
-{
-    if (speed <= 0.0f || utils::greater(speed, 64.0)) {
-        return false;
-    }
-
-    utils::atomicUpdateIfNotEqual<uint16_t>(speed_, static_cast<uint16_t>(speed * 1000));
-    return true;
-}
-
-double DecoderBase::speed() const
-{
-    return speed_ * 0.001;
-}
-
 void DecoderBase::setMaxFrameQueueSize(uint32_t size)
 {
     frameQueue_->setMaxCount(size);

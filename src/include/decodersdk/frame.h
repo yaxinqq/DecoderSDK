@@ -1,4 +1,4 @@
-﻿#ifndef DECODER_SDK_FRAME_H
+#ifndef DECODER_SDK_FRAME_H
 #define DECODER_SDK_FRAME_H
 #include <memory>
 
@@ -75,7 +75,7 @@ public:
      * @brief 获得用户自定义的SEI数据组
      * @return SEI数据组
      */
-    std::vector<UserSEIData> userSEIDataList() const;
+    const std::vector<UserSEIData> &userSEIDataList() const;
     /**
      * @brief 获得解码后端硬件类型，仅QSV和AMF支持，其它类型会返回HWAccelType::kNone
      * @return HWAccelType 解码后端硬件类型
@@ -199,6 +199,8 @@ public:
 
 private:
     friend class EncoderController;
+    friend class AudioConverter;
+
     std::unique_ptr<internal::Frame> impl_;
 };
 } // namespace decoder_sdk
