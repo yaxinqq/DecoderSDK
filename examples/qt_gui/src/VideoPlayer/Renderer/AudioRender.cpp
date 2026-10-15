@@ -1,11 +1,59 @@
 #include "AudioRender.h"
 #include "../Base/InternalUtils.h"
 
-#include <QAudioDeviceInfo>
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+#include <QMediaDevices>
+#include <QAudioSink>
+#endif
+
 #include <QDebug>
 #include <QThread>
 #include <algorithm>
-#include <cstring>
+#include <chrono>
+#include <cmath>
+#include <limits>
+
+namespace {
+
+constexpr auto kAudioPushInterval = std::chrono::milliseconds(10);
+constexpr int kMaxPcmPendingSeconds = 2;
+
+decoder_sdk::AudioSampleFormat toAudioSampleFormat(const QAudioFormat &format)
+{
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+    switch (format.sampleFormat()) {
+        case QAudioFormat::UInt8:
+            return decoder_sdk::AudioSampleFormat::kFmtU8;
+        case QAudioFormat::Int16:
+            return decoder_sdk::AudioSampleFormat::kFmtS16;
+        case QAudioFormat::Int32:
+            return decoder_sdk::AudioSampleFormat::kFmtS32;
+        case QAudioFormat::Float:
+            return decoder_sdk::AudioSampleFormat::kFmtFlt;
+        default:
+            return decoder_sdk::AudioSampleFormat::kUnknown;
+    }
+#else
+    if (format.sampleType() == QAudioFormat::UnSignedInt && format.sampleSize() == 8) {
+        return decoder_sdk::AudioSampleFormat::kFmtU8;
+    }
+    if (format.sampleType() == QAudioFormat::SignedInt && format.sampleSize() == 16) {
+        return decoder_sdk::AudioSampleFormat::kFmtS16;
+    }
+    if (format.sampleType() == QAudioFormat::SignedInt && format.sampleSize() == 32) {
+        return decoder_sdk::AudioSampleFormat::kFmtS32;
+    }
+    if (format.sampleType() == QAudioFormat::Float && format.sampleSize() == 32) {
+        return decoder_sdk::AudioSampleFormat::kFmtFlt;
+    }
+    if (format.sampleType() == QAudioFormat::Float && format.sampleSize() == 64) {
+        return decoder_sdk::AudioSampleFormat::kFmtDbl;
+    }
+    return decoder_sdk::AudioSampleFormat::kUnknown;
+#endif
+}
+
+} // namespace
 
 AudioRender::AudioRender(QObject *parent)
     : QObject(parent)
@@ -13,19 +61,26 @@ AudioRender::AudioRender(QObject *parent)
     , playing_(false)
     , volume_(1.0)
 {
+    pushTimer_.setInterval(kAudioPushInterval);
+    connect(&pushTimer_, &QTimer::timeout, this, &AudioRender::drainPendingPcm);
 }
 
 AudioRender::~AudioRender()
 {
+    pushTimer_.stop();
     stop();
     if (audioOutput_) {
         audioOutput_->stop();
         audioOutput_.reset();
     }
+    audioDevice_ = nullptr;
 }
 
-void AudioRender::initialize(const decoder_sdk::Frame &frame,
-                             const QAudioDeviceInfo &deviceInfo)
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+void AudioRender::initialize(const decoder_sdk::Frame &frame, const QAudioDevice &deviceInfo)
+#else
+void AudioRender::initialize(const decoder_sdk::Frame &frame, const QAudioDeviceInfo &deviceInfo)
+#endif
 {
     if (initialized_.load() || !frame.isValid()) {
         return;
@@ -36,13 +91,41 @@ void AudioRender::initialize(const decoder_sdk::Frame &frame,
         return;
     }
 
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+    QAudioDevice device = deviceInfo.isNull() ? QMediaDevices::defaultAudioOutput() : deviceInfo;
+#else
     QAudioDeviceInfo device =
         deviceInfo.isNull() ? QAudioDeviceInfo::defaultOutputDevice() : deviceInfo;
+#endif
 
     if (!initAudioOutput(device)) {
         qWarning() << QStringLiteral("[AudioRender] Failed to initialize audio output");
         return;
     }
+
+    sampleRate_ = audioFormat_.sampleRate();
+    channels_ = audioFormat_.channelCount();
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+    sampleSize_ = audioFormat_.bytesPerSample() * 8;
+#else
+    sampleSize_ = audioFormat_.sampleSize();
+#endif
+
+    outputSampleFormat_ = toAudioSampleFormat(audioFormat_);
+    if (outputSampleFormat_ == decoder_sdk::AudioSampleFormat::kUnknown ||
+        !audioConverter_.configure(audioFormat_.sampleRate(), audioFormat_.channelCount(),
+                                   outputSampleFormat_)) {
+        qWarning() << QStringLiteral("[AudioRender] Failed to configure audio converter");
+        return;
+    }
+    if (!audioConverter_.setSpeed(speed_.load())) {
+        qWarning() << QStringLiteral("[AudioRender] Failed to apply playback speed");
+        return;
+    }
+
+    const qint64 maxPendingBytes = static_cast<qint64>(audioFormat_.sampleRate()) *
+                                   audioFormat_.channelCount() * (sampleSize_ / 8) * kMaxPcmPendingSeconds;
+    pendingPcm_.setMaxPendingBytes(static_cast<std::size_t>(maxPendingBytes));
 
     initialized_.store(true);
     qDebug() << QStringLiteral(
@@ -54,59 +137,46 @@ void AudioRender::initialize(const decoder_sdk::Frame &frame,
 
 void AudioRender::render(const decoder_sdk::Frame &frame)
 {
-    if (!frame.isValid() || !isValid() || !audioDevice_) {
+    if (!frame.isValid() || !isValid() || !playing_.load()) {
         return;
     }
-
-    std::lock_guard<std::mutex> lock(bufferMutex_);
 
     // 记录首帧PTS并发出信号，用于建立音频时钟
     if (isFirstFrame_.load()) {
         isFirstFrame_.store(false);
-        residualBuffer_.clear();
         emit firstFrameRendered(frame.secPts(), audioOutput_ ? audioOutput_->processedUSecs() : 0);
     }
 
-    // 1. 尝试写入之前积压的残余数据
-    if (!residualBuffer_.isEmpty()) {
-        qint64 written = writeToDevice(residualBuffer_.constData(), residualBuffer_.size());
-        if (written > 0) {
-            residualBuffer_.remove(0, written);
+    const qreal currentVolume = volume_.load();
+    if (std::abs(speed_.load() - 1.0) >= 0.0001 ||
+        frame.sampleRate() != audioFormat_.sampleRate() ||
+        frame.channels() != audioFormat_.channelCount() ||
+        frame.sampleFormat() != outputSampleFormat_) {
+        if (!audioConverter_.convert(frame, convertedPcm_, convertedSampleCount_)) {
+            qWarning() << QStringLiteral("[AudioRender] Failed to convert audio frame");
+            return;
         }
-    }
 
-    // 如果残余数据还是太多，则先不处理新帧，等待下一轮
-    if (residualBuffer_.size() > 65536) {
-        return;
-    }
+        applyVolume(reinterpret_cast<char *>(convertedPcm_.data()),
+                    static_cast<qint64>(convertedPcm_.size()), currentVolume);
+        writeToAudioDevice(reinterpret_cast<const char *>(convertedPcm_.data()),
+                           static_cast<qint64>(convertedPcm_.size()));
+    } else {
+        const int dataSize = frame.getAudioBufferSize();
+        uint8_t *audioData = frame.data(0);
+        if (!audioData || dataSize <= 0) {
+            return;
+        }
 
-    // 2. 获取当前音频帧数据
-    int dataSize = frame.getAudioBufferSize();
-    uint8_t *audioData = frame.data(0);
-    if (!audioData || dataSize <= 0) {
-        return;
-    }
-
-    // 3. 将新数据追加到残余缓冲区并统一尝试写入
-    const int previousSize = residualBuffer_.size();
-    residualBuffer_.append(reinterpret_cast<const char *>(audioData), dataSize);
-
-    // 只对新追加的 PCM 数据应用音量，避免残余数据在后续轮次被重复缩放。
-    applyVolume(residualBuffer_.data() + previousSize, dataSize, volume_.load());
-
-    qint64 written = writeToDevice(residualBuffer_.constData(), residualBuffer_.size());
-    if (written > 0) {
-        residualBuffer_.remove(0, written);
-
-        // 统计信息更新
-        totalFramesRendered_.fetch_add(1);
-        totalBytesRendered_.fetch_add(written);
-    }
-
-    // 缓冲区积压超过 128KB (约 0.7s) 强制清空，防止内存无限增长
-    if (residualBuffer_.size() > 131072) {
-        residualBuffer_.clear();
-        droppedFrames_.fetch_add(1);
+        if (!qFuzzyCompare(currentVolume, 1.0)) {
+            convertedPcm_.assign(audioData, audioData + dataSize);
+            applyVolume(reinterpret_cast<char *>(convertedPcm_.data()),
+                        static_cast<qint64>(convertedPcm_.size()), currentVolume);
+            writeToAudioDevice(reinterpret_cast<const char *>(convertedPcm_.data()),
+                               static_cast<qint64>(convertedPcm_.size()));
+        } else {
+            writeToAudioDevice(reinterpret_cast<const char *>(audioData), dataSize);
+        }
     }
 }
 
@@ -116,29 +186,25 @@ void AudioRender::start()
         return;
     }
 
-    if (audioOutput_) {
-        audioDevice_ = audioOutput_->start();
-        if (!audioDevice_) {
-            qWarning() << QStringLiteral("[AudioRender] Failed to start audio output");
-            return;
-        }
-        playing_.store(true);
+    if (startAudioOutput()) {
         qDebug() << QStringLiteral("[AudioRender] Started playing");
     }
 }
 
 void AudioRender::stop()
 {
-    if (!playing_.load()) {
-        return;
-    }
-
     playing_.store(false);
+    pushTimer_.stop();
 
     if (audioOutput_) {
         audioOutput_->stop();
         audioDevice_ = nullptr;
     }
+
+    pendingPcm_.clear();
+    audioConverter_.reset();
+    convertedPcm_.clear();
+    convertedSampleCount_ = 0;
 
     // 重置时钟状态
     isFirstFrame_.store(true);
@@ -154,6 +220,7 @@ void AudioRender::pause()
 
     if (audioOutput_) {
         audioOutput_->suspend();
+        pushTimer_.stop();
     }
 }
 
@@ -165,28 +232,68 @@ void AudioRender::resume()
 
     if (audioOutput_) {
         audioOutput_->resume();
+        if (playing_.load()) {
+            pushTimer_.start(kAudioPushInterval);
+        }
     }
 }
 
 void AudioRender::flush()
 {
-    std::lock_guard<std::mutex> lock(bufferMutex_);
+    const bool wasPlaying = playing_.exchange(false);
+    pushTimer_.stop();
+
     if (audioOutput_) {
         audioOutput_->reset();
-        // reset() 后需要重新获取设备指针，否则可能写入失败
-        audioDevice_ = audioOutput_->start();
+        audioDevice_ = nullptr;
     }
 
-    // 重置时钟状态与缓冲区
+    pendingPcm_.clear();
+    audioConverter_.reset();
+    convertedPcm_.clear();
+    convertedSampleCount_ = 0;
+
+    if (wasPlaying && !startAudioOutput()) {
+        qWarning() << QStringLiteral("[AudioRender] Failed to restart audio output");
+    }
+
+    // 重置时钟状态
     isFirstFrame_.store(true);
-    residualBuffer_.clear();
 
     qDebug() << QStringLiteral("[AudioRender] Flushed and clock reset");
 }
 
 void AudioRender::setVolume(qreal volume)
 {
-    volume_.store(qBound(0.0, volume, 1.0));
+    volume_.store(std::clamp(volume, 0.0, 1.0));
+}
+
+void AudioRender::setSpeed(double speed)
+{
+    if (!std::isfinite(speed) || !utils::greater(speed, 0.0) || utils::greater(speed, 64.0)) {
+        qWarning() << QStringLiteral("[AudioRender] Invalid playback speed: %1").arg(speed);
+        return;
+    }
+
+    speed_.store(speed);
+    if (initialized_.load() && !audioConverter_.setSpeed(speed)) {
+        qWarning() << QStringLiteral("[AudioRender] Failed to update playback speed");
+    }
+}
+
+void AudioRender::writeToAudioDevice(const char *data, qint64 size)
+{
+    if (!audioDevice_ || playing_.load() == false || !data || size <= 0) {
+        return;
+    }
+
+    const auto result = pendingPcm_.write(
+        reinterpret_cast<const std::uint8_t *>(data), static_cast<std::size_t>(size),
+        [this](const std::uint8_t *pcmData, std::size_t pcmSize) {
+            return audioDevice_->write(reinterpret_cast<const char *>(pcmData),
+                                       static_cast<qint64>(pcmSize));
+        });
+    updateStatistics(result);
 }
 
 qreal AudioRender::volume() const
@@ -206,6 +313,8 @@ AudioRender::Statistics AudioRender::getStatistics() const
     stats.totalBytesRendered = totalBytesRendered_.load();
 
     stats.droppedFrames = droppedFrames_.load();
+    stats.droppedBytes = droppedBytes_.load();
+    stats.availableBytes = static_cast<qint64>(pendingPcm_.pendingBytes());
     return stats;
 }
 
@@ -216,7 +325,16 @@ QAudio::State AudioRender::state() const
 
 int AudioRender::bytesFree() const
 {
-    return audioOutput_ ? audioOutput_->bytesFree() : 0;
+    if (!isValid() || !audioDevice_) {
+        return 0;
+    }
+
+    const qint64 sinkBytesFree =
+        (std::max)(static_cast<qint64>(0), static_cast<qint64>(audioOutput_->bytesFree()));
+    const std::size_t effectiveBytes =
+        pendingPcm_.effectiveBytesFree(static_cast<std::size_t>(sinkBytesFree));
+    return static_cast<int>(
+        (std::min)(effectiveBytes, static_cast<std::size_t>((std::numeric_limits<int>::max)())));
 }
 
 qint64 AudioRender::processedUSecs() const
@@ -230,12 +348,62 @@ void AudioRender::handleStateChanged(QAudio::State newState)
         audioOutput_->error() != QAudio::NoError) {
         qWarning() << QStringLiteral("[AudioRender] Audio error: %1")
                           .arg(static_cast<int>(audioOutput_->error()));
+        playing_.store(false);
+        pushTimer_.stop();
     }
 
-    // 处理IdleState：当音频设备进入空闲状态时，检查是否有更多数据
+    // 推模式下，设备空闲表示内部缓冲已耗尽，先排空应用层残留，再通知生产者。
     if (newState == QAudio::IdleState && playing_.load()) {
-        audioOutput_->resume();
+        drainPendingPcm();
     }
+}
+
+void AudioRender::drainPendingPcm()
+{
+    if (!audioDevice_ || !playing_.load()) {
+        return;
+    }
+
+    const auto result = pendingPcm_.drain(
+        [this](const std::uint8_t *pcmData, std::size_t pcmSize) {
+            return audioDevice_->write(reinterpret_cast<const char *>(pcmData),
+                                       static_cast<qint64>(pcmSize));
+        });
+    updateStatistics(result);
+
+    // QAudioSink 在缓冲区未耗尽时不会通知生产者，定时检查可写空间以保持连续供给。
+    if (bytesFree() > 0) {
+        emit bufferDrained();
+    }
+}
+
+bool AudioRender::startAudioOutput()
+{
+    if (!audioOutput_) {
+        return false;
+    }
+
+    playing_.store(false);
+    audioDevice_ = audioOutput_->start();
+    if (!audioDevice_ || audioOutput_->error() != QAudio::NoError) {
+        qWarning() << QStringLiteral("[AudioRender] Failed to start audio output");
+        audioOutput_->stop();
+        audioDevice_ = nullptr;
+        pushTimer_.stop();
+        return false;
+    }
+
+    playing_.store(true);
+    pushTimer_.start(kAudioPushInterval);
+    return true;
+}
+
+void AudioRender::updateStatistics(const PcmPushBuffer::WriteResult &result)
+{
+    totalFramesRendered_.fetch_add(static_cast<qint64>(result.completedFrames));
+    totalBytesRendered_.fetch_add(static_cast<qint64>(result.acceptedBytes));
+    droppedFrames_.fetch_add(static_cast<qint64>(result.droppedFrames));
+    droppedBytes_.fetch_add(static_cast<qint64>(result.droppedBytes));
 }
 
 bool AudioRender::initAudioFormat(const decoder_sdk::Frame &frame)
@@ -248,53 +416,81 @@ bool AudioRender::initAudioFormat(const decoder_sdk::Frame &frame)
     const auto sampleFormat = frame.sampleFormat();
 
     // 设置Qt音频格式
-    audioFormat_.setSampleRate(std::max(sampleRate_, 1));
-    audioFormat_.setChannelCount(std::max(channels_, 1));
+    audioFormat_.setSampleRate((std::max)(sampleRate_, 1));
+    audioFormat_.setChannelCount((std::max)(channels_, 1));
+#if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
     audioFormat_.setCodec("audio/pcm");
     audioFormat_.setByteOrder(QAudioFormat::LittleEndian);
+#endif
 
     // 根据FFmpeg采样格式设置Qt格式
     switch (sampleFormat) {
         case decoder_sdk::AudioSampleFormat::kFmtU8:
         case decoder_sdk::AudioSampleFormat::kFmtU8P:
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+            audioFormat_.setSampleFormat(QAudioFormat::UInt8);
+#else
             audioFormat_.setSampleSize(8);
             audioFormat_.setSampleType(QAudioFormat::UnSignedInt);
+#endif
             sampleSize_ = 8;
             break;
 
         case decoder_sdk::AudioSampleFormat::kFmtS16:
         case decoder_sdk::AudioSampleFormat::kFmtS16P:
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+            audioFormat_.setSampleFormat(QAudioFormat::Int16);
+#else
             audioFormat_.setSampleSize(16);
             audioFormat_.setSampleType(QAudioFormat::SignedInt);
+#endif
             sampleSize_ = 16;
             break;
 
         case decoder_sdk::AudioSampleFormat::kFmtS32:
         case decoder_sdk::AudioSampleFormat::kFmtS32P:
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+            audioFormat_.setSampleFormat(QAudioFormat::Int32);
+#else
             audioFormat_.setSampleSize(32);
             audioFormat_.setSampleType(QAudioFormat::SignedInt);
+#endif
             sampleSize_ = 32;
             break;
 
         case decoder_sdk::AudioSampleFormat::kFmtFlt:
         case decoder_sdk::AudioSampleFormat::kFmtFltP:
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+            audioFormat_.setSampleFormat(QAudioFormat::Float);
+#else
             audioFormat_.setSampleSize(32);
             audioFormat_.setSampleType(QAudioFormat::Float);
+#endif
             sampleSize_ = 32;
             break;
 
         case decoder_sdk::AudioSampleFormat::kFmtDbl:
         case decoder_sdk::AudioSampleFormat::kFmtDblP:
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+            qWarning() << QStringLiteral(
+                "[AudioRender] 64-bit float sample format is not supported by Qt6");
+            return false;
+#else
             audioFormat_.setSampleSize(64);
             audioFormat_.setSampleType(QAudioFormat::Float);
             sampleSize_ = 64;
             break;
+#endif
 
         default:
             qWarning() << QStringLiteral("[AudioRender] Unsupported sample format!");
             // 默认使用16位有符号整数
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+            audioFormat_.setSampleFormat(QAudioFormat::Int16);
+#else
             audioFormat_.setSampleSize(16);
             audioFormat_.setSampleType(QAudioFormat::SignedInt);
+#endif
             sampleSize_ = 16;
             break;
     }
@@ -302,7 +498,11 @@ bool AudioRender::initAudioFormat(const decoder_sdk::Frame &frame)
     return true;
 }
 
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+bool AudioRender::initAudioOutput(const QAudioDevice &deviceInfo)
+#else
 bool AudioRender::initAudioOutput(const QAudioDeviceInfo &deviceInfo)
+#endif
 {
     audioDeviceInfo_ = deviceInfo;
 
@@ -310,50 +510,68 @@ bool AudioRender::initAudioOutput(const QAudioDeviceInfo &deviceInfo)
     if (!audioDeviceInfo_.isFormatSupported(audioFormat_)) {
         qWarning() << QStringLiteral("[AudioRender] Audio format not supported by device");
         // 尝试获取最接近的格式
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+        audioFormat_ = audioDeviceInfo_.preferredFormat();
+#else
         audioFormat_ = audioDeviceInfo_.nearestFormat(audioFormat_);
+#endif
         qDebug() << QStringLiteral(
                         "[AudioRender] Using nearest format: SampleRate: %1, Channels: %2, "
                         "SampleSize: %3")
                         .arg(QString::number(audioFormat_.sampleRate()),
                              QString::number(audioFormat_.channelCount()),
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+                             QString::number(audioFormat_.bytesPerSample() * 8));
+#else
                              QString::number(audioFormat_.sampleSize()));
+#endif
     }
 
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+    audioOutput_.reset(new QAudioSink(audioDeviceInfo_, audioFormat_));
+#else
     audioOutput_.reset(new QAudioOutput(audioDeviceInfo_, audioFormat_));
+#endif
     if (!audioOutput_) {
-        qWarning() << QStringLiteral("[AudioRender] Failed to create QAudioOutput");
+        qWarning() << QStringLiteral("[AudioRender] Failed to create audio output");
         return false;
     }
 
     // 设置较小的缓冲区大小以减少延迟
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+    int bytesPerSecond =
+        audioFormat_.sampleRate() * audioFormat_.channelCount() * audioFormat_.bytesPerSample();
+#else
     int bytesPerSecond =
         audioFormat_.sampleRate() * audioFormat_.channelCount() * (audioFormat_.sampleSize() / 8);
-
-    int targetBufferMs = 200; // 增加到 200ms 缓冲，提高稳定性，消除颤抖感
-    int bufferSize = (bytesPerSecond * targetBufferMs) / 1000;
+#endif
+    constexpr auto targetBuffer = std::chrono::milliseconds(200);
+    int bufferSize = bytesPerSecond * (targetBuffer / std::chrono::milliseconds(1)) / 1000;
 
     // 确保缓冲区大小在合理范围内
-    int minBufferSize = (bytesPerSecond * 50) / 1000;  // 最小 50ms
-    int maxBufferSize = (bytesPerSecond * 400) / 1000; // 最大 400ms
-    bufferSize = qBound(minBufferSize, bufferSize, maxBufferSize);
+    constexpr auto minBuffer = std::chrono::milliseconds(50);
+    constexpr auto maxBuffer = std::chrono::milliseconds(400);
+    const int minBufferSize =
+        bytesPerSecond * (minBuffer / std::chrono::milliseconds(1)) / 1000;
+    const int maxBufferSize =
+        bytesPerSecond * (maxBuffer / std::chrono::milliseconds(1)) / 1000;
+    bufferSize = std::clamp(bufferSize, minBufferSize, maxBufferSize);
 
     audioOutput_->setBufferSize(bufferSize);
 
-    // 通知间隔设置为缓冲区时长的一半，确保及时响应
-    int notifyInterval = qMax(10, targetBufferMs / 2);
-    audioOutput_->setNotifyInterval(notifyInterval);
-
     qDebug() << QStringLiteral(
-                    "[AudioRender] Audio output configured: BufferSize: %1 bytes (%2 ms), "
-                    "NotifyInterval: %3 ms")
+                    "[AudioRender] Audio output configured: BufferSize: %1 bytes (%2 ms)")
                     .arg(QString::number(bufferSize),
-                         QString::number(bufferSize * 1000 / bytesPerSecond),
-                         QString::number(notifyInterval));
+                         QString::number(bufferSize * 1000 / bytesPerSecond));
 
     // 连接信号
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+    connect(audioOutput_.data(), &QAudioSink::stateChanged, this,
+            &AudioRender::handleStateChanged);
+#else
     connect(audioOutput_.data(), &QAudioOutput::stateChanged, this,
             &AudioRender::handleStateChanged);
-    connect(audioOutput_.data(), &QAudioOutput::notify, this, &AudioRender::bufferDrained);
+#endif
 
     qDebug() << QStringLiteral("[AudioRender] Audio output initialized");
     return true;
@@ -373,7 +591,7 @@ void AudioRender::applyVolume(char *data, qint64 size, qreal volume)
             qint64 sampleCount = size / sizeof(uint8_t);
             for (qint64 i = 0; i < sampleCount; ++i) {
                 int value = (samples[i] - 128) * volume + 128;
-                samples[i] = static_cast<uint8_t>(qBound(0, value, 255));
+                samples[i] = static_cast<uint8_t>(std::clamp(value, 0, 255));
             }
             break;
         }
@@ -383,26 +601,33 @@ void AudioRender::applyVolume(char *data, qint64 size, qreal volume)
             qint64 sampleCount = size / sizeof(int16_t);
             for (qint64 i = 0; i < sampleCount; ++i) {
                 int value = samples[i] * volume;
-                samples[i] = static_cast<int16_t>(qBound(-32768, value, 32767));
+                samples[i] =
+                    static_cast<int16_t>(std::clamp(value, -32768, 32767));
             }
             break;
         }
         case 32: {
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+            if (audioFormat_.sampleFormat() == QAudioFormat::Int32) {
+#else
             if (audioFormat_.sampleType() == QAudioFormat::SignedInt) {
+#endif
                 // 32位有符号整数
                 int32_t *samples = reinterpret_cast<int32_t *>(data);
                 qint64 sampleCount = size / sizeof(int32_t);
                 for (qint64 i = 0; i < sampleCount; ++i) {
                     int64_t value = static_cast<int64_t>(samples[i]) * volume;
-                    samples[i] = static_cast<int32_t>(qBound(static_cast<int64_t>(INT32_MIN), value,
-                                                             static_cast<int64_t>(INT32_MAX)));
+                    samples[i] = static_cast<int32_t>(
+                        std::clamp(value, static_cast<int64_t>(INT32_MIN),
+                                   static_cast<int64_t>(INT32_MAX)));
                 }
             } else {
                 // 32位浮点数
                 float *samples = reinterpret_cast<float *>(data);
                 qint64 sampleCount = size / sizeof(float);
                 for (qint64 i = 0; i < sampleCount; ++i) {
-                    samples[i] = qBound(-1.0f, static_cast<float>(samples[i] * volume), 1.0f);
+                    samples[i] =
+                        std::clamp(static_cast<float>(samples[i] * volume), -1.0f, 1.0f);
                 }
             }
             break;
@@ -412,7 +637,7 @@ void AudioRender::applyVolume(char *data, qint64 size, qreal volume)
             double *samples = reinterpret_cast<double *>(data);
             qint64 sampleCount = size / sizeof(double);
             for (qint64 i = 0; i < sampleCount; ++i) {
-                samples[i] = qBound(-1.0, samples[i] * volume, 1.0);
+                samples[i] = std::clamp(samples[i] * volume, -1.0, 1.0);
             }
             break;
         }
@@ -427,13 +652,4 @@ void AudioRender::applyVolume(char *data, qint64 size, qreal volume)
 int AudioRender::getChannelCount(const decoder_sdk::Frame &frame)
 {
     return frame.channels();
-}
-
-qint64 AudioRender::writeToDevice(const char *data, qint64 size)
-{
-    if (!audioDevice_ || !data || size <= 0) {
-        return 0;
-    }
-
-    return audioDevice_->write(data, size);
 }

@@ -26,10 +26,23 @@ add_executable(${EXAMPLE_TARGET}
     ${CMAKE_CURRENT_SOURCE_DIR}/../external/vk_bootstrap/include/VkBootstrapFeatureChain.inl
 )
 
+# 待转换为 QSB 的着色器文件
+set(QT_GUI_SHADER_FILES
+)
+
+if(QT_VERSION_MAJOR EQUAL 6 AND QT_GUI_ENABLE_QRHI_PLAYER AND QT_GUI_SHADER_FILES)
+    find_package(Qt6 6.7 REQUIRED COMPONENTS ShaderTools)
+    qt_add_shaders(${EXAMPLE_TARGET} "${EXAMPLE_TARGET}_shaders"
+        PREFIX "/shaders"
+        FILES
+            ${QT_GUI_SHADER_FILES}
+    )
+endif()
+
 # Windows 特定配置
 if(CMAKE_SYSTEM_NAME STREQUAL "Windows")
     # 运行时路径配置
-    set(QT_BIN_DIR "${Qt5_DIR}/../../../bin")
+    set(QT_BIN_DIR "${Qt${QT_VERSION_MAJOR}_DIR}/../../../bin")
     set(THIRD_PARTY_LIB_DIRS
         "${FFMPEG_BIN_DIR}"
     )
@@ -65,6 +78,12 @@ target_link_libraries(${EXAMPLE_TARGET} PRIVATE
 target_compile_definitions(${EXAMPLE_TARGET} PRIVATE
     QT_MESSAGELOGCONTEXT
 )
+
+if(QT_GUI_ENABLE_QRHI_PLAYER)
+    target_compile_definitions(${EXAMPLE_TARGET} PRIVATE
+        QT_GUI_HAS_QRHI_PLAYER=1
+    )
+endif()
 
 # 平台特定设置
 if(WIN32)

@@ -41,8 +41,6 @@ public:
     bool isRecording(const QString &recorderFilePath) const;
     // 进行跳转
     void seek(double pos);
-    // 设置倍速
-    void setSpeed(double speed);
 
     // 设置循环模式
     void setLoopMode(decoder_sdk::LoopMode mode, int maxLoops = -1);
@@ -233,11 +231,6 @@ void Decoder::seek(double pos)
     controller_.seek(pos);
 }
 
-void Decoder::setSpeed(double speed)
-{
-    controller_.setSpeed(speed);
-}
-
 void Decoder::setLoopMode(decoder_sdk::LoopMode mode, int maxLoops)
 {
     controller_.setLoopMode(mode, maxLoops);
@@ -377,8 +370,6 @@ signals:
     void requestToStopRecording(const QString &recorderFilePath);
     // 进行跳转
     void requestToSeek(double pos);
-    // 设置倍速
-    void requestToSetSpeed(double speed);
 
     // 设置循环模式
     void requestToSetLoopMode(decoder_sdk::LoopMode mode, int maxLoops = -1);
@@ -414,7 +405,6 @@ DecodeWorker::DecodeWorker(const QString &key, QObject *parent)
     connect(helper_, &DecoderHelper::requestToStartRecoding, decoder_.data(), &Decoder::startRecoding);
     connect(helper_, &DecoderHelper::requestToStopRecording, decoder_.data(), &Decoder::stopRecording);
     connect(helper_, &DecoderHelper::requestToSeek, decoder_.data(), &Decoder::seek);
-    connect(helper_, &DecoderHelper::requestToSetSpeed, decoder_.data(), &Decoder::setSpeed);
     connect(helper_, &DecoderHelper::requestToSetLoopMode, decoder_.data(), &Decoder::setLoopMode);
     connect(helper_, &DecoderHelper::requestToResetLoopCount, decoder_.data(), &Decoder::resetLoopCount);
     // ===================================================== //
@@ -481,11 +471,6 @@ void DecodeWorker::stopRecording(const QString &recorderFilePath)
 void DecodeWorker::seek(double pos)
 {
     emit helper_->requestToSeek(pos);
-}
-
-void DecodeWorker::setSpeed(double speed)
-{
-    emit helper_->requestToSetSpeed(speed);
 }
 
 void DecodeWorker::setLoopMode(decoder_sdk::LoopMode mode, int maxLoops)

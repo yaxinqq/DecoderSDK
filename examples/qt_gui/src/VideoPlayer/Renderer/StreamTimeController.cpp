@@ -175,7 +175,7 @@ Stream::AudioScheduleDecision StreamTimeController::decideAudio(double audioPts,
     // 这样可以防止在 AudioMaster 模式下无脑 Pop 帧导致的数据积压或无效尝试
     if (bytesFree < 4096 && audioClock_.valid) {
         decision.action = Stream::ScheduleAction::kWait;
-        // 不设置 waitMs：音频硬件消费缓冲后通过 AudioRender::bufferDrained 唤醒。
+        // AudioRender 检测到可写空间后通过 bufferDrained 唤醒生产者。
         return decision;
     }
 

@@ -28,16 +28,33 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
     set(CMAKE_SHARED_LINKER_FLAGS_RELEASE "${CMAKE_SHARED_LINKER_FLAGS_RELEASE} /DEBUG")
 endif()
 
-# 查找Qt5
-find_package(Qt5 REQUIRED COMPONENTS
+# 优先查找 Qt6，找不到时回退到 Qt5
+set(QT_GUI_QT_COMPONENTS
     Core
     Gui
     Widgets
     Multimedia
     OpenGL
-    WebChannel
-    WebSockets
 )
+find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS ${QT_GUI_QT_COMPONENTS})
+find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS ${QT_GUI_QT_COMPONENTS})
+
+# Qt6 的 QOpenGLWidget 位于独立的 OpenGLWidgets 模块
+if(QT_VERSION_MAJOR EQUAL 6)
+    find_package(Qt6 REQUIRED COMPONENTS OpenGLWidgets)
+endif()
+
+# QRhiWidget 从 Qt 6.7 开始提供，Qt5 和更早的 Qt6 不编译相关播放器
+set(QT_GUI_ENABLE_QRHI_PLAYER FALSE)
+if(QT_VERSION_MAJOR EQUAL 6 AND Qt6_VERSION VERSION_GREATER_EQUAL 6.7)
+    set(QT_NO_PRIVATE_MODULE_WARNING ON)
+    find_package(Qt6 QUIET COMPONENTS GuiPrivate)
+    if(TARGET Qt6::GuiPrivate)
+        set(QT_GUI_ENABLE_QRHI_PLAYER TRUE)
+    endif()
+endif()
+
+message(STATUS "Qt GUI QRhi player: ${QT_GUI_ENABLE_QRHI_PLAYER}")
 
 # 全局包含目录设置
 set(GLOBAL_INCLUDE_DIRS
@@ -63,14 +80,19 @@ endif()
 # 全局链接库设置
 set(GLOBAL_LINK_LIBRARIES
     DecoderSDK
-    Qt5::Core
-    Qt5::Gui
-    Qt5::Multimedia
-    Qt5::Widgets
-    Qt5::OpenGL
-    Qt5::WebChannel
-    Qt5::WebSockets
 )
+
+foreach(QT_COMPONENT IN LISTS QT_GUI_QT_COMPONENTS)
+    list(APPEND GLOBAL_LINK_LIBRARIES Qt${QT_VERSION_MAJOR}::${QT_COMPONENT})
+endforeach()
+
+if(QT_VERSION_MAJOR EQUAL 6)
+    list(APPEND GLOBAL_LINK_LIBRARIES Qt6::OpenGLWidgets)
+
+    if(QT_GUI_ENABLE_QRHI_PLAYER)
+        list(APPEND GLOBAL_LINK_LIBRARIES Qt6::GuiPrivate)
+    endif()
+endif()
 
 # 平台特定的链接库设置
 if(WIN32)

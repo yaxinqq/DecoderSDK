@@ -84,12 +84,6 @@ public:
      * @param pos 跳转位置
      */
     void seek(double pos);
-    /**
-     * @brief 设置倍速
-     *
-     * @param speed 倍速
-     */
-    void setSpeed(double speed);
 
     /**
      * @brief 设置循环模式
