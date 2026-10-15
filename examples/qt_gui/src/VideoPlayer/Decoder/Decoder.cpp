@@ -4,6 +4,9 @@
 #include <QThread>
 #include <QTimerEvent>
 
+#include <atomic>
+#include <memory>
+
 #pragma region Decoder
 /*!
  * \class Decoder
@@ -17,14 +20,15 @@ class Decoder : public QObject {
     Q_OBJECT
 
 public:
-    explicit Decoder(QObject *parent = nullptr);
+    explicit Decoder(std::shared_ptr<std::atomic<quint64>> latestTaskSequence,
+                     QObject *parent = nullptr);
     virtual ~Decoder();
 
     // 异步的打开流
     void openAsync(const QString &url, const decoder_sdk::DecoderConfig &config);
 
     // 执行任务
-    void doTask(DecodeWorker::Task task);
+    void doTask(DecodeWorker::Task task, quint64 sequence);
 
     // 广播流信息以及解码器信息
     void broadcastStreamAndDecoderInfo();
@@ -66,6 +70,8 @@ signals:
     void streamStaticsInfoUpdated(const decoder_sdk::StreamStaticsInfo &info);
     // 发送解码器信息变更
     void decoderInfoUpdated(decoder_sdk::MediaType mediaType, const std::optional<decoder_sdk::DecoderInfo> &info);
+    // 发送队列由空变为非空的通知，用于唤醒渲染侧取帧
+    void frameAvailable(decoder_sdk::MediaType mediaType);
 
 protected:
     /**
@@ -104,17 +110,28 @@ private:
     void stopFetchStaticsInfoTimer();
 
 private:
+    // 任务序号源，用于忽略已经过期的非阻塞任务
+    std::shared_ptr<std::atomic<quint64>> latestTaskSequence_;
     decoder_sdk::DecoderController controller_;
     int staticsInfoBroadcastTimerId_ = -1; // 定期广播流信息的定时器ID（用于刷新实时流估算码率）
 };
 
-Decoder::Decoder(QObject *parent)
+Decoder::Decoder(std::shared_ptr<std::atomic<quint64>> latestTaskSequence, QObject *parent)
     : QObject(parent)
+    , latestTaskSequence_(std::move(latestTaskSequence))
     , controller_{ decoder_sdk::DecoderController() }
 {
     controller_.addGlobalEventListener(std::bind(&Decoder::streamEventCallback, this,
                                                  std::placeholders::_1, std::placeholders::_2));
     controller_.setLoopMode(decoder_sdk::LoopMode::kInfinite);
+
+    // 帧队列回调只在空队列首次入帧时触发，且只允许做轻量唤醒，禁止阻塞解码线程。
+    controller_.videoQueue().setFrameProducedCallback([this]() {
+        emit frameAvailable(decoder_sdk::MediaType::kVideo);
+    });
+    controller_.audioQueue().setFrameProducedCallback([this]() {
+        emit frameAvailable(decoder_sdk::MediaType::kAudio);
+    });
 }
 
 Decoder::~Decoder()
@@ -128,8 +145,13 @@ void Decoder::openAsync(const QString &url, const decoder_sdk::DecoderConfig &co
                                     std::placeholders::_2, std::placeholders::_3));
 }
 
-void Decoder::doTask(DecodeWorker::Task task)
+void Decoder::doTask(DecodeWorker::Task task, quint64 sequence)
 {
+    // 非阻塞投递后可能残留旧任务，只执行最新一次已接受任务。
+    if (sequence < latestTaskSequence_->load()) {
+        return;
+    }
+
     switch (task) {
         case DecodeWorker::Task::kPause:
             pause();
@@ -330,7 +352,7 @@ signals:
     void requestToOpenAsync(const QString &url, const decoder_sdk::DecoderConfig &config);
 
     // 执行任务
-    void requestToDoTask(DecodeWorker::Task t);
+    void requestToDoTask(DecodeWorker::Task t, quint64 sequence);
 
     // 广播流信息以及解码器信息
     void requestToBroadcastStreamAndDecoderInfo();
@@ -355,8 +377,10 @@ signals:
 DecodeWorker::DecodeWorker(const QString &key, QObject *parent)
     : IDecodeWorker(parent)
 {
+    latestTaskSequence_ = std::make_shared<std::atomic<quint64>>(0);
+
     // 创建解码器
-    decoder_ = new Decoder;
+    decoder_ = new Decoder(latestTaskSequence_);
     thread_ = new QThread(this);
     if (!key.isEmpty()) {
         thread_->setObjectName(QStringLiteral("decode_%1").arg(key));
@@ -369,7 +393,8 @@ DecodeWorker::DecodeWorker(const QString &key, QObject *parent)
 
     // ============== Helper => Decoder的信号 ============== //
     connect(helper_, &DecoderHelper::requestToOpenAsync, decoder_.data(), &Decoder::openAsync);
-    connect(helper_, &DecoderHelper::requestToDoTask, decoder_.data(), &Decoder::doTask, Qt::BlockingQueuedConnection);
+    connect(helper_, &DecoderHelper::requestToDoTask, decoder_.data(), &Decoder::doTask,
+            Qt::QueuedConnection);
     connect(helper_, &DecoderHelper::requestToBroadcastStreamAndDecoderInfo,
             decoder_.data(), &Decoder::broadcastStreamAndDecoderInfo);
     connect(helper_, &DecoderHelper::requestToStartRecoding, decoder_.data(), &Decoder::startRecoding);
@@ -388,6 +413,7 @@ DecodeWorker::DecodeWorker(const QString &key, QObject *parent)
     connect(decoder_.data(), &Decoder::streamInfoUpdated, this, &DecodeWorker::streamInfoUpdated);
     connect(decoder_.data(), &Decoder::streamStaticsInfoUpdated, this, &DecodeWorker::streamStaticsInfoUpdated);
     connect(decoder_.data(), &Decoder::decoderInfoUpdated, this, &DecodeWorker::decoderInfoUpdated);
+    connect(decoder_.data(), &Decoder::frameAvailable, this, &DecodeWorker::frameAvailable);
     // ===================================================== //
 
     // ============ 线程析构时，同时析构decoder ============ //
@@ -413,9 +439,14 @@ void DecodeWorker::openAsync(const QString &url, const decoder_sdk::DecoderConfi
     emit helper_->requestToOpenAsync(url, config);
 }
 
-void DecodeWorker::doTask(Task task)
+void DecodeWorker::doTask(Task task, quint64 sequence)
 {
-    emit helper_->requestToDoTask(task);
+    emit helper_->requestToDoTask(task, sequence);
+}
+
+std::shared_ptr<std::atomic<quint64>> DecodeWorker::taskSequenceSource() const
+{
+    return latestTaskSequence_;
 }
 
 void DecodeWorker::broadcastStreamAndDecoderInfo()

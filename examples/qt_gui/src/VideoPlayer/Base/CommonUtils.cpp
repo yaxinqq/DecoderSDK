@@ -2,6 +2,7 @@
 #include "DisplayRenderer.h"
 #include "StreamManager.h"
 #include "../Base/CommonDef.h"
+#include "../Decoder/Decoder.h"
 
 #include "decodersdk/decoder_sdk_def.h"
 #include "decodersdk/frame.h"
@@ -89,11 +90,15 @@ void registerVideoMetaType()
         "std::shared_ptr<decoder_sdk::EventArgs>");
     qRegisterMetaType<decoder_sdk::EventType>("decoder_sdk::EventType");
     qRegisterMetaType<decoder_sdk::LoopMode>("decoder_sdk::LoopMode");
+    qRegisterMetaType<decoder_sdk::MediaType>("decoder_sdk::MediaType");
+    qRegisterMetaType<decoder_sdk::StreamStaticsInfo>("decoder_sdk::StreamStaticsInfo");
 
     qRegisterMetaType<Stream::VideoProcessParam>("Stream::VideoProcessParam");
     qRegisterMetaType<Stream::VideoFrameParam>("Stream::VideoFrameParam");
     qRegisterMetaType<Stream::ClockSourceType>("Stream::ClockSourceType");
     qRegisterMetaType<Stream::PlaybackSyncOptions>("Stream::PlaybackSyncOptions");
+
+    qRegisterMetaType<DecodeWorker::Task>("DecodeWorker::Task");
 
     qRegisterMetaType<std::weak_ptr<DisplayRenderer>>("std::weak_ptr<DisplayRenderer>");
 }

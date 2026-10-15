@@ -48,12 +48,14 @@
 #include <QThread>
 #include <QTimer>
 
+#include <algorithm>
 #include <memory>
 
 namespace {
-// bc6df5c5cc4e48c49232c3e6a1c52738
-constexpr std::array<uint8_t, 16> kClippingStitchUuidBinary = {
-    0xBC, 0x6D, 0xF5, 0xC5, 0xCC, 0x4E, 0x48, 0xC4, 0x92, 0x32, 0xC3, 0xE6, 0xA1, 0xC5, 0x27, 0x38};
+    // 无帧且无需等待时间点时，不再安排定时器，等待 frameAvailable 事件唤醒。
+    constexpr int kNoScheduleRequired = -1;
+    // 已处理帧或丢弃帧后，应立即进入下一轮取帧。
+    constexpr int kScheduleImmediately = 0;
 } // namespace
 
 #pragma region Renderer
@@ -146,6 +148,10 @@ private slots:
      * @brief 尝试取出一帧进行渲染
      */
     void tryRenderFrame();
+    /**
+     * @brief 解码队列有新帧时唤醒渲染调度
+     */
+    void onFrameAvailable();
 
 private:
     /**
@@ -212,17 +218,23 @@ private:
      * @brief 安排下一次渲染任务
      * @param delayMs 延迟毫秒数
      */
-    void scheduleNextRender(int delayMs = 0);
+    void scheduleNextRender(int delayMs);
     /**
      * @brief 尝试处理音频输出
-     * @return 是否成功处理
+     * @return kScheduleImmediately 表示已处理；>0 表示建议等待毫秒数；
+     *         kNoScheduleRequired 表示无需安排定时器，等待帧事件唤醒
      */
-    bool tryProcessAudio();
+    int tryProcessAudio();
     /**
      * @brief 尝试处理视频渲染
-     * @return 是否成功处理
+     * @return kScheduleImmediately 表示已处理；>0 表示建议等待毫秒数；
+     *         kNoScheduleRequired 表示无需安排定时器，等待帧事件唤醒
      */
-    bool tryProcessVideo();
+    int tryProcessVideo();
+    /**
+     * @brief 请求安排一次渲染调度，带跨线程 coalescing
+     */
+    void requestWake();
 
 private:
     // 渲染表面
@@ -235,8 +247,10 @@ private:
 
     // 是否启动渲染
     std::atomic_bool isStarted_;
-    // 循环取帧时的，空闲避退定时器
+    // 单次事件调度定时器；仅用于明确 deadline，不再做固定高频空转
     QTimer *backoffTimer_ = nullptr;
+    // 立即调度是否已排队，避免事件/定时器重复唤醒
+    std::atomic_bool wakePending_{false};
 
     // 视频部分
     // 视频渲染器
@@ -258,6 +272,8 @@ private:
     // 音频部分
     // 音频渲染器
     std::unique_ptr<AudioRender> audioRender_;
+    // 期望音量，音频渲染器懒加载或重建后应用
+    std::atomic<qreal> volume_{1.0};
     // 音频参数缓存，用于判断是否需要重新初始化
     int audioSampleRate_ = 0;
     int audioChannels_ = 0;
@@ -268,7 +284,9 @@ private:
 };
 
 Renderer::Renderer(QSurface *surface, QOpenGLContext *context, QObject *parent)
-    : QObject(parent), surface_(surface), isStarted_(false)
+    : QObject(parent)
+    , surface_(surface)
+    , isStarted_(false)
 {
     // 外部已保证context是有效值
     context_ = new QOpenGLContext(this);
@@ -305,7 +323,17 @@ Renderer::~Renderer()
 
 void Renderer::setDecoder(QPointer<IDecodeWorker> decoder)
 {
+    if (decoder_) {
+        disconnect(decoder_.data(), &IDecodeWorker::frameAvailable, this,
+                   &Renderer::onFrameAvailable);
+    }
+
     decoder_ = decoder;
+
+    if (decoder_) {
+        connect(decoder_.data(), &IDecodeWorker::frameAvailable, this,
+                &Renderer::onFrameAvailable, Qt::QueuedConnection);
+    }
 }
 
 void Renderer::start()
@@ -315,8 +343,8 @@ void Renderer::start()
 
     isStarted_.store(true);
 
-    // 将渲染任务加入队列，渲染资源懒加载
-    QMetaObject::invokeMethod(this, &Renderer::tryRenderFrame, Qt::QueuedConnection);
+    // 将渲染任务加入队列，渲染资源懒加载；后续无帧时改由 frameAvailable 唤醒。
+    requestWake();
 }
 
 void Renderer::stop()
@@ -329,15 +357,16 @@ void Renderer::stop()
 
 void Renderer::setVolume(qreal volume)
 {
+    volume_ = qBound(0.0, volume, 1.0);
     if (!audioRender_)
         return;
 
-    audioRender_->setVolume(volume);
+    audioRender_->setVolume(volume_.load());
 }
 
 qreal Renderer::volume() const
 {
-    return audioRender_ ? audioRender_->volume() : 0.0;
+    return audioRender_ ? audioRender_->volume() : volume_.load();
 }
 
 void Renderer::resetTimeline()
@@ -349,6 +378,8 @@ void Renderer::resetTimeline()
     if (audioRender_) {
         audioRender_->flush();
     }
+
+    requestWake();
 }
 
 void Renderer::setSpeed(double speed)
@@ -356,6 +387,8 @@ void Renderer::setSpeed(double speed)
     if (timeController_) {
         timeController_->setSpeed(speed);
     }
+
+    requestWake();
 }
 
 void Renderer::setClockSourceType(Stream::ClockSourceType type)
@@ -363,14 +396,17 @@ void Renderer::setClockSourceType(Stream::ClockSourceType type)
     if (timeController_) {
         timeController_->setClockSourceType(type);
     }
+
+    requestWake();
 }
 
 void Renderer::addDisplayRenderer(const QString &playerId)
 {
     if (displayRenderers_.containsIf([&playerId](std::shared_ptr<DisplayRenderer> renderer) {
             return renderer && renderer->id() == playerId;
-        }))
+        })) {
         return;
+    }
 
     // 确保当前context有效
     if (!ensureContextCurrent())
@@ -397,6 +433,8 @@ void Renderer::removeDisplayRenderer(const QString &playerId)
 
 void Renderer::tryRenderFrame()
 {
+    wakePending_.store(false);
+
     // 1. 检查是否已启动渲染
     if (!isStarted_.load()) {
         // 清空资源并重置时间轴
@@ -417,22 +455,36 @@ void Renderer::tryRenderFrame()
     updateAudioClockFromRenderDevice();
 
     // 4. 处理音频输出
-    bool audioProcessed = tryProcessAudio();
+    const int audioNext = tryProcessAudio();
 
     // 5. 处理视频渲染调度
-    bool videoProcessed = tryProcessVideo();
+    const int videoNext = tryProcessVideo();
 
     // 6. 安排下一轮调度
-    // 如果处理了音频或视频，则立即进入下一轮
-    // 如果都没有处理（包括视频等待中），则进行 2ms 高频轮询
-    if (audioProcessed || videoProcessed) {
+    // 如果处理了音频或视频，则立即进入下一轮；否则只按明确 deadline 定时，
+    // 无 deadline 时休眠并等待 frameAvailable/控制事件唤醒。
+    if (audioNext == kScheduleImmediately || videoNext == kScheduleImmediately) {
         scheduleNextRender(0);
-    } else if (!backoffTimer_->isActive()) {
-        scheduleNextRender(2);
+        return;
+    }
+
+    int nextWaitMs = kNoScheduleRequired;
+    if (audioNext > kNoScheduleRequired) {
+        nextWaitMs = audioNext;
+    }
+    if (videoNext > kNoScheduleRequired) {
+        nextWaitMs =
+            (nextWaitMs == kNoScheduleRequired) ? videoNext : std::min(nextWaitMs, videoNext);
+    }
+
+    if (nextWaitMs > 0) {
+        scheduleNextRender(nextWaitMs);
+    } else {
+        backoffTimer_->stop();
     }
 }
 
-bool Renderer::tryProcessAudio()
+int Renderer::tryProcessAudio()
 {
     const double frontPts = decoder_->frontPts(decoder_sdk::MediaType::kAudio);
     const int bytesFree =
@@ -445,13 +497,15 @@ bool Renderer::tryProcessAudio()
         case Stream::ScheduleAction::kRenderNow: {
             decoder_sdk::Frame audioFrame;
             if (decoder_->tryPopFrame(decoder_sdk::MediaType::kAudio, audioFrame)) {
-                return renderAudio(audioFrame);
+                renderAudio(audioFrame);
+                return kScheduleImmediately;
             }
             break;
         }
         case Stream::ScheduleAction::kWait: {
-            // 音频过早，等待
-            return false;
+            // 硬件缓冲不足时由 AudioRender::bufferDrained 唤醒；
+            // 只有音频超前于视频/外部时钟这类明确 deadline 才使用定时器。
+            return decision.waitMs > 0 ? decision.waitMs : kNoScheduleRequired;
         }
         case Stream::ScheduleAction::kDrop: {
             // 虽然音频通常不丢弃，但如果调度器决定丢弃，则弹出并忽略
@@ -459,20 +513,20 @@ bool Renderer::tryProcessAudio()
             if (decoder_->tryPopFrame(decoder_sdk::MediaType::kAudio, droppedFrame)) {
                 qDebug() << QStringLiteral("[Renderer] Audio frame dropped! PTS:")
                          << droppedFrame.secPts();
-                return true;
+                return kScheduleImmediately;
             }
             break;
         }
         case Stream::ScheduleAction::kNoClockReady: {
             // 时钟未就绪（如在视频主控模式下等待视频首帧）
-            return false;
+            return kNoScheduleRequired;
         }
     }
 
-    return false;
+    return kNoScheduleRequired;
 }
 
-bool Renderer::tryProcessVideo()
+int Renderer::tryProcessVideo()
 {
     const double frontPts = decoder_->frontPts(decoder_sdk::MediaType::kVideo);
 
@@ -487,31 +541,30 @@ bool Renderer::tryProcessVideo()
                 if (ok) {
                     timeController_->onVideoRendered(renderFrame.secPts());
                 }
-                return true;
+                return kScheduleImmediately;
             }
             break;
         }
         case Stream::ScheduleAction::kWait: {
-            // 视频超前，不进行延迟等待，直接返回 false 让主循环进入轮询
-            // 这样可以确保同线程的音频输出不会因为视频等待而断节奏
-            return false;
+            // 视频超前，按同步时钟给出的 deadline 再醒来；期间仍可用音频事件唤醒。
+            return decision.waitMs > 0 ? decision.waitMs : kNoScheduleRequired;
         }
         case Stream::ScheduleAction::kDrop: {
             decoder_sdk::Frame droppedFrame;
             if (decoder_->tryPopFrame(decoder_sdk::MediaType::kVideo, droppedFrame)) {
                 qDebug() << QStringLiteral("[Renderer] Video frame dropped! PTS:")
                          << droppedFrame.secPts();
-                return true;
+                return kScheduleImmediately;
             }
             break;
         }
         case Stream::ScheduleAction::kNoClockReady: {
             // 时钟未就绪，通常在 AudioMaster 模式下等待音频首帧
-            return false;
+            return kNoScheduleRequired;
         }
     }
 
-    return false;
+    return kNoScheduleRequired;
 }
 
 void Renderer::updateAudioClockFromRenderDevice()
@@ -524,9 +577,30 @@ void Renderer::updateAudioClockFromRenderDevice()
 void Renderer::scheduleNextRender(int delayMs)
 {
     if (delayMs <= 0) {
-        QMetaObject::invokeMethod(this, &Renderer::tryRenderFrame, Qt::QueuedConnection);
+        backoffTimer_->stop();
+        // 用原子位合并多个 push/控制唤醒，避免重复排入多个 tryRenderFrame。
+        if (!wakePending_.exchange(true)) {
+            QMetaObject::invokeMethod(this, &Renderer::tryRenderFrame, Qt::QueuedConnection);
+        }
     } else {
         backoffTimer_->start(delayMs);
+    }
+}
+
+void Renderer::onFrameAvailable()
+{
+    requestWake();
+}
+
+void Renderer::requestWake()
+{
+    if (!isStarted_.load()) {
+        return;
+    }
+
+    // 该方法可能从非渲染线程调用，因此只做原子合并和 queued invoke，不直接操作 QTimer。
+    if (!wakePending_.exchange(true)) {
+        QMetaObject::invokeMethod(this, &Renderer::tryRenderFrame, Qt::QueuedConnection);
     }
 }
 
@@ -562,10 +636,16 @@ bool Renderer::renderAudio(const decoder_sdk::Frame &audioFrame)
                         timeController_->setAudioClockBase(pts, hardwareUSecs);
                     }
                 });
+        connect(audioRender_.get(), &AudioRender::bufferDrained, this, [this]() {
+            requestWake();
+        });
         audioRender_->initialize(audioFrame);
         audioSampleRate_ = sampleRate;
         audioChannels_ = channels;
         audioSampleFormat_ = sampleFormat;
+
+        // 懒加载完成后补发之前设置的音量，避免音量设置被默认值覆盖。
+        audioRender_->setVolume(volume_.load());
 
         qDebug() << QStringLiteral("[Renderer] Initialized audio renderer - Sample Rate:")
                  << sampleRate << QStringLiteral(" Channels:") << channels
@@ -826,7 +906,10 @@ signals:
 //
 #pragma region RenderWorker
 RenderWorker::RenderWorker(QSurface *surface, const QString &key, QObject *parent)
-    : QObject(parent), helper_{new RendererHelper(this)}, surface_(surface), key_(key)
+    : QObject(parent)
+    , helper_{ new RendererHelper(this) }
+    , surface_(surface)
+    , key_(key)
 {
 }
 

@@ -22,9 +22,9 @@ void StreamTimeController::reset(bool skipResetSpeed)
         speed_ = 1.0;
     }
 
-    audioClock_ = {0.0, 0.0, 0, 0, false};
-    videoClock_ = {0.0, 0.0, 0, 0, false};
-    externalClock_ = {0.0, 0.0, 0, 0, false};
+    audioClock_ = { 0.0, 0.0, 0, 0, false };
+    videoClock_ = { 0.0, 0.0, 0, 0, false };
+    externalClock_ = { 0.0, 0.0, 0, 0, false };
 }
 
 void StreamTimeController::setClockSourceType(Stream::ClockSourceType type)
@@ -144,6 +144,10 @@ Stream::VideoScheduleDecision StreamTimeController::decideVideo(double videoPts)
     if (diff > syncOptions_.syncThresholdSec) {
         // 视频超前过多 -> 等待
         decision.action = Stream::ScheduleAction::kWait;
+        const double effectiveSpeed = std::max(speed_, 0.1);
+        decision.waitMs = std::max(
+            1, static_cast<int>(std::ceil((diff - syncOptions_.syncThresholdSec) * 1000.0 /
+                                          effectiveSpeed)));
     } else if (diff < -syncOptions_.dropThresholdSec) {
         // 视频落后过多 -> 丢弃
         decision.action = Stream::ScheduleAction::kDrop;
@@ -171,6 +175,7 @@ Stream::AudioScheduleDecision StreamTimeController::decideAudio(double audioPts,
     // 这样可以防止在 AudioMaster 模式下无脑 Pop 帧导致的数据积压或无效尝试
     if (bytesFree < 4096 && audioClock_.valid) {
         decision.action = Stream::ScheduleAction::kWait;
+        // 不设置 waitMs：音频硬件消费缓冲后通过 AudioRender::bufferDrained 唤醒。
         return decision;
     }
 
@@ -208,6 +213,10 @@ Stream::AudioScheduleDecision StreamTimeController::decideAudio(double audioPts,
 
     if (diff > kAudioAheadThreshold) {
         decision.action = Stream::ScheduleAction::kWait;
+        const double effectiveSpeed = std::max(speed_, 0.1);
+        decision.waitMs = std::max(
+            1, static_cast<int>(std::ceil((diff - kAudioAheadThreshold) * 1000.0 /
+                                          effectiveSpeed)));
     } else {
         decision.action = Stream::ScheduleAction::kRenderNow;
     }

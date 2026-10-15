@@ -106,6 +106,7 @@ struct PlaybackSyncOptions {
  */
 struct VideoScheduleDecision {
     ScheduleAction action = ScheduleAction::kNoClockReady;
+    int waitMs = 0; // kWait 时的建议等待毫秒数；非等待动作保持 0
 };
 
 /**
@@ -113,5 +114,6 @@ struct VideoScheduleDecision {
  */
 struct AudioScheduleDecision {
     ScheduleAction action = ScheduleAction::kNoClockReady;
+    int waitMs = 0; // kWait 时的建议等待毫秒数；非等待动作保持 0
 };
 } // namespace Stream

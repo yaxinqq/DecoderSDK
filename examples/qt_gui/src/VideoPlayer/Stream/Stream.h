@@ -33,6 +33,8 @@ public:
     void appendTask(DecodeWorker::Task task);
     // 打开解码器
     void open(const QString &url, const decoder_sdk::DecoderConfig &config);
+    // 请求停止任务循环，用于退出清理等场景
+    void requestStop();
 
     // 当前是否在录像
     bool isRecodering() const;
@@ -46,6 +48,10 @@ public:
     void registerPlayer(VideoPlayerImpl *player);
     // 将player和Stream解绑
     void unRegisterPlayer(VideoPlayerImpl *player);
+    // 根据稳定的player id解绑
+    void unRegisterPlayerById(const QString &playerId);
+    // 当前管线是否还绑定了指定player
+    bool hasPlayer(const QString &playerId) const;
 
     // 注册特定的事件回调函数
     bool registerEventCallback(decoder_sdk::EventType type,
@@ -72,7 +78,7 @@ signals:
     // 需要解码器异步开流
     void requestToOpenAsync(const QString &url, const decoder_sdk::DecoderConfig &config);
     // 需要解码器进行任务操作
-    void requestToDoTask(DecodeWorker::Task t);
+    void requestToDoTask(DecodeWorker::Task t, quint64 sequence);
     // 需要解码器广播流信息以及解码器信息
     void requestToBroadcastStreamAndDecoderInfo();
     // 需要解码器开始录像
@@ -146,6 +152,14 @@ private:
      */
     void setRecordingStatus(bool status);
 
+    /**
+     * @brief 尝试降级任务，如果降级成功，会修改入参
+     * 
+     * @param task 待执行的任务（IN & OUT，可能会被修改）
+     * @return 是否降级成功
+     */
+    bool tryDowngradeTask(DecodeWorker::Task &task) const;
+
 private:
     // 解码器
     QPointer<DecodeWorker> decoder_;
@@ -153,17 +167,26 @@ private:
     QPointer<RenderWorker> renderer_;
 
     // 解码器的任务队列，目前的业务场景下，只会保存最新的一条任务（如，暂停-恢复-暂停-恢复，只需要响应最后一个恢复就行）
-    QQueue<DecodeWorker::Task> tasks_;
+    struct TaskEntry {
+        DecodeWorker::Task task;
+        quint64 sequence = 0;
+    };
+    QQueue<TaskEntry> tasks_;
     // 保护锁
     std::mutex mutex_;
     // 条件变量，用于唤醒消费者（解码器）
     std::condition_variable condition_;
 
+    // 最新的已接受任务序号，decoder线程用它忽略已经过期的非阻塞任务
+    std::shared_ptr<std::atomic<quint64>> taskSequence_;
+    // 本地递增序号，只在 mutex_ 内使用
+    quint64 nextTaskSequence_ = 0;
+
     // 标志位，只能打开一次解码器
     std::atomic_bool once_ = false;
 
-    // 和这个流关联的Player，相当于智能指针的引用计数
-    QList<VideoPlayerImpl *> refPlayers_;
+    // 和这个流关联的Player，以稳定的uuid为key；QPointer防止析构后留下裸指针
+    QMap<QString, QPointer<VideoPlayerImpl>> refPlayers_;
 
     // 用来唯一标识流
     QString key_;
@@ -171,7 +194,7 @@ private:
     // 是否正在录像
     bool isRecording_ = false;
     // 是否处于将亡状态
-    bool decoderPreparingToClose_ = false;
+    std::atomic_bool decoderPreparingToClose_{ false };
 
     // 保存特定事件的回调函数
     QMap<decoder_sdk::EventType,
