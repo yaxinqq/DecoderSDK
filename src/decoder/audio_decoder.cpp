@@ -19,8 +19,9 @@ INTERNAL_NAMESPACE_BEGIN
 
 AudioDecoder::AudioDecoder(std::shared_ptr<Demuxer> demuxer,
                            std::shared_ptr<EventDispatcher> eventDispatcher,
-                           std::shared_ptr<SeekCoordinator> seekCoordinator)
-    : DecoderBase(demuxer, eventDispatcher, seekCoordinator)
+                           std::shared_ptr<SeekCoordinator> seekCoordinator,
+                           std::shared_ptr<FrameQueue> frameQueue)
+    : DecoderBase(demuxer, eventDispatcher, seekCoordinator, std::move(frameQueue))
 {
     init({});
 }

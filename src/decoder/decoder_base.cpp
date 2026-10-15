@@ -2,26 +2,24 @@
 
 #include <algorithm>
 #include <thread>
+#include <utility>
 
 #include "demuxer/demuxer.h"
 #include "event_system/event_dispatcher.h"
 #include "logger/logger.h"
 #include "utils/common_utils.h"
 
-namespace {
-constexpr int kFrameQueueDefaultSize = 3;
-} // namespace
-
 DECODER_SDK_NAMESPACE_BEGIN
 INTERNAL_NAMESPACE_BEGIN
 
 DecoderBase::DecoderBase(std::shared_ptr<Demuxer> demuxer,
                          std::shared_ptr<EventDispatcher> eventDispatcher,
-                         std::shared_ptr<SeekCoordinator> seekCoordinator)
+                         std::shared_ptr<SeekCoordinator> seekCoordinator,
+                         std::shared_ptr<FrameQueue> frameQueue)
     : demuxer_(demuxer),
       eventDispatcher_(eventDispatcher),
       seekCoordinator_(seekCoordinator),
-      frameQueue_(new FrameQueue(kFrameQueueDefaultSize, false, false))
+      frameQueue_(std::move(frameQueue))
 {
     statistics_.reset();
 }
@@ -363,8 +361,6 @@ bool DecoderBase::openInternal()
         return false;
     }
 
-    frameQueue_->init();
-
     // 发送解码器创建成功的事件
     auto event =
         std::make_shared<DecoderEventArgs>(utils::avMediaType2MediaType(type()), decoderName(),
@@ -400,9 +396,6 @@ void DecoderBase::closeInternal()
 
         avcodec_free_context(&codecCtx_);
     }
-
-    // 清空帧队列
-    frameQueue_->uninit();
 
     // 清理硬解
     removeHardwareDecode();

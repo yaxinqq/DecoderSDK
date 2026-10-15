@@ -18,6 +18,8 @@ DecoderController::DecoderController()
     : eventDispatcher_(std::make_shared<EventDispatcher>()),
       seekCoordinator_(std::make_shared<SeekCoordinator>()),
       demuxer_(std::make_shared<Demuxer>(eventDispatcher_, seekCoordinator_)),
+      videoFrameQueue_(std::make_shared<FrameQueue>(kFrameQueueDefaultSize, false, false)),
+      audioFrameQueue_(std::make_shared<FrameQueue>(kFrameQueueDefaultSize, false, false)),
       asyncOpenInProgress_(false),
       shouldCancelAsyncOpen_(false)
 {
@@ -431,14 +433,12 @@ bool DecoderController::setSpeed(double speed)
 
 std::shared_ptr<FrameQueue> DecoderController::videoQueue()
 {
-    static std::shared_ptr<FrameQueue> emptyQueue = std::make_shared<FrameQueue>(0, false);
-    return videoDecoder_ ? videoDecoder_->frameQueue() : emptyQueue;
+    return videoFrameQueue_;
 }
 
 std::shared_ptr<FrameQueue> DecoderController::audioQueue()
 {
-    static std::shared_ptr<FrameQueue> emptyQueue = std::make_shared<FrameQueue>(0, false);
-    return audioDecoder_ ? audioDecoder_->frameQueue() : emptyQueue;
+    return audioFrameQueue_;
 }
 
 double DecoderController::getVideoFrameRate() const
@@ -723,13 +723,17 @@ bool DecoderController::openInternal(const std::string &url, const DecoderConfig
 
     // 根据配置初始化解码器
     if (demuxer_->hasVideo() && config_.decodeMediaTypes.has(MediaType::kVideo)) {
-        videoDecoder_ = std::make_shared<VideoDecoder>(demuxer_, eventDispatcher_, seekCoordinator_);
+        videoDecoder_ =
+            std::make_shared<VideoDecoder>(demuxer_, eventDispatcher_, seekCoordinator_,
+                                           videoFrameQueue_);
         LOG_DEBUG("Video decoder created for: {}", url);
     }
 
     // 开启音频解码器
     if (demuxer_->hasAudio() && config_.decodeMediaTypes.has(MediaType::kAudio)) {
-        audioDecoder_ = std::make_shared<AudioDecoder>(demuxer_, eventDispatcher_, seekCoordinator_);
+        audioDecoder_ =
+            std::make_shared<AudioDecoder>(demuxer_, eventDispatcher_, seekCoordinator_,
+                                           audioFrameQueue_);
         LOG_DEBUG("Audio decoder created for: {}", url);
     }
 
@@ -784,7 +788,9 @@ bool DecoderController::startDecodeInternal()
     if (demuxer_->hasVideo() && config_.decodeMediaTypes.has(MediaType::kVideo) && videoDecoder_) {
         videoDecoder_->init(config_);
         videoDecoder_->setSpeed(config_.speed);
+        videoFrameQueue_->init();
         if (!videoDecoder_->open()) {
+            videoFrameQueue_->uninit();
             LOG_ERROR("Failed to open video decoder");
             return false;
         }
@@ -798,7 +804,9 @@ bool DecoderController::startDecodeInternal()
     if (demuxer_->hasAudio() && config_.decodeMediaTypes.has(MediaType::kAudio) && audioDecoder_) {
         audioDecoder_->init(config_);
         audioDecoder_->setSpeed(config_.speed);
+        audioFrameQueue_->init();
         if (!audioDecoder_->open()) {
+            audioFrameQueue_->uninit();
             LOG_ERROR("Failed to open audio decoder");
             return false;
         }
@@ -847,12 +855,14 @@ bool DecoderController::stopDecodeInternal()
     if (videoDecoder_) {
         videoDecoder_->stop();
         videoDecoder_->close();
+        videoFrameQueue_->uninit();
         LOG_DEBUG("Video decoder stopped and closed");
     }
 
     if (audioDecoder_) {
         audioDecoder_->stop();
         audioDecoder_->close();
+        audioFrameQueue_->uninit();
         LOG_DEBUG("Audio decoder stopped and closed");
     }
 
