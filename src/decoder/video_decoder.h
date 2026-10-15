@@ -50,13 +50,6 @@ public:
     double getFrameRate() const;
 
     /**
-     * @brief 得到解码器信息
-     *
-     * @return 解码器信息
-     */
-    std::optional<DecoderInfo> decoderInfo() const override;
-
-    /**
      * @brief 获得解码器名称
      *
      * @return 解码器名称
@@ -68,6 +61,11 @@ protected:
      * @brief 解码循环
      */
     void decodeLoop() override;
+    /**
+     * @brief 组装解码器信息快照
+     * @return 解码器信息
+     */
+    std::optional<DecoderInfo> buildDecoderInfo() const override;
     /**
      * @brief 初始化硬件加速上下文，并返回硬件加速上下文类型
      * @return 硬件加速上下文类型

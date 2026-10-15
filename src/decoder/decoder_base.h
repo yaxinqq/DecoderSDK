@@ -167,7 +167,7 @@ public:
      *
      * @return 解码器信息
      */
-    virtual std::optional<DecoderInfo> decoderInfo() const = 0;
+    virtual std::optional<DecoderInfo> decoderInfo() const;
 
     /**
      * @brief 获取解码器名称
@@ -180,6 +180,14 @@ protected:
      * @brief 解码循环
      */
     virtual void decodeLoop() = 0;
+
+    /**
+     * @brief 组装解码器信息快照
+     *
+     * 只在 handleFirstFrame 中调用，用于刷新 decoderInfoCache_。
+     * 不要在这里访问外部线程可能正在操作的锁，否则仍会形成锁等待。
+     */
+    virtual std::optional<DecoderInfo> buildDecoderInfo() const = 0;
 
     /**
      * @brief 初始化硬件加速上下文，并返回硬件加速上下文类型
@@ -256,6 +264,10 @@ protected:
     bool isOpened_ = false;    // 解码器是否已开启
     bool isStarted_ = false;   // 解码器是否开始工作
 
+    // 解码器信息缓存：首帧后由 handleFirstFrame 填充，stopInternal 后清空
+    mutable std::mutex decoderInfoMutex_;           // 只保护 decoderInfoCache_
+    std::optional<DecoderInfo> decoderInfoCache_;   // 缓存最后一次组装结果
+
     int streamIndex_ = -1;       // 流索引
     AVStream *stream_ = nullptr; // 流信息
 
@@ -306,6 +318,10 @@ private:
      * @brief 停止解码器，内部调用，不加锁
      */
     void stopInternal();
+    /**
+     * @brief 清空解码器信息缓存，内部调用，不加锁
+     */
+    void clearDecoderInfoCache();
 
     /**
      * @brief 暂停解码器，内部调用，不加锁
