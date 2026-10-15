@@ -203,6 +203,8 @@ struct StreamInfo {
     
     // 根据协议、封装格式等信息推测是否为实时流
     bool isRealtime = false;
+    // 是否开启缓冲
+    bool preBufferEnabled = false;
 };
 
 // 流统计信息（解码器生命周期内持续更新）
