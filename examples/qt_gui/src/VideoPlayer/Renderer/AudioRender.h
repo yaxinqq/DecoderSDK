@@ -1,37 +1,51 @@
 #ifndef AUDIORENDER_H
 #define AUDIORENDER_H
 
+#include "PcmPushBuffer.h"
+
+#include "decodersdk/audio_converter.h"
 #include "decodersdk/frame.h"
 
+#include <QtGlobal>
+
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+#include <QAudioDevice>
+#include <QAudioSink>
+#else
 #include <QAudioDeviceInfo>
-#include <QAudioFormat>
 #include <QAudioOutput>
-#include <QByteArray>
+#endif
+#include <QAudioFormat>
+#include <QIODevice>
 #include <QObject>
 #include <QScopedPointer>
 #include <QTimer>
+
 #include <atomic>
-#include <memory>
-#include <mutex>
-#include <queue>
+#include <vector>
 
 class AudioRender : public QObject {
     Q_OBJECT
 
 public:
     AudioRender(QObject *parent = nullptr);
-    virtual ~AudioRender();
+    ~AudioRender() override;
 
     /**
      * @brief 初始化音频渲染器
      * @param frame 音频帧，用于获取音频格式信息
      * @param deviceInfo 音频设备信息，如果为空则使用默认设备
      */
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+    void initialize(const decoder_sdk::Frame &frame,
+                    const QAudioDevice &deviceInfo = QAudioDevice());
+#else
     void initialize(const decoder_sdk::Frame &frame,
                     const QAudioDeviceInfo &deviceInfo = QAudioDeviceInfo());
+#endif
 
     /**
-     * @brief 渲染音频帧（非阻塞，立即处理）
+     * @brief 将音频帧写入 QAudioSink 的推模式缓冲区
      * @param frame 音频帧
      */
     void render(const decoder_sdk::Frame &frame);
@@ -67,6 +81,12 @@ public:
     void setVolume(qreal volume);
 
     /**
+     * @brief 设置播放倍速
+     * @param speed 播放倍速
+     */
+    void setSpeed(double speed);
+
+    /**
      * @brief 获取音量
      */
     qreal volume() const;
@@ -97,6 +117,7 @@ public:
         qint64 totalBytesRendered = 0;
         qint64 availableBytes = 0;
         qint64 droppedFrames = 0;
+        qint64 droppedBytes = 0;
     };
 
     Statistics getStatistics() const;
@@ -109,9 +130,9 @@ signals:
      */
     void firstFrameRendered(double pts, qint64 hardwareUSecs);
     /**
-     * @brief 音频硬件消费了一批缓冲后发出
+     * @brief 音频设备出现可写空间或缓冲耗尽时发出
      *
-     * 该信号只用于唤醒渲染线程重新检查 bytesFree/取音频帧，回调应保持轻量。
+     * 该信号用于唤醒渲染线程重新检查 bytesFree/取音频帧，回调应保持轻量。
      */
     void bufferDrained();
 
@@ -122,6 +143,22 @@ private slots:
     void handleStateChanged(QAudio::State newState);
 
 private:
+    /**
+     * @brief 将积压的 PCM 数据继续写入音频设备
+     */
+    void drainPendingPcm();
+
+    /**
+     * @brief 启动音频设备并更新播放状态
+     * @return 是否启动成功
+     */
+    bool startAudioOutput();
+
+    /**
+     * @brief 根据实际写入结果更新统计信息
+     */
+    void updateStatistics(const PcmPushBuffer::WriteResult &result);
+
     /**
      * @brief 初始化音频格式
      * @param frame 音频帧
@@ -134,7 +171,11 @@ private:
      * @param deviceInfo 设备信息
      * @return 是否成功
      */
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+    bool initAudioOutput(const QAudioDevice &deviceInfo);
+#else
     bool initAudioOutput(const QAudioDeviceInfo &deviceInfo);
+#endif
 
     /**
      * @brief 应用音量控制
@@ -152,25 +193,40 @@ private:
     int getChannelCount(const decoder_sdk::Frame &frame);
 
     /**
-     * @brief 将数据写入音频设备
-     * @param data 音频数据
-     * @param size 数据大小
-     * @return 实际写入的字节数
+     * @brief 将 PCM 写入 QAudioSink 内部设备
+     * @param data PCM 数据
+     * @param size 数据长度
      */
-    qint64 writeToDevice(const char *data, qint64 size);
+    void writeToAudioDevice(const char *data, qint64 size);
 
 private:
     // 音频输出相关
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+    QScopedPointer<QAudioSink> audioOutput_;
+#else
     QScopedPointer<QAudioOutput> audioOutput_;
+#endif
     QIODevice *audioDevice_ = nullptr;
+    PcmPushBuffer pendingPcm_;
+    QTimer pushTimer_;
     QAudioFormat audioFormat_;
+    decoder_sdk::AudioConverter audioConverter_;
+    decoder_sdk::AudioSampleFormat outputSampleFormat_ = decoder_sdk::AudioSampleFormat::kUnknown;
+    std::vector<uint8_t> convertedPcm_;
+    int convertedSampleCount_ = 0;
+
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+    QAudioDevice audioDeviceInfo_;
+#else
     QAudioDeviceInfo audioDeviceInfo_;
+#endif
 
     // 状态控制
     std::atomic<bool> initialized_;
     std::atomic<bool> playing_;
     std::atomic<bool> isFirstFrame_{ true };
     std::atomic<qreal> volume_;
+    std::atomic<double> speed_{ 1.0 };
 
     // 音频格式信息
     int sampleRate_ = 44100;
@@ -182,10 +238,8 @@ private:
     std::atomic<qint64> totalFramesRendered_{ 0 };
     std::atomic<qint64> totalBytesRendered_{ 0 };
     std::atomic<qint64> droppedFrames_{ 0 };
+    std::atomic<qint64> droppedBytes_{ 0 };
 
-    // 残余数据缓冲区，处理部分写入问题
-    QByteArray residualBuffer_;
-    std::mutex bufferMutex_;
 };
 
 #endif // AUDIORENDER_H

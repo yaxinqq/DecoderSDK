@@ -25,11 +25,15 @@ static std::atomic_int g_decodingDecoder = 0;
 namespace {
     // 当前进程内全部 StreamPipeline 共用的 ID 源，只用于运行时实例识别。
     std::atomic<quint64> g_nextPipelineId{ 1 };
+    // 是否允许按顺序呈现视频帧（true - 按pts有序呈现，可能会有延迟；false - 只呈现最新帧，几乎零延迟）
+    constexpr bool kEnableOrderedVideoPresentation = false;
 
     Stream::ClockSourceType determineClockSource(const decoder_sdk::StreamInfo &info)
     {
-        if (info.isRealtime) {
-            return Stream::ClockSourceType::kNone;
+        if (info.isRealtime && !info.preBufferEnabled) {
+            return kEnableOrderedVideoPresentation
+                       ? Stream::ClockSourceType::kExternalMaster
+                       : Stream::ClockSourceType::kNone;
         }
 
         if (info.audioInfo) {
@@ -410,7 +414,6 @@ void StreamPipeline::initDecoder(const QString &key)
     connect(this, &StreamPipeline::requestToStopRecording, decoder_,
             &DecodeWorker::stopRecording);
     connect(this, &StreamPipeline::requestToSeek, decoder_, &DecodeWorker::seek);
-    connect(this, &StreamPipeline::requestToSetSpeed, decoder_, &DecodeWorker::setSpeed);
     connect(this, &StreamPipeline::requestToSetLoopMode, decoder_, &DecodeWorker::setLoopMode);
     connect(this, &StreamPipeline::requestToResetLoopCount, decoder_, &DecodeWorker::resetLoopCount);
     connect(this, &StreamPipeline::requestToOpenAsync, decoder_, &DecodeWorker::openAsync);

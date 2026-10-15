@@ -274,6 +274,8 @@ private:
     std::unique_ptr<AudioRender> audioRender_;
     // 期望音量，音频渲染器懒加载或重建后应用
     std::atomic<qreal> volume_{1.0};
+    // 当前播放倍速
+    std::atomic<double> speed_{1.0};
     // 音频参数缓存，用于判断是否需要重新初始化
     int audioSampleRate_ = 0;
     int audioChannels_ = 0;
@@ -384,8 +386,14 @@ void Renderer::resetTimeline()
 
 void Renderer::setSpeed(double speed)
 {
+    speed_.store(speed);
+
     if (timeController_) {
         timeController_->setSpeed(speed);
+    }
+
+    if (audioRender_) {
+        audioRender_->setSpeed(speed);
     }
 
     requestWake();
@@ -503,8 +511,7 @@ int Renderer::tryProcessAudio()
             break;
         }
         case Stream::ScheduleAction::kWait: {
-            // 硬件缓冲不足时由 AudioRender::bufferDrained 唤醒；
-            // 只有音频超前于视频/外部时钟这类明确 deadline 才使用定时器。
+            // 推模式由 AudioRender 定时检查空闲空间并发信号，无需在这里周期轮询。
             return decision.waitMs > 0 ? decision.waitMs : kNoScheduleRequired;
         }
         case Stream::ScheduleAction::kDrop: {
@@ -640,6 +647,7 @@ bool Renderer::renderAudio(const decoder_sdk::Frame &audioFrame)
             requestWake();
         });
         audioRender_->initialize(audioFrame);
+        audioRender_->setSpeed(speed_.load());
         audioSampleRate_ = sampleRate;
         audioChannels_ = channels;
         audioSampleFormat_ = sampleFormat;

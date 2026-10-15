@@ -548,7 +548,6 @@ void StreamManager::initDefaultDecoderConfig()
     defaultDecoderConfig_.maxReconnectAttempts = -1;
     defaultDecoderConfig_.reconnectIntervalMs = 3000;
     defaultDecoderConfig_.preBufferConfig.enablePreBuffer = false;
-    defaultDecoderConfig_.audioInterleaved = true;
     defaultDecoderConfig_.enableJitterDetector = false;
 
     defaultDecoderConfig_.createHwContextCallback =

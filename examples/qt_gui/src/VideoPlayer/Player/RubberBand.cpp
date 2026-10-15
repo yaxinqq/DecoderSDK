@@ -7,7 +7,7 @@
 namespace {
     const QColor kColor = Qt::red;
     const int kPenWidth = 4;
-    const double kBrushAlpha = 0.05;
+    const float kBrushAlpha = 0.05f;
 }
 
 #pragma region RubberBand
