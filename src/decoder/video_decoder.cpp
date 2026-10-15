@@ -299,6 +299,15 @@ std::vector<uint8_t> removeEPB(const uint8_t *data, size_t size)
 }
 
 /**
+ * @brief 判断NALU是否为SEI类型
+ * @param nal NALU数据
+ * @param nalSize NALU大小
+ * @param codecIsHevc 是否为HEVC编码
+ * @return true 如果是SEI类型，false 否则
+ */
+bool nalIsSeiType(const uint8_t *nal, size_t nalSize, bool codecIsHevc);
+
+/**
  * @brief 解析单个NALU中的SEI数据
  * @param nal NALU数据
  * @param nalSize NALU大小
@@ -317,30 +326,12 @@ void appendSeiFromNal(const uint8_t *nal, size_t nalSize, bool codecIsHevc,
     if (nalSize == 0)
         return;
 
-    // NAL 类型，先置无效值
-    int nalUnitType = -1;
-    // 默认按 H.264 头部长度 1 字节
-    size_t headerSize = 1;
+    // 先按 NAL header 快速判断是否 SEI，避免对普通 NAL 做 RBSP 处理
+    if (!nalIsSeiType(nal, nalSize, codecIsHevc))
+        return;
 
-    // H.264 分支
-    if (!codecIsHevc) {
-        // H.264 NAL type 位于低 5 位
-        nalUnitType = nal[0] & 0x1F;
-        // 仅处理 SEI(type=6)
-        if (nalUnitType != 6)
-            return;
-    } else {
-        // HEVC 头部至少 2 字节
-        if (nalSize < 2)
-            return;
-        // HEVC NAL type 为 6 位
-        nalUnitType = (nal[0] >> 1) & 0x3F;
-        // 仅处理 prefix SEI(type=39) 或 suffix SEI(type=40)
-        if (nalUnitType != 39 && nalUnitType != 40)
-            return;
-        // HEVC NAL 头部长度为 2 字节
-        headerSize = 2;
-    }
+    // H.264/HEVC 的 SEI payload 起始位置
+    size_t headerSize = codecIsHevc ? 2 : 1;
 
     // 去除 NAL 负载中的 EPB（Emulation Prevention Bytes: 00 00 03），得到 RBSP
     auto rbsp = removeEPB(nal + headerSize, nalSize - headerSize);
@@ -403,6 +394,25 @@ void appendSeiFromNal(const uint8_t *nal, size_t nalSize, bool codecIsHevc,
     }
 }
 
+bool nalIsSeiType(const uint8_t *nal, size_t nalSize, bool codecIsHevc)
+{
+    if (!nal || nalSize == 0)
+        return false;
+
+    if (!codecIsHevc) {
+        // H.264 NAL type 位于低 5 位，SEI type 为 6
+        return (nal[0] & 0x1F) == 6;
+    }
+
+    // HEVC NAL header 至少 2 字节，NAL type 为 6 位
+    if (nalSize < 2)
+        return false;
+
+    const int nalUnitType = (nal[0] >> 1) & 0x3F;
+    // prefix SEI(type=39) 或 suffix SEI(type=40)
+    return nalUnitType == 39 || nalUnitType == 40;
+}
+
 /**
  * @brief 解析数据包中的SEI信息
  * @param packet 数据包
@@ -414,6 +424,7 @@ void appendSeiFromNal(const uint8_t *nal, size_t nalSize, bool codecIsHevc,
  * 2. 按照H.264/H.265标准解析NAL单元中的SEI消息
  * 3. 正确处理payloadType和payloadSize的可变长编码（0xFF累加机制）
  * 4. 移除Emulation Prevention Bytes（EPB）恢复RBSP数据
+ * 5. 单次遍历中先按NAL header过滤SEI，普通NAL不进入payload解析
  */
 std::vector<UserSEIData> parseSEIFromPacket(const Packet &packet, bool codecIsHevc)
 {
@@ -983,9 +994,10 @@ void VideoDecoder::decodeLoop()
                 break; // 队列满了，退出
             }
 
-            // 解析数据包中的SEI信息，仅支持H264、H265
+            // 解析数据包中的SEI信息，仅支持H264、H265，可根据需要让每一帧都去解析SEI，这里暂时还是只在关键帧解析SEI
             std::vector<UserSEIData> seiDataList;
             if (enableParseUserSEIData_ && isKeyFrame &&
+            //if (enableParseUserSEIData_ &&
                 (codecId == AV_CODEC_ID_H264 || codecId == AV_CODEC_ID_H265)) {
                 seiDataList = parseSEIFromPacket(packet, codecId == AV_CODEC_ID_H265);
                 LOG_TRACE("Found {} SEI data entries in packet", seiDataList.size());
