@@ -8,7 +8,10 @@
 #include <cstring>
 
 AudioRender::AudioRender(QObject *parent)
-    : QObject(parent), initialized_(false), playing_(false), volume_(1.0)
+    : QObject(parent)
+    , initialized_(false)
+    , playing_(false)
+    , volume_(1.0)
 {
 }
 
@@ -21,7 +24,8 @@ AudioRender::~AudioRender()
     }
 }
 
-void AudioRender::initialize(const decoder_sdk::Frame &frame, const QAudioDeviceInfo &deviceInfo)
+void AudioRender::initialize(const decoder_sdk::Frame &frame,
+                             const QAudioDeviceInfo &deviceInfo)
 {
     if (initialized_.load() || !frame.isValid()) {
         return;
@@ -84,7 +88,11 @@ void AudioRender::render(const decoder_sdk::Frame &frame)
     }
 
     // 3. 将新数据追加到残余缓冲区并统一尝试写入
+    const int previousSize = residualBuffer_.size();
     residualBuffer_.append(reinterpret_cast<const char *>(audioData), dataSize);
+
+    // 只对新追加的 PCM 数据应用音量，避免残余数据在后续轮次被重复缩放。
+    applyVolume(residualBuffer_.data() + previousSize, dataSize, volume_.load());
 
     qint64 written = writeToDevice(residualBuffer_.constData(), residualBuffer_.size());
     if (written > 0) {
@@ -345,6 +353,7 @@ bool AudioRender::initAudioOutput(const QAudioDeviceInfo &deviceInfo)
     // 连接信号
     connect(audioOutput_.data(), &QAudioOutput::stateChanged, this,
             &AudioRender::handleStateChanged);
+    connect(audioOutput_.data(), &QAudioOutput::notify, this, &AudioRender::bufferDrained);
 
     qDebug() << QStringLiteral("[AudioRender] Audio output initialized");
     return true;

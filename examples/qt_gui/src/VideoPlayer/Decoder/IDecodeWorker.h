@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include "decodersdk/common_define.h"
 #include "decodersdk/frame.h"
 #include <QObject>
@@ -47,4 +47,15 @@ public:
      * @return 队首帧的PTS，如果队列为空返回0.0
      */
     virtual double frontPts(decoder_sdk::MediaType type) = 0;
+
+signals:
+    /**
+     * @brief 解码队列由空变为非空时发出
+     *
+     * 该信号由 FrameQueue 的轻量回调解发，只用于唤醒消费方/渲染线程继续取帧。
+     * 消费方回调不得执行锁等待、I/O、网络、OpenGL/解码等长时间阻塞操作。
+     *
+     * @param mediaType 入队的媒体类型
+     */
+    void frameAvailable(decoder_sdk::MediaType mediaType);
 };

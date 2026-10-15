@@ -279,9 +279,6 @@ void VideoPlayer::paintEvent(QPaintEvent *e)
 {
     QPainter painter(this);
     const auto wgtRect = rect();
-    if (playerState() != Stream::PlayerState::Playing) {
-        impl_->clearByPainter(&painter, wgtRect);
-    }
 
     if (!needToRender_.load()) {
         impl_->paintCommon(&painter, wgtRect);

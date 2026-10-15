@@ -1,4 +1,4 @@
-#include "Stream.h"
+﻿#include "Stream.h"
 #include "../Player/VideoPlayerImpl.h"
 #include "InternalUtils.h"
 #include "../Base/CommonDef.h"
@@ -23,22 +23,22 @@ static std::atomic_int g_decodingDecoder = 0;
 #endif
 
 namespace {
-Stream::ClockSourceType determineClockSource(const decoder_sdk::StreamInfo &info)
-{
-    if (info.isRealtime) {
+    Stream::ClockSourceType determineClockSource(const decoder_sdk::StreamInfo &info)
+    {
+        if (info.isRealtime) {
+            return Stream::ClockSourceType::kNone;
+        }
+
+        if (info.audioInfo) {
+            return Stream::ClockSourceType::kAudioMaster;
+        }
+
+        if (info.videoInfo) {
+            return Stream::ClockSourceType::kExternalMaster;
+        }
+
         return Stream::ClockSourceType::kNone;
     }
-
-    if (info.audioInfo) {
-        return Stream::ClockSourceType::kAudioMaster;
-    }
-
-    if (info.videoInfo) {
-        return Stream::ClockSourceType::kExternalMaster;
-    }
-
-    return Stream::ClockSourceType::kNone;
-}
 } // namespace
 
 #pragma region StreamPipeline
@@ -59,10 +59,7 @@ StreamPipeline::StreamPipeline(const QString &key, QObject *parent /*= nullptr*/
 StreamPipeline::~StreamPipeline()
 {
     if (isRunning()) {
-        requestInterruption();
-        condition_.notify_all(); // 防止run循环中还有休眠的条件变量，这里唤醒全部
-        quit();
-
+        requestStop();
         wait();
     }
 
@@ -89,29 +86,47 @@ void StreamPipeline::appendTask(DecodeWorker::Task task)
 {
     std::lock_guard l(mutex_);
 
-    // 判断任务是否需要执行，不需要执行，则直接返回
-    if (!shouldExecuteTask(task))
-        return;
-
-    // 获得队列中的第一个任务，如果是关闭，则此时不应该再接受其它任务
-    if (!tasks_.isEmpty() && tasks_.front() == DecodeWorker::Task::kClose) {
-        // 唤醒消费者
-        condition_.notify_one();
-        // 返回
+    // 已接受终态 kClose 后不再接受新任务，避免向正在关闭的管线继续投递。
+    if (decoderPreparingToClose_.load()) {
         return;
     }
 
+    // 判断任务是否需要执行，不需要执行，则判断能否降级
+    // 如果不需要执行，也不能降级，则直接返回
+    if (!shouldExecuteTask(task)) {
+        // 原始任务
+        const auto originTask = task;
+        if (!tryDowngradeTask(task)) {
+            return;
+        }
+        // 降级任务成功，输出日志
+        qDebug() << QStringLiteral("[StreamPipeline] Stream: %1 downgrade the task! Origin Task: %2, Downgrade Task: %3")
+                        .arg(key_)
+                        .arg(static_cast<int>(originTask))
+                        .arg(static_cast<int>(task));
+    }
+        
+
     // 清空之前的任务，只保留最新的
+    const quint64 sequence = ++nextTaskSequence_;
+    taskSequence_->store(sequence);
     tasks_.clear();
-    tasks_.append(task);
+    tasks_.append(TaskEntry{ task, sequence });
 
     // 如果当前的任务是关闭，则通知外部
     if (task == DecodeWorker::Task::kClose) {
-        decoderPreparingToClose_ = true;
+        decoderPreparingToClose_.store(true);
     }
 
     // 唤醒消费者
     condition_.notify_one();
+}
+
+void StreamPipeline::requestStop()
+{
+    requestInterruption();
+    condition_.notify_all();
+    quit();
 }
 
 void StreamPipeline::open(const QString &url, const decoder_sdk::DecoderConfig &config)
@@ -135,7 +150,7 @@ bool StreamPipeline::isRecodering() const
 
 bool StreamPipeline::decoderPreparingToClose() const
 {
-    return decoderPreparingToClose_;
+    return decoderPreparingToClose_.load();
 }
 
 QString StreamPipeline::key() const
@@ -145,7 +160,13 @@ QString StreamPipeline::key() const
 
 void StreamPipeline::registerPlayer(VideoPlayerImpl *player)
 {
-    if (!player || refPlayers_.contains(player) || decoder_.isNull() || renderer_.isNull())
+    if (!player)
+        return;
+
+    const QString playerId = player->id();
+    const QPointer<VideoPlayerImpl> playerRef(player);
+    if (playerId.isEmpty() || refPlayers_.contains(playerId) || decoder_.isNull() ||
+        renderer_.isNull())
         return;
 
     connect(this, &StreamPipeline::eventUpdated, player, &VideoPlayerImpl::onDecoderEventChanged,
@@ -167,33 +188,56 @@ void StreamPipeline::registerPlayer(VideoPlayerImpl *player)
             Qt::UniqueConnection);
 
     // 创建player对应的displayRenderer
-    renderer_->addDisplayRenderer(player->id());
+    renderer_->addDisplayRenderer(playerId);
 
-    refPlayers_ << player;
+    refPlayers_.insert(playerId, playerRef);
 }
 
 void StreamPipeline::unRegisterPlayer(VideoPlayerImpl *player)
 {
-    if (!player || !refPlayers_.contains(player) || decoder_.isNull() || renderer_.isNull())
+    if (!player)
         return;
 
-    // 销毁player对应的displayRenderer
-    renderer_->removeDisplayRenderer(player->id());
+    unRegisterPlayerById(player->id());
+}
 
-    disconnect(this, &StreamPipeline::eventUpdated, player,
-               &VideoPlayerImpl::onDecoderEventChanged);
-    disconnect(this, &StreamPipeline::streamInfoUpdated, player,
-               &VideoPlayerImpl::onStreamInfoUpdated);
-    disconnect(this, &StreamPipeline::streamStaticsInfoUpdated, player,
-               &VideoPlayerImpl::onStreamStaticsInfoUpdated);
-    disconnect(this, &StreamPipeline::decoderInfoUpdated, player,
-               &VideoPlayerImpl::onDecoderInfoUpdated);
+void StreamPipeline::unRegisterPlayerById(const QString &playerId)
+{
+    const auto playerIt = refPlayers_.find(playerId);
+    if (playerIt == refPlayers_.end())
+        return;
 
-    disconnect(this, &StreamPipeline::renderNameChanged, player, &VideoPlayerImpl::onRendererNameChanged);
-    disconnect(this, &StreamPipeline::textureReady, player, &VideoPlayerImpl::onTextureReady);
-    disconnect(this, &StreamPipeline::displayRendererReady, player, &VideoPlayerImpl::onDisplayRendererReady);
-    disconnect(this, &StreamPipeline::displayRendererAboutToDestroy, player, &VideoPlayerImpl::onDisplayRendererAboutToDestroy);
-    refPlayers_.removeOne(player);
+    VideoPlayerImpl *player = playerIt.value();
+
+    if (renderer_) {
+        renderer_->removeDisplayRenderer(playerId);
+    }
+
+    if (player) {
+        disconnect(this, &StreamPipeline::eventUpdated, player,
+                   &VideoPlayerImpl::onDecoderEventChanged);
+        disconnect(this, &StreamPipeline::streamInfoUpdated, player,
+                   &VideoPlayerImpl::onStreamInfoUpdated);
+        disconnect(this, &StreamPipeline::streamStaticsInfoUpdated, player,
+                   &VideoPlayerImpl::onStreamStaticsInfoUpdated);
+        disconnect(this, &StreamPipeline::decoderInfoUpdated, player,
+                   &VideoPlayerImpl::onDecoderInfoUpdated);
+
+        disconnect(this, &StreamPipeline::renderNameChanged, player,
+                   &VideoPlayerImpl::onRendererNameChanged);
+        disconnect(this, &StreamPipeline::textureReady, player, &VideoPlayerImpl::onTextureReady);
+        disconnect(this, &StreamPipeline::displayRendererReady, player,
+                   &VideoPlayerImpl::onDisplayRendererReady);
+        disconnect(this, &StreamPipeline::displayRendererAboutToDestroy, player,
+                   &VideoPlayerImpl::onDisplayRendererAboutToDestroy);
+    }
+
+    refPlayers_.erase(playerIt);
+}
+
+bool StreamPipeline::hasPlayer(const QString &playerId) const
+{
+    return refPlayers_.contains(playerId);
 }
 
 bool StreamPipeline::registerEventCallback(decoder_sdk::EventType type,
@@ -206,7 +250,7 @@ bool StreamPipeline::registerEventCallback(decoder_sdk::EventType type,
     }
 
     eventCallbackMap_[type].append(std::move(cb));
-    return true; 
+    return true;
 }
 
 void StreamPipeline::run()
@@ -220,10 +264,15 @@ void StreamPipeline::run()
         if (isInterruptionRequested() && tasks_.isEmpty())
             break;
 
-        const auto t = tasks_.takeFirst();
-        l.unlock(); 
+        const auto taskEntry = tasks_.takeFirst();
+        l.unlock();
 
-        emit requestToDoTask(t);
+        emit requestToDoTask(taskEntry.task, taskEntry.sequence);
+
+        // kClose 是终态任务，投递后不再继续消费任务。
+        if (taskEntry.task == DecodeWorker::Task::kClose) {
+            break;
+        }
     }
 }
 
@@ -324,6 +373,7 @@ void StreamPipeline::initDecoder(const QString &key)
 {
     // 创建解码器
     decoder_ = new DecodeWorker(key);
+    taskSequence_ = decoder_->taskSequenceSource();
 
     // ============== Worker => Decoder的信号 ============== //
     connect(this, &StreamPipeline::requestToStartRecoding, decoder_,
@@ -336,7 +386,8 @@ void StreamPipeline::initDecoder(const QString &key)
     connect(this, &StreamPipeline::requestToResetLoopCount, decoder_, &DecodeWorker::resetLoopCount);
     connect(this, &StreamPipeline::requestToOpenAsync, decoder_, &DecodeWorker::openAsync);
     connect(this, &StreamPipeline::requestToBroadcastStreamAndDecoderInfo, decoder_, &DecodeWorker::broadcastStreamAndDecoderInfo);
-    connect(this, &StreamPipeline::requestToDoTask, decoder_, &DecodeWorker::doTask, Qt::BlockingQueuedConnection);
+    connect(this, &StreamPipeline::requestToDoTask, decoder_, &DecodeWorker::doTask,
+            Qt::QueuedConnection);
     // ===================================================== //
 
     // ============== Decoder => Worker的信号 ============== //
@@ -383,7 +434,11 @@ bool StreamPipeline::shouldExecuteTask(DecodeWorker::Task task) const
     switch (task) {
         case DecodeWorker::Task::kPause:
             // 如果有正在播放、或即将播放的关联播放器，则不应该处理暂停命令
-            for (auto *const player : refPlayers_) {
+            for (const auto &playerRef : refPlayers_.values()) {
+                VideoPlayerImpl *const player = playerRef;
+                if (!player)
+                    continue;
+
                 if (player->playerState() == Stream::PlayerState::Playing ||
                     player->playerState() == Stream::PlayerState::Resume) {
                     return false;
@@ -403,6 +458,30 @@ bool StreamPipeline::shouldExecuteTask(DecodeWorker::Task task) const
     }
 
     return false;
+}
+
+bool StreamPipeline::tryDowngradeTask(DecodeWorker::Task &task) const
+{
+    // 当前只支持kClose降级执行kPause
+    if (task != DecodeWorker::Task::kClose)
+        return false;
+
+    // kClose降级是因为，当有窗口关闭时，
+    // 需要查看当前剩余的和Decoder绑定的players的播放情况
+    // 如果都不是播放状态，则可以将Decoder暂停，避免浪费资源
+    for (const auto &playerRef : refPlayers_.values()) {
+        VideoPlayerImpl *const player = playerRef;
+        if (!player)
+            continue;
+
+        if (player->playerState() != Stream::PlayerState::Pause &&
+            player->playerState() != Stream::PlayerState::Stop) {
+            return false;
+        }
+    }
+
+    task = DecodeWorker::Task::kPause;
+    return true;
 }
 
 #pragma endregion

@@ -157,7 +157,7 @@ bool Nv12Render_Cuda::initInteropsResource(const decoder_sdk::Frame &frame)
         return false;
     }
 
-    if (!ck(cuda_utils::cuStreamCreate(&copyStream_, 1))) {
+    if (!ck(cuda_utils::cuStreamCreate(&copyStream_, 0))) {
         cleanupCudaResource();
         return false;
     }

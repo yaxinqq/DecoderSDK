@@ -19,12 +19,20 @@ QString StreamManager::openStream(VideoPlayerImpl *player, QString url,
                                   Stream::OpenMode openMode,
                                   const std::optional<decoder_sdk::DecoderConfig> &customConfig)
 {
+    if (!player)
+        return {};
+
     // 获得或创建一个解码器，并获得它的key
     QString key;
     StreamPipeline *worker = getOrCreatePipeline(url, openMode, key);
 
     // 保存player和decoder之间的映射
-    mapPipelineByPlayer_.insert(player, worker);
+    const QString playerId = player->id();
+    mapPipelineByPlayer_.insert(playerId, worker);
+
+    // player 未显式 close 就析构时，由稳定uuid统一解绑并清理映射。
+    connect(player, &VideoPlayerImpl::aboutToDestroyed, this,
+            &StreamManager::onPlayerAboutToDestroyed, Qt::UniqueConnection);
 
     // 向decoder中绑定player
     worker->registerPlayer(player);
@@ -38,23 +46,30 @@ QString StreamManager::openStream(VideoPlayerImpl *player, QString url,
 
 StreamPipeline *StreamManager::pipelineByPlayer(VideoPlayerImpl *player)
 {
-    return mapPipelineByPlayer_.value(player, nullptr);
+    return player ? mapPipelineByPlayer_.value(player->id(), nullptr) : nullptr;
 }
 
 bool StreamManager::closeStream(VideoPlayerImpl *player)
 {
+    if (!player)
+        return false;
+
     // 获得player对应的decoder
     StreamPipeline *const worker = pipelineByPlayer(player);
     if (!worker)
         return false; // 没有对应的解码器，返回false
 
+    const QString playerId = player->id();
+
     // 解绑player和decoder
-    worker->unRegisterPlayer(player);
+    worker->unRegisterPlayerById(playerId);
 
     // 断开所有信号
     disconnect(worker, nullptr, player, nullptr);
+    disconnect(player, &VideoPlayerImpl::aboutToDestroyed, this,
+               &StreamManager::onPlayerAboutToDestroyed);
     // 清空当前的缓存
-    mapPipelineByPlayer_.remove(player);
+    mapPipelineByPlayer_.remove(playerId);
 
     // 向decoder发送关闭的任务
     worker->appendTask(DecodeWorker::Task::kClose);
@@ -190,6 +205,8 @@ bool StreamManager::switchStream(const QString &key, VideoPlayerImpl *player)
     if (!player)
         return false;
 
+    const QString playerId = player->id();
+
     // 获得key对应的新decoder
     StreamPipeline *const newWorker = mapPipelineByKey_.value(key);
     if (!newWorker)
@@ -203,16 +220,16 @@ bool StreamManager::switchStream(const QString &key, VideoPlayerImpl *player)
         oldWorker->appendTask(DecodeWorker::Task::kPause);
 
         // 解绑player和decoder
-        oldWorker->unRegisterPlayer(player);
+        oldWorker->unRegisterPlayerById(playerId);
 
         // 断开所有信号
         disconnect(oldWorker, nullptr, player, nullptr);
         // 清空当前的缓存
-        mapPipelineByPlayer_.remove(player);
+        mapPipelineByPlayer_.remove(playerId);
     }
 
     // 绑定player和newWorker
-    mapPipelineByPlayer_.insert(player, newWorker);
+    mapPipelineByPlayer_.insert(playerId, newWorker);
 
     // 向decoder中绑定player
     newWorker->registerPlayer(player);
@@ -265,7 +282,34 @@ bool StreamManager::registerEventCallback(VideoPlayerImpl *player, decoder_sdk::
 
 void StreamManager::onWorkerAboutToDelete(const QString &key)
 {
+    StreamPipeline *worker = mapPipelineByKey_.value(key, nullptr);
     mapPipelineByKey_.remove(key);
+
+    if (!worker)
+        return;
+
+    // 如果管线自行销毁，同步清理所有 player 到该管线的映射，避免保留悬空 key。
+    for (auto it = mapPipelineByPlayer_.begin(); it != mapPipelineByPlayer_.end();) {
+        if (it.value() == worker) {
+            it = mapPipelineByPlayer_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
+void StreamManager::onPlayerAboutToDestroyed(const QString &uuid)
+{
+    // 统一解绑所有仍持有该player的管线，再清理主映射，避免裸指针残留。
+    for (auto it = mapPipelineByKey_.begin(); it != mapPipelineByKey_.end(); ++it) {
+        StreamPipeline *worker = it.value();
+        if (worker && worker->hasPlayer(uuid)) {
+            worker->unRegisterPlayerById(uuid);
+            worker->appendTask(DecodeWorker::Task::kClose);
+        }
+    }
+
+    mapPipelineByPlayer_.remove(uuid);
 }
 
 void StreamManager::onAppAboutToQuit()
@@ -346,6 +390,8 @@ void StreamManager::clearAllStreams()
     for (auto it = mapPipelineByKey_.begin(); it != mapPipelineByKey_.end(); ++it) {
         StreamPipeline *worker = it.value();
         if (worker) {
+            worker->requestStop();
+            worker->wait();
             delete worker;
             worker = nullptr;
         }

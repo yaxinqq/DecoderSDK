@@ -1,9 +1,12 @@
-#pragma once
+﻿#pragma once
 #include "IDecodeWorker.h"
 
 #include "decodersdk/decoder_controller.h"
 
 #include <QPointer>
+
+#include <atomic>
+#include <memory>
 
 #pragma region DecodeWorker
 class Decoder;
@@ -47,8 +50,16 @@ public:
      * @brief 执行任务
      *
      * @param task 任务类型
+     * @param sequence 任务序号，用于忽略已经过期的非阻塞任务
      */
-    void doTask(Task task);
+    void doTask(Task task, quint64 sequence);
+
+    /**
+     * @brief 获取任务序号源
+     *
+     * @return 最新的已接受任务序号
+     */
+    std::shared_ptr<std::atomic<quint64>> taskSequenceSource() const;
 
     /**
      * @brief 广播流信息以及解码器信息
@@ -158,6 +169,8 @@ signals:
     void decoderInfoUpdated(decoder_sdk::MediaType mediaType, const std::optional<decoder_sdk::DecoderInfo> &info);
 
 private:
+    // 任务序号源，decoder线程据此忽略已经过期的非阻塞任务
+    std::shared_ptr<std::atomic<quint64>> latestTaskSequence_;
     // 解码器，借助QPointer来获取指针的有效性
     QPointer<Decoder> decoder_;
     // 解码器所在线程

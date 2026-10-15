@@ -108,6 +108,12 @@ signals:
      * @param hardwareUSecs 此时设备已播放的微秒数
      */
     void firstFrameRendered(double pts, qint64 hardwareUSecs);
+    /**
+     * @brief 音频硬件消费了一批缓冲后发出
+     *
+     * 该信号只用于唤醒渲染线程重新检查 bytesFree/取音频帧，回调应保持轻量。
+     */
+    void bufferDrained();
 
 private slots:
     /**
@@ -129,11 +135,6 @@ private:
      * @return 是否成功
      */
     bool initAudioOutput(const QAudioDeviceInfo &deviceInfo);
-
-    /**
-     * @brief 移除音频渲染器中的格式转换，因为解码库已保证格式正确
-     */
-    // int convertAudioData(const decoder_sdk::Frame &frame, QByteArray &outputData);
 
     /**
      * @brief 应用音量控制
@@ -168,7 +169,7 @@ private:
     // 状态控制
     std::atomic<bool> initialized_;
     std::atomic<bool> playing_;
-    std::atomic<bool> isFirstFrame_{true};
+    std::atomic<bool> isFirstFrame_{ true };
     std::atomic<qreal> volume_;
 
     // 音频格式信息
@@ -178,9 +179,9 @@ private:
 
     // 统计信息
     // 统计信息
-    std::atomic<qint64> totalFramesRendered_{0};
-    std::atomic<qint64> totalBytesRendered_{0};
-    std::atomic<qint64> droppedFrames_{0};
+    std::atomic<qint64> totalFramesRendered_{ 0 };
+    std::atomic<qint64> totalBytesRendered_{ 0 };
+    std::atomic<qint64> droppedFrames_{ 0 };
 
     // 残余数据缓冲区，处理部分写入问题
     QByteArray residualBuffer_;

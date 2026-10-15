@@ -43,7 +43,7 @@ public:
      * @return 生成decoder的唯一标识
      */
     QString openStream(VideoPlayerImpl *player, QString url,
-                       Stream::OpenMode openMode = Stream::OpenMode::kExclusive,
+                       Stream::OpenMode openMode = Stream::OpenMode::kReuse,
                        const std::optional<decoder_sdk::DecoderConfig> &customConfig = std::nullopt);
 
     /*
@@ -187,6 +187,13 @@ private slots:
      */
     void onWorkerAboutToDelete(const QString &key);
 
+    /*
+     * @brief 响应 player 即将被销毁的信号，按稳定uuid统一解绑并清理映射
+     *
+     * @param uuid player的唯一标识
+     */
+    void onPlayerAboutToDestroyed(const QString &uuid);
+
     /** 
      * @brief 程序即将退出，清理当前的所有流
      */
@@ -224,8 +231,8 @@ private:
     explicit StreamManager(QObject *parent = nullptr);
     ~StreamManager();
 
-    // VideoPlayer和Pipeline之间的映射
-    QMap<VideoPlayerImpl *, QPointer<StreamPipeline>> mapPipelineByPlayer_;
+    // VideoPlayer uuid和Pipeline之间的映射，避免裸指针key悬空或被地址复用命中
+    QMap<QString, QPointer<StreamPipeline>> mapPipelineByPlayer_;
     // Pipeline的SourceKey和Pipeline之间的映射
     QMap<QString, StreamPipeline *> mapPipelineByKey_;
 
