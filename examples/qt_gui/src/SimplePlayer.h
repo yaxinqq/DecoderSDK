@@ -35,4 +35,5 @@ private:
     Ui::SimplePlayer *ui = nullptr;
     bool isSliderPressed_ = false; // 标记滑块是否被按下
     int totalTime_ = 0;            // 总时长
+    QString recordFilePath_;       // 录像文件路径
 };

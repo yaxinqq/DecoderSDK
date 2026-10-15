@@ -51,12 +51,13 @@ void SimplePlayer::onStartRecordBtnClicked()
         return;
     }
 
+    recordFilePath_ = path;
     ui->player->startRecoding(path);
 }
 
 void SimplePlayer::onStopRecordBtnClicked()
 {
-    ui->player->stopRecoding();
+    ui->player->stopRecoding(recordFilePath_);
 }
 
 void SimplePlayer::onTotalTimeRecved(int totalTime)

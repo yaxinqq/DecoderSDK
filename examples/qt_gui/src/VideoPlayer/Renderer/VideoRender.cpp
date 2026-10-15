@@ -39,6 +39,13 @@ namespace {
         return true;
     }
 
+    // 统计有效DisplayRenderer数量，避免为多target重复shader渲染
+    bool hasMultipleValidRenderers(
+        const std::vector<std::shared_ptr<DisplayRenderer>> &renderers)
+    {
+        return renderers.size() > 1;
+    }
+
     // 帧拷贝区域（源+目标）
     struct BlitRect {
         int srcX0 = 0;
@@ -331,128 +338,74 @@ void VideoRender::uninitialize()
 
     // 只保留必要的渲染资源，其它全部释放
     cleanupAllResources();
+    commonRenderTargetFbo_.reset();
+    clippingInputFbo_.reset();
 
     // 重置初始化相关的标志
     interopResourceReady_.store(false);
     resetInitializeState();
 }
 
-void VideoRender::render(const decoder_sdk::Frame &frame, const std::vector<std::shared_ptr<DisplayRenderer>> &renderers, Stream::VideoFrameParam *videoFrameParam)
+void VideoRender::render(const decoder_sdk::Frame &frame,
+                         const std::vector<std::shared_ptr<DisplayRenderer>> &renderers,
+                         Stream::VideoFrameParam *videoFrameParam)
 {
+    // 渲染入口：每帧只应做一次解码器帧到OpenGL纹理的interop/上传，
+    // 后续所有DisplayRenderer共享这份纹理结果，只分别写自己的后台FBO。
     if (!frame.isValid() || !isValid()) {
+        // 帧无效或interop资源未就绪时不能进入GL绘制，提前返回避免子类访问无效纹理。
         return;
     }
 
-    // 处理裁剪拼接
     QSize stitchOutputSize;
-    // 判断是否启用了裁剪拼接
-    const bool stitchEnabled = [&]() {
-        QMutexLocker lock(&clippingMtx_);
-        stitchOutputSize = stitchOutputSize_;
-        return !clippingSourceRegions_.isEmpty() &&
-               clippingSourceRegions_.size() == stitchTargetRegions_.size() &&
-               stitchOutputSize_.isValid();
-    }();
-    // 得到最终输出纹理的大小，如果未启用裁剪拼接，则使用纹理的原始大小
+    // 裁剪拼接状态可能由外部线程更新，这里统一锁读取一次，
+    // 保证本帧后面的判断和FBO大小都基于同一份状态快照。
+    const bool stitchEnabled = readClippingStitchState(stitchOutputSize);
+    // 拼接模式下最终输出是多个源区域拼出的画布，普通模式则是帧本身尺寸；
+    // 后续FBO申请、viewport和blit都必须以该尺寸为准，不能继续使用frame原始尺寸。
     const QSize finalOutputSize =
         stitchEnabled ? stitchOutputSize : QSize(frame.width(), frame.height());
 
-    if (stitchEnabled) {
-        // 如果开启了裁剪拼接，则根据纹理的原始大小，创建渲染目标缓冲区
-        QMutexLocker lock(&clippingMtx_);
-        if (!clippingInputFbo_ ||
-            clippingInputFbo_->size() != QSize(frame.width(), frame.height())) {
-            clippingInputFbo_ = createFbo(QSize(frame.width(), frame.height()), {});
-        }
-    }
+    // 拼接模式需要先把整帧渲染到公共输入FBO，再按区域裁剪到各展示目标。
+    // 提前补齐/重建该FBO，避免interop完成后再发现没有可绑定的中间纹理。
+    prepareClippingInputFboIfNeeded(stitchEnabled, frame);
 
-    // 先进行interop
+    // 软件解码和硬件解码在这里分别把CPU帧或显存帧转成当前OpenGL上下文可采样的纹理；
+    // 这一步失败后不能继续渲染，否则后续draw/blit会读取到未更新或无效纹理。
     bool success = interopToOpenGL(frame);
-
-    // 渲染目标
-    QSharedPointer<QOpenGLFramebufferObject> renderTargetFbo;
-    // 最终输出
-    QSharedPointer<QOpenGLFramebufferObject> outputFbo;
-
-    // renderTargetFbo是否被渲染过了
-    bool isRenderTargetRendered = false;
-
-    // 遍历当前传入的DisplayRenderer，进行渲染
-    for (auto &renderer : renderers) {
-        if (!renderer)
-            continue;
-
-        // 准备renderer的后台纹理
-        outputFbo = renderer->acquireAvailableBackendBuffer(finalOutputSize, {});
-
-        // 设置最终的渲染目标
-        if (stitchEnabled) {
-            // 如果开启了裁剪拼接，则渲染到渲染目标缓冲区
-            renderTargetFbo = clippingInputFbo_;
-        } else {
-            // 如果未开启裁剪拼接，则渲染目标和最终输出一致
-            renderTargetFbo = outputFbo;
-        }
-
-        // 检查异常值
-        if (!renderTargetFbo || !outputFbo) {
-            qWarning() << QStringLiteral("[VideoRender] Can not get display renderer backend fbo or clippingInputFbo is null!");
-            continue;
-        }
-
-        // 如果成功，则绑定渲染目标FBO，并让子类渲染到其中
-        if (success && !isRenderTargetRendered) {
-            // 绑定渲染目标FBO并让子类渲染到其中
-            renderTargetFbo->bind();
-            glViewport(0, 0, frame.width(), frame.height());
-            // clearGL();
-            success = renderToFbo(frame);
-            renderTargetFbo->release();
-
-            // 只渲染一次，不要重复渲染
-            if (renderTargetFbo == clippingInputFbo_) {
-                isRenderTargetRendered = true;
-            }
-        }
-
-        // 如果渲染成功，且开启了拼接，则将渲染目标纹理的区域，按格式拷贝到最终输出
-        if (success && stitchEnabled) {
-            applyClippingStitch(renderTargetFbo, outputFbo);
-        }
-    }
-
-    // GPU同步
-    if (forceGpuFinish_ || isIntelGpu_) {
-        glFinish();
+    QSharedPointer<QOpenGLFramebufferObject> commonSourceFbo;
+    if (stitchEnabled) {
+        // 裁剪拼接只渲染一次到公共输入FBO，之后每个DisplayRenderer只做区域blit。
+        success = renderClippingSource(frame, success);
     } else {
-        GLsync fence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
-        // 等待GPU侧完成
-        // const auto startTime = std::chrono::steady_clock::now();
-        const auto waitResult = glClientWaitSync(fence, GL_SYNC_FLUSH_COMMANDS_BIT, GL_TIMEOUT_IGNORED);
-        if (waitResult == GL_WAIT_FAILED || waitResult == GL_TIMEOUT_EXPIRED) {
-            qWarning() << QStringLiteral("[VideoRender] glClientWaitSync failed!");
+        // 非拼接且存在多个有效DisplayRenderer时，先渲染一次公共中间FBO，
+        // 避免每个display target都重复执行shader；单target或FBO申请失败时，
+        // commonSourceFbo为空，分发阶段会自动退回直接渲染到目标FBO。
+        commonSourceFbo = acquireCommonRenderTarget(
+            finalOutputSize, hasMultipleValidRenderers(renderers));
+        if (success && commonSourceFbo) {
+            success = renderFrameToFbo(commonSourceFbo, finalOutputSize, frame);
         }
-        // const auto endTime = std::chrono::steady_clock::now();
-        // qInfo() << QStringLiteral("[VideoRender] glClientWaitSync cost time: ") << std::chrono::duration_cast<std::chrono::microseconds>(endTime - startTime).count() << "ns";
-        glDeleteSync(fence);
     }
 
-    // 清理渲染资源
+    if (success) {
+        // 源纹理已经就绪后才开始分发；各DisplayRenderer只获取后台FBO并执行
+        // 整帧blit、区域裁剪blit，或FBO创建失败时的直接draw，不再重复interop。
+        success = dispatchToRenderers(frame, renderers, finalOutputSize, stitchEnabled,
+                                      commonSourceFbo);
+    }
+
+    // 当前实现会等待GPU完成本帧，确保下面的cleanupRenderResources()不会释放仍在
+    // GPU命令流中的资源。这里是明确的同步点，后续改成多帧复用+延迟fence时可替换。
+    synchronizeGpu();
+    // 子类在GPU同步完成后再释放本轮专用纹理/fence/资源，避免提前销毁导致GPU访问悬挂资源。
     cleanupRenderResources();
 
     if (success) {
-        for (auto &renderer : renderers) {
-            if (!renderer)
-                continue;
-
-            renderer->swap();
-        }
-
-        // 更新参数
-        if (videoFrameParam) {
-            videoFrameParam->size = finalOutputSize;
-            videoFrameParam->pts = frame.secPts();
-        }
+        // 只有整帧都成功分发后才把后台FBO交换到前台，防止上层显示半渲染或未更新的target。
+        presentToRenderers(renderers);
+        // 参数回写放在swap之后，保证纹理Ready事件拿到的尺寸/PTS与最终前台FBO属于同一帧。
+        updateVideoFrameParam(videoFrameParam, finalOutputSize, frame);
     }
 }
 
@@ -616,6 +569,175 @@ QSharedPointer<QOpenGLFramebufferObject> VideoRender::createFbo(
         return nullptr;
     }
     return QSharedPointer<QOpenGLFramebufferObject>::create(size, fmt);
+}
+
+bool VideoRender::readClippingStitchState(QSize &outputSize) const
+{
+    QMutexLocker lock(&clippingMtx_);
+    outputSize = stitchOutputSize_;
+    return !clippingSourceRegions_.isEmpty() &&
+           clippingSourceRegions_.size() == stitchTargetRegions_.size() &&
+           stitchOutputSize_.isValid();
+}
+
+void VideoRender::prepareClippingInputFboIfNeeded(bool stitchEnabled,
+                                                  const decoder_sdk::Frame &frame)
+{
+    if (!stitchEnabled) {
+        return;
+    }
+
+    QMutexLocker lock(&clippingMtx_);
+    const QSize inputSize(frame.width(), frame.height());
+    if (!clippingInputFbo_ || clippingInputFbo_->size() != inputSize) {
+        clippingInputFbo_ = createFbo(inputSize, {});
+    }
+}
+
+bool VideoRender::renderFrameToFbo(const QSharedPointer<QOpenGLFramebufferObject> &targetFbo,
+                                   const QSize &viewportSize,
+                                   const decoder_sdk::Frame &frame)
+{
+    if (!targetFbo) {
+        return false;
+    }
+
+    if (!targetFbo->bind()) {
+        qWarning() << QStringLiteral("[VideoRender] Failed to bind render target fbo!");
+        return false;
+    }
+    glViewport(0, 0, viewportSize.width(), viewportSize.height());
+    const bool renderSucceeded = renderToFbo(frame);
+    targetFbo->release();
+    return renderSucceeded;
+}
+
+bool VideoRender::renderClippingSource(const decoder_sdk::Frame &frame,
+                                       bool interopSucceeded)
+{
+    if (!interopSucceeded || !clippingInputFbo_) {
+        return false;
+    }
+
+    return renderFrameToFbo(clippingInputFbo_, QSize(frame.width(), frame.height()), frame);
+}
+
+QSharedPointer<QOpenGLFramebufferObject> VideoRender::acquireCommonRenderTarget(
+    const QSize &finalOutputSize, bool useCommonRenderTarget)
+{
+    if (!useCommonRenderTarget) {
+        return nullptr;
+    }
+
+    QMutexLocker lock(&clippingMtx_);
+    if (!commonRenderTargetFbo_ || commonRenderTargetFbo_->size() != finalOutputSize) {
+        commonRenderTargetFbo_ = createFbo(finalOutputSize, {});
+    }
+    return commonRenderTargetFbo_;
+}
+
+bool VideoRender::dispatchToRenderers(
+    const decoder_sdk::Frame &frame,
+    const std::vector<std::shared_ptr<DisplayRenderer>> &renderers,
+    const QSize &finalOutputSize, bool stitchEnabled,
+    const QSharedPointer<QOpenGLFramebufferObject> &commonSourceFbo)
+{
+    bool allSucceeded = true;
+    for (const auto &renderer : renderers) {
+        if (!renderer) {
+            continue;
+        }
+
+        const auto outputFbo = renderer->acquireAvailableBackendBuffer(finalOutputSize, {});
+        if (!outputFbo) {
+            qWarning() << QStringLiteral(
+                "[VideoRender] Can not get display renderer backend fbo!");
+            continue;
+        }
+
+        bool targetSucceeded = false;
+        if (stitchEnabled) {
+            if (!clippingInputFbo_) {
+                qWarning() << QStringLiteral("[VideoRender] Clipping input fbo is null!");
+            } else {
+                targetSucceeded = applyClippingStitch(clippingInputFbo_, outputFbo);
+            }
+        } else if (commonSourceFbo) {
+            targetSucceeded = blitFbo(commonSourceFbo, outputFbo);
+        } else {
+            targetSucceeded = renderFrameToFbo(outputFbo, finalOutputSize, frame);
+        }
+
+        if (!targetSucceeded) {
+            allSucceeded = false;
+        }
+    }
+    return allSucceeded;
+}
+
+void VideoRender::synchronizeGpu()
+{
+    if (forceGpuFinish_ || isIntelGpu_) {
+        glFinish();
+        return;
+    }
+
+    GLsync fence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+    const auto waitResult =
+        glClientWaitSync(fence, GL_SYNC_FLUSH_COMMANDS_BIT, GL_TIMEOUT_IGNORED);
+    if (waitResult == GL_WAIT_FAILED || waitResult == GL_TIMEOUT_EXPIRED) {
+        qWarning() << QStringLiteral("[VideoRender] glClientWaitSync failed!");
+    }
+    glDeleteSync(fence);
+}
+
+void VideoRender::presentToRenderers(
+    const std::vector<std::shared_ptr<DisplayRenderer>> &renderers)
+{
+    for (const auto &renderer : renderers) {
+        if (renderer) {
+            renderer->swap();
+        }
+    }
+}
+
+void VideoRender::updateVideoFrameParam(Stream::VideoFrameParam *videoFrameParam,
+                                        const QSize &finalOutputSize,
+                                        const decoder_sdk::Frame &frame) const
+{
+    if (!videoFrameParam) {
+        return;
+    }
+
+    videoFrameParam->size = finalOutputSize;
+    videoFrameParam->pts = frame.secPts();
+}
+
+bool VideoRender::blitFbo(const QSharedPointer<QOpenGLFramebufferObject> &sourceFbo,
+                          const QSharedPointer<QOpenGLFramebufferObject> &outputFbo)
+{
+    if (!sourceFbo || !outputFbo || sourceFbo->size() != outputFbo->size()) {
+        return false;
+    }
+
+    GLint prevReadFbo = 0;
+    GLint prevDrawFbo = 0;
+    GLint prevViewport[4] = { 0, 0, 0, 0 };
+    glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &prevReadFbo);
+    glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &prevDrawFbo);
+    glGetIntegerv(GL_VIEWPORT, prevViewport);
+
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, sourceFbo->handle());
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, outputFbo->handle());
+    glViewport(0, 0, outputFbo->width(), outputFbo->height());
+    glBlitFramebuffer(0, 0, outputFbo->width(), outputFbo->height(),
+                      0, 0, outputFbo->width(), outputFbo->height(),
+                      GL_COLOR_BUFFER_BIT, GL_NEAREST);
+
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, prevReadFbo);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, prevDrawFbo);
+    glViewport(prevViewport[0], prevViewport[1], prevViewport[2], prevViewport[3]);
+    return true;
 }
 
 bool VideoRender::applyClippingStitch(const QSharedPointer<QOpenGLFramebufferObject> &sourceFbo,

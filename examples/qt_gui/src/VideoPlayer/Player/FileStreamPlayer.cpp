@@ -89,17 +89,18 @@ bool FileStreamPlayer::setSpeed(double speed)
     return StreamManager::instance()->setSpeed(impl_, speed);
 }
 
-void FileStreamPlayer::startRecoding(const QString &recodDir)
+void FileStreamPlayer::startRecoding(const QString &recorderFilePath)
 {
     qWarning() << QStringLiteral("[FileStreamPlayer] Not supported recording!");
 }
 
-void FileStreamPlayer::stopRecoding()
+void FileStreamPlayer::stopRecoding(const QString &recorderFilePath)
 {
     qWarning() << QStringLiteral("[FileStreamPlayer] Not supported recording!");
 }
 
-bool FileStreamPlayer::isRecording() const
+bool FileStreamPlayer::isRecording(const QString &recorderFilePath) const
 {
-    return StreamManager::instance()->isRecoding(impl_);
+    qWarning() << QStringLiteral("[FileStreamPlayer] Not supported recording!");
+    return false;
 }

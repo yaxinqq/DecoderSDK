@@ -91,7 +91,9 @@ void registerVideoMetaType()
     qRegisterMetaType<decoder_sdk::EventType>("decoder_sdk::EventType");
     qRegisterMetaType<decoder_sdk::LoopMode>("decoder_sdk::LoopMode");
     qRegisterMetaType<decoder_sdk::MediaType>("decoder_sdk::MediaType");
+    qRegisterMetaType<std::optional<decoder_sdk::StreamInfo>>("std::optional<decoder_sdk::StreamInfo>");
     qRegisterMetaType<decoder_sdk::StreamStaticsInfo>("decoder_sdk::StreamStaticsInfo");
+    qRegisterMetaType<std::optional<decoder_sdk::DecoderInfo>>("std::optional<decoder_sdk::DecoderInfo>");
 
     qRegisterMetaType<Stream::VideoProcessParam>("Stream::VideoProcessParam");
     qRegisterMetaType<Stream::VideoFrameParam>("Stream::VideoFrameParam");

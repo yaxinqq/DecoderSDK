@@ -48,6 +48,14 @@ public:
      */
     virtual double frontPts(decoder_sdk::MediaType type) = 0;
 
+    /**
+     * @brief 是否正在录制（线程安全）
+     * 
+     * @param recorderFilePath 可提供的录制文件路径，用于多文件同时录制的应用场景
+     * @return 是否正在录制
+     */
+    virtual bool isRecording(const QString &recorderFilePath) const = 0;
+
 signals:
     /**
      * @brief 解码队列由空变为非空时发出

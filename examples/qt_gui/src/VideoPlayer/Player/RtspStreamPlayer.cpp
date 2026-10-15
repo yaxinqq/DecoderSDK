@@ -17,9 +17,14 @@ RtspStreamPlayer::~RtspStreamPlayer()
 void RtspStreamPlayer::open(const QString &url, const QString &deviceId, const QString &channelId,
                             Stream::OpenMode openMode)
 {
-    if (playerState() != Stream::PlayerState::Stop) {
-        close();
-    }
+	if (playerState() != Stream::PlayerState::Stop) {
+        const bool canReusePipeline =
+            openMode == Stream::OpenMode::kReuse &&
+            streamUrl_ == url &&
+            openMode_ == openMode;
+
+        closeInternal(canReusePipeline);
+	}
 
     // 设置播放器状态-开始播放
     setPlayerState(Stream::PlayerState::Start);
@@ -35,17 +40,8 @@ void RtspStreamPlayer::open(const QString &url, const QString &deviceId, const Q
 
 void RtspStreamPlayer::close()
 {
-    // 设置播放器状态-停止播放
-    setPlayerState(Stream::PlayerState::Stop);
-
-    // 关流
-    closeStream();
-
-    streamUrl_.clear();
-    deviceId_.clear();
-    channelId_.clear();
-    openMode_ = Stream::OpenMode::kExclusive;
-    urlToDecoderKey_.clear();
+	// 常规关闭接口，不复用stream
+    closeInternal(false);
 }
 
 void RtspStreamPlayer::pause()
@@ -72,19 +68,19 @@ void RtspStreamPlayer::resume()
     StreamManager::instance()->resume(impl_);
 }
 
-void RtspStreamPlayer::startRecoding(const QString &recoderPath)
+void RtspStreamPlayer::startRecoding(const QString &recorderFilePath)
 {
-    StreamManager::instance()->startRecoding(impl_, recoderPath);
+    StreamManager::instance()->startRecoding(impl_, recorderFilePath);
 }
 
-void RtspStreamPlayer::stopRecoding()
+void RtspStreamPlayer::stopRecoding(const QString &recorderFilePath)
 {
-    StreamManager::instance()->stopRecoding(impl_);
+    StreamManager::instance()->stopRecoding(impl_, recorderFilePath);
 }
 
-bool RtspStreamPlayer::isRecording() const
+bool RtspStreamPlayer::isRecording(const QString &recorderFilePath) const
 {
-    return StreamManager::instance()->isRecoding(impl_);
+    return StreamManager::instance()->isRecoding(impl_, recorderFilePath);
 }
 
 bool RtspStreamPlayer::seek(double pts)
@@ -133,10 +129,13 @@ void RtspStreamPlayer::onStreamClosed()
     qWarning() << QStringLiteral("%1的连接已超时").arg(streamUrl_);
 }
 
-void RtspStreamPlayer::closeStream()
+void RtspStreamPlayer::closeStream(bool canReuse)
 {
     // 关闭播放器的当前流
-    StreamManager::instance()->closeStream(impl_);
+	if (!canReuse) {
+		StreamManager::instance()->closeStream(impl_);
+	}
+
     // 关闭播放器的补充流
     for (const auto &url : urlToDecoderKey_) {
         if (url == streamUrl_ || streamUrl_.isEmpty())
@@ -144,4 +143,19 @@ void RtspStreamPlayer::closeStream()
 
         StreamManager::instance()->closeSupplementaryStream(urlToDecoderKey_.value(url), impl_);
     }
+}
+
+void RtspStreamPlayer::closeInternal(bool canReuse)
+{
+	// 设置播放器状态-停止播放
+	setPlayerState(Stream::PlayerState::Stop);
+
+	// 关流
+	closeStream(canReuse);
+
+	streamUrl_.clear();
+	deviceId_.clear();
+	channelId_.clear();
+	openMode_ = Stream::OpenMode::kReuse;
+	urlToDecoderKey_.clear();
 }
